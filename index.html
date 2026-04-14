@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tasador TGA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --vw-blue: #001E50;
+  --vw-blue-light: #00437A;
+  --vw-white: #FFFFFF;
+  --vw-grey-1: #F5F5F5;
+  --vw-grey-2: #E5E5E5;
+  --vw-grey-3: #999999;
+  --vw-grey-4: #666666;
+  --vw-black: #1A1A1A;
+  --green: #10B981;
+  --green-light: #D1FAE5;
+  --orange: #F59E0B;
+  --orange-light: #FEF3C7;
+  --red: #EF4444;
+  --red-light: #FEE2E2;
+  --radius: 12px;
+  --shadow: 0 2px 12px rgba(0,30,80,0.08);
+  --shadow-lg: 0 8px 32px rgba(0,30,80,0.12);
+  --font: 'DM Sans', sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: var(--font); background: var(--vw-grey-1); color: var(--vw-black); min-height:100vh; -webkit-font-smoothing: antialiased; }
+button { font-family: var(--font); cursor: pointer; border: none; }
+input, select, textarea { font-family: var(--font); }
+
+/* ============ LOGIN ============ */
+.login-screen {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--vw-blue) 0%, var(--vw-blue-light) 100%);
+  padding: 20px;
+}
+.login-box {
+  background: var(--vw-white);
+  border-radius: var(--radius);
+  padding: 40px 32px;
+  width: 100%; max-width: 380px;
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+.login-box h1 {
+  font-size: 22px; font-weight: 700;
+  color: var(--vw-blue);
+  margin-bottom: 6px;
+}
+.login-box p { font-size: 14px; color: var(--vw-grey-3); margin-bottom: 28px; }
+.login-box input {
+  width: 100%; padding: 14px 16px;
+  border: 2px solid var(--vw-grey-2);
+  border-radius: 8px; font-size: 15px;
+  margin-bottom: 14px; outline: none;
+  transition: border-color 0.2s;
+}
+.login-box input:focus { border-color: var(--vw-blue); }
+.login-box button {
+  width: 100%; padding: 14px;
+  background: var(--vw-blue);
+  color: white; font-size: 15px; font-weight: 600;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+.login-box button:hover { background: var(--vw-blue-light); }
+.login-error { color: var(--red); font-size: 13px; margin-top: 12px; display:none; }
+
+/* ============ HEADER ============ */
+.app-header {
+  background: var(--vw-blue);
+  color: white;
+  padding: 14px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+.app-header h1 { font-size: 17px; font-weight: 600; }
+.app-header .user-info { font-size: 13px; opacity: 0.8; }
+.app-header button {
+  background: rgba(255,255,255,0.15);
+  color: white; padding: 8px 14px;
+  border-radius: 6px; font-size: 13px; font-weight: 500;
+}
+
+/* ============ WIZARD VENDEDOR ============ */
+.wizard-container {
+  max-width: 600px; margin: 20px auto; padding: 0 16px;
+}
+.wizard-step {
+  background: white;
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  box-shadow: var(--shadow);
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+.wizard-step.active { display: block; }
+@keyframes fadeIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+
+.wizard-step h2 {
+  font-size: 18px; font-weight: 600;
+  color: var(--vw-blue);
+  margin-bottom: 4px;
+}
+.wizard-step .step-num {
+  font-size: 12px; color: var(--vw-grey-3);
+  text-transform: uppercase; letter-spacing: 1px;
+  margin-bottom: 16px;
+}
+.wizard-step label {
+  display: block; font-size: 14px; font-weight: 500;
+  color: var(--vw-grey-4); margin-bottom: 8px;
+}
+.wizard-step select, .wizard-step input, .wizard-step textarea {
+  width: 100%; padding: 13px 14px;
+  border: 2px solid var(--vw-grey-2);
+  border-radius: 8px; font-size: 15px;
+  outline: none; background: white;
+  transition: border-color 0.2s;
+  -webkit-appearance: none;
+}
+.wizard-step select { background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23999' stroke-width='2' fill='none'/%3E%3C/svg%3E") no-repeat right 14px center; padding-right: 36px; }
+.wizard-step select:focus, .wizard-step input:focus { border-color: var(--vw-blue); }
+
+.wizard-nav {
+  display: flex; gap: 12px; margin-top: 24px;
+}
+.wizard-nav button {
+  flex: 1; padding: 13px;
+  border-radius: 8px; font-size: 14px; font-weight: 600;
+  transition: all 0.2s;
+}
+.btn-back { background: var(--vw-grey-2); color: var(--vw-grey-4); }
+.btn-next { background: var(--vw-blue); color: white; }
+.btn-next:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-submit { background: var(--green); color: white; }
+
+/* Progress bar */
+.progress-bar {
+  display: flex; gap: 4px; margin-bottom: 20px;
+  padding: 0 16px;
+}
+.progress-bar .dot {
+  flex: 1; height: 4px;
+  background: var(--vw-grey-2);
+  border-radius: 2px;
+  transition: background 0.3s;
+}
+.progress-bar .dot.done { background: var(--vw-blue); }
+.progress-bar .dot.current { background: var(--vw-blue-light); }
+
+/* Fotos */
+.fotos-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 8px; margin-top: 8px;
+}
+.foto-slot {
+  aspect-ratio: 4/3;
+  border: 2px dashed var(--vw-grey-2);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; overflow: hidden;
+  position: relative;
+  transition: border-color 0.2s;
+}
+.foto-slot:hover { border-color: var(--vw-blue); }
+.foto-slot img { width:100%; height:100%; object-fit:cover; }
+.foto-slot .remove-foto {
+  position: absolute; top:4px; right:4px;
+  background: rgba(0,0,0,0.6); color:white;
+  width:22px; height:22px; border-radius:50%;
+  font-size:14px; display:flex; align-items:center; justify-content:center;
+}
+.foto-slot .plus { font-size:24px; color:var(--vw-grey-3); }
+
+/* ============ MIS TASACIONES (vendedor) ============ */
+.tasaciones-list {
+  max-width: 600px; margin: 20px auto; padding: 0 16px;
+}
+.tasacion-card {
+  background: white;
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+.tasacion-card:hover { box-shadow: var(--shadow-lg); }
+.tasacion-card .marca-modelo { font-weight: 600; font-size: 16px; color: var(--vw-blue); }
+.tasacion-card .detalles { font-size: 13px; color: var(--vw-grey-4); margin-top: 4px; }
+.tasacion-card .estado {
+  display: inline-block; padding: 4px 10px;
+  border-radius: 20px; font-size: 12px; font-weight: 600;
+  margin-top: 8px;
+}
+.estado-pendiente { background: var(--orange-light); color: #92400E; }
+.estado-tasada { background: var(--green-light); color: #065F46; }
+.estado-cerrada { background: var(--vw-grey-2); color: var(--vw-grey-4); }
+.precio-toma-final {
+  font-family: var(--mono);
+  font-size: 20px; font-weight: 700;
+  color: var(--green);
+  margin-top: 8px;
+}
+
+/* Tabs vendedor */
+.tabs-vendedor {
+  display: flex; max-width: 600px; margin: 16px auto 0; padding: 0 16px; gap: 8px;
+}
+.tabs-vendedor button {
+  flex:1; padding: 12px;
+  border-radius: 8px 8px 0 0;
+  font-size: 14px; font-weight: 600;
+  background: var(--vw-grey-2); color: var(--vw-grey-4);
+  transition: all 0.2s;
+}
+.tabs-vendedor button.active { background: white; color: var(--vw-blue); }
+
+/* ============ PANEL ADMIN ============ */
+.admin-container {
+  max-width: 900px; margin: 20px auto; padding: 0 16px;
+}
+.admin-tabs {
+  display: flex; gap: 8px; margin-bottom: 16px;
+}
+.admin-tabs button {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px; font-weight: 600;
+  background: var(--vw-grey-2); color: var(--vw-grey-4);
+  transition: all 0.2s;
+}
+.admin-tabs button.active { background: var(--vw-blue); color: white; }
+
+.admin-card {
+  background: white;
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+.admin-card h3 {
+  font-size: 17px; font-weight: 600;
+  color: var(--vw-blue); margin-bottom: 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+/* Precios comparación */
+.precios-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px; margin: 16px 0;
+}
+.precio-box {
+  padding: 16px;
+  border-radius: 8px;
+  text-align: center;
+}
+.precio-box .metodo { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.precio-box .valor { font-family: var(--mono); font-size: 20px; font-weight: 700; }
+.precio-box .sub { font-size: 11px; margin-top: 4px; opacity: 0.7; }
+.precio-box.cca { background: #EFF6FF; color: #1E40AF; }
+.precio-box.vw { background: #F0FDF4; color: #166534; }
+.precio-box.kavak { background: #FDF4FF; color: #7C3AED; }
+
+.precio-toma-input {
+  display: flex; gap: 12px; align-items: center;
+  margin-top: 16px; padding-top: 16px;
+  border-top: 2px solid var(--vw-grey-1);
+}
+.precio-toma-input input {
+  flex: 1; padding: 14px;
+  border: 2px solid var(--vw-blue);
+  border-radius: 8px; font-size: 18px;
+  font-family: var(--mono); font-weight: 600;
+}
+.precio-toma-input button {
+  padding: 14px 24px;
+  background: var(--green); color: white;
+  border-radius: 8px; font-size: 15px; font-weight: 600;
+}
+
+/* Fotos admin */
+.fotos-admin-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px; margin: 12px 0;
+}
+.fotos-admin-grid img {
+  width: 100%; aspect-ratio: 4/3;
+  object-fit: cover; border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+.fotos-admin-grid img:hover { transform: scale(1.05); }
+
+/* Info rows */
+.info-row {
+  display: flex; justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--vw-grey-1);
+  font-size: 14px;
+}
+.info-row:last-child { border-bottom: none; }
+.info-row .label { color: var(--vw-grey-4); }
+.info-row .value { font-weight: 600; text-align: right; }
+
+/* Loading & modal */
+.loading-overlay {
+  position: fixed; top:0; left:0; right:0; bottom:0;
+  background: rgba(0,30,80,0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 999; display: none;
+}
+.loading-overlay.show { display: flex; }
+.loading-box {
+  background: white; padding: 32px;
+  border-radius: var(--radius);
+  text-align: center;
+}
+.spinner {
+  width: 40px; height: 40px;
+  border: 4px solid var(--vw-grey-2);
+  border-top-color: var(--vw-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Photo modal */
+.photo-modal {
+  position: fixed; top:0; left:0; right:0; bottom:0;
+  background: rgba(0,0,0,0.9);
+  display: none; align-items: center; justify-content: center;
+  z-index: 1000; cursor: pointer;
+}
+.photo-modal.show { display: flex; }
+.photo-modal img { max-width: 95%; max-height: 90vh; object-fit: contain; border-radius: 8px; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--vw-black); color: white;
+  padding: 14px 24px; border-radius: 8px;
+  font-size: 14px; font-weight: 500;
+  z-index: 1001; opacity: 0;
+  transition: opacity 0.3s;
+}
+.toast.show { opacity: 1; }
+
+/* Cotización input */
+.cotiz-bar {
+  background: white; padding: 12px 16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+  display: flex; align-items: center; gap: 12px;
+  font-size: 14px;
+}
+.cotiz-bar label { font-weight: 600; color: var(--vw-blue); white-space: nowrap; }
+.cotiz-bar input {
+  width: 120px; padding: 8px 12px;
+  border: 2px solid var(--vw-grey-2);
+  border-radius: 6px; font-family: var(--mono);
+  font-size: 14px; font-weight: 600;
+}
+
+.hidden { display: none !important; }
+
+/* Responsive */
+@media (max-width: 480px) {
+  .precios-grid { grid-template-columns: 1fr; }
+  .admin-card { padding: 18px 16px; }
+  .fotos-grid { grid-template-columns: repeat(3, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== LOGIN ==================== -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-box">
+    <h1>Tasador TGA</h1>
+    <p>Tito Gonzalez Automotores</p>
+    <input type="text" id="loginUser" placeholder="Usuario" autocomplete="off">
+    <input type="password" id="loginPass" placeholder="Contraseña">
+    <button onclick="login()">Ingresar</button>
+    <div id="loginError" class="login-error">Usuario o contraseña incorrectos</div>
+  </div>
+</div>
+
+<!-- ==================== APP ==================== -->
+<div id="appScreen" class="hidden">
+  <header class="app-header">
+    <div>
+      <h1>Tasador TGA</h1>
+      <div class="user-info" id="headerUser"></div>
+    </div>
+    <button onclick="logout()">Salir</button>
+  </header>
+
+  <!-- ======== VENDEDOR VIEW ======== -->
+  <div id="vendedorView" class="hidden">
+    <div class="tabs-vendedor">
+      <button id="tabNueva" class="active" onclick="showVendedorTab('nueva')">Nueva tasación</button>
+      <button id="tabMis" onclick="showVendedorTab('mis')">Mis tasaciones</button>
+    </div>
+
+    <!-- Nueva tasación wizard -->
+    <div id="wizardSection">
+      <div class="progress-bar" id="progressBar"></div>
+      <div class="wizard-container" id="wizardContainer"></div>
+    </div>
+
+    <!-- Mis tasaciones -->
+    <div id="misTasacionesSection" class="hidden">
+      <div class="tasaciones-list" id="misTasacionesList"></div>
+    </div>
+  </div>
+
+  <!-- ======== ADMIN VIEW ======== -->
+  <div id="adminView" class="hidden">
+    <div class="admin-container">
+      <div class="admin-tabs">
+        <button class="active" onclick="showAdminTab('pendientes', this)">Pendientes</button>
+        <button onclick="showAdminTab('tasadas', this)">Tasadas</button>
+        <button onclick="showAdminTab('todas', this)">Todas</button>
+      </div>
+      <div class="cotiz-bar">
+        <label>Cotización USD:</label>
+        <input type="number" id="cotizUsd" value="1350" onchange="recalcAll()">
+      </div>
+      <div id="adminList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Loading overlay -->
+<div id="loadingOverlay" class="loading-overlay">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <div id="loadingText">Cargando...</div>
+  </div>
+</div>
+
+<!-- Photo modal -->
+<div id="photoModal" class="photo-modal" onclick="this.classList.remove('show')">
+  <img id="photoModalImg" src="">
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<!-- Hidden file input -->
+<input type="file" id="fotoInput" accept="image/*" multiple class="hidden" onchange="handleFotos(this.files)">
+
+<script>
+// ============ CONFIG ============
+const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
+const CCA_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQH_9OtgjB7xV7qZEHoogNXq8TE5gLxz4RNb2DvxbbQ1o2A_Be2my532lJF0nxpJCUkghJrEa3TeDw/pub?gid=904791552&single=true&output=csv';
+const VW_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTD4OFCkAXCrVNslz1OtxnYm1DRhDulVOHaCxJ81-kiQL17KnfimCOPn3hJDHAvJsF9ROEZdePuRw2E/pub?gid=1432576316&single=true&output=csv';
+const CALLMEBOT_PHONE = '5491156559854';
+const CALLMEBOT_KEY = '6552632';
+const FYF = 1110000;
+const DEFAULT_COTIZ = 1350;
+
+// Marcas en pesos (×1000)
+const MARCAS_PESOS = ['CHEVROLET','CHRYSLER','CITROEN','DODGE','FAW','FERRARI','FIAT','FORD','FOTON','GAC','JAGUAR','JMC','KYC','LAND ROVER','LIFAN','LOTUS','MASERATI','McLAREN','NISSAN','PEUGEOT','PORSCHE','RENAULT','TOYOTA','VOLKSWAGEN'];
+
+// Pick-ups (20.000 km/año)
+const PICKUPS_KEYWORDS = ['AMAROK','HILUX','RANGER','SAVEIRO','S-10','S10','MONTANA','STRADA','TORO','FRONTIER','ALASKAN'];
+
+// ============ STATE ============
+let currentUser = null;
+let ccaData = [];
+let vwData = [];
+let fotos = []; // array of File objects
+let fotoPreviews = []; // array of data URLs
+let allTasaciones = [];
+let currentStep = 0;
+const TOTAL_STEPS = 8; // marca, año, modelo, version, modeloVW, km, color+kavak, fotos
+
+// ============ SUPABASE HELPERS ============
+async function sbFetch(path, options = {}) {
+  const url = SUPABASE_URL + '/rest/v1/' + path;
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json',
+    'Prefer': options.prefer || 'return=representation'
+  };
+  const res = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
+  if (!res.ok) { const t = await res.text(); throw new Error(t); }
+  return res.json();
+}
+
+async function sbUpload(bucket, path, file) {
+  const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': file.type
+    },
+    body: file
+  });
+  if (!res.ok) throw new Error('Upload failed');
+  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+}
+
+// ============ CSV PARSER ============
+function parseCSV(text) {
+  const lines = text.split('\n');
+  if (lines.length < 2) return [];
+  const headers = parseCSVLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = parseCSVLine(lines[i]);
+    if (vals.length < headers.length) continue;
+    const obj = {};
+    headers.forEach((h, idx) => obj[h.trim()] = (vals[idx] || '').trim());
+    rows.push(obj);
+  }
+  return rows;
+}
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"' && line[i+1] === '"') { current += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { current += c; }
+    } else {
+      if (c === '"') { inQuotes = true; }
+      else if (c === ',') { result.push(current); current = ''; }
+      else { current += c; }
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+// ============ LOAD DATA ============
+async function loadCCA() {
+  try {
+    const res = await fetch(CCA_CSV_URL);
+    const text = await res.text();
+    ccaData = parseCSV(text);
+    console.log('CCA cargado:', ccaData.length, 'registros');
+  } catch(e) {
+    console.error('Error cargando CCA:', e);
+    showToast('Error cargando precios CCA');
+  }
+}
+
+async function loadVW() {
+  try {
+    const res = await fetch(VW_CSV_URL);
+    const text = await res.text();
+    const rows = parseCSV(text);
+    // Columnas: modelo, precio de lista, oferta vigente con fyf, stock, DTO, colores disponibles
+    vwData = rows.filter(r => r['modelo'] && r['oferta vigente con fyf']).map(r => {
+      const precio_str = (r['oferta vigente con fyf'] || '').replace(/\$/g,'').replace(/\./g,'').replace(/,/g,'').trim();
+      return {
+        modelo: r['modelo'].trim(),
+        precio_oferta_fyf: parseFloat(precio_str) || 0,
+        precio_0km: Math.max(0, (parseFloat(precio_str) || 0) - FYF)
+      };
+    }).filter(r => r.precio_oferta_fyf > 0);
+    console.log('VW cargado:', vwData.length, 'modelos');
+  } catch(e) {
+    console.error('Error cargando VW:', e);
+    showToast('Error cargando precios VW');
+  }
+}
+
+// ============ LOGIN ============
+async function login() {
+  const user = document.getElementById('loginUser').value.trim().toLowerCase();
+  const pass = document.getElementById('loginPass').value.trim();
+  if (!user || !pass) return;
+
+  try {
+    const data = await sbFetch(`tasador_usuarios?usuario=eq.${user}&clave=eq.${pass}&activo=eq.true`);
+    if (data.length === 0) {
+      document.getElementById('loginError').style.display = 'block';
+      return;
+    }
+    currentUser = data[0];
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('appScreen').classList.remove('hidden');
+    document.getElementById('headerUser').textContent = currentUser.nombre + ' (' + currentUser.rol + ')';
+
+    showLoading('Cargando datos...');
+    await Promise.all([loadCCA(), loadVW()]);
+    hideLoading();
+
+    if (currentUser.rol === 'admin') {
+      document.getElementById('adminView').classList.remove('hidden');
+      loadAdminTasaciones('pendientes');
+    } else {
+      document.getElementById('vendedorView').classList.remove('hidden');
+      initWizard();
+    }
+  } catch(e) {
+    console.error(e);
+    document.getElementById('loginError').style.display = 'block';
+  }
+}
+
+function logout() {
+  currentUser = null;
+  document.getElementById('appScreen').classList.add('hidden');
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('loginUser').value = '';
+  document.getElementById('loginPass').value = '';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('vendedorView').classList.add('hidden');
+  document.getElementById('adminView').classList.add('hidden');
+}
+
+// ============ VENDEDOR TABS ============
+function showVendedorTab(tab) {
+  document.getElementById('tabNueva').classList.toggle('active', tab === 'nueva');
+  document.getElementById('tabMis').classList.toggle('active', tab === 'mis');
+  document.getElementById('wizardSection').classList.toggle('hidden', tab !== 'nueva');
+  document.getElementById('misTasacionesSection').classList.toggle('hidden', tab !== 'mis');
+  if (tab === 'mis') loadMisTasaciones();
+}
+
+// ============ WIZARD ============
+function initWizard() {
+  currentStep = 0;
+  fotos = [];
+  fotoPreviews = [];
+  renderWizard();
+}
+
+function renderWizard() {
+  // Progress bar
+  let dots = '';
+  for (let i = 0; i < TOTAL_STEPS; i++) {
+    const cls = i < currentStep ? 'done' : i === currentStep ? 'current' : '';
+    dots += `<div class="dot ${cls}"></div>`;
+  }
+  document.getElementById('progressBar').innerHTML = dots;
+
+  const container = document.getElementById('wizardContainer');
+  const steps = [renderStep0, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7];
+  container.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'wizard-step active';
+  div.innerHTML = steps[currentStep]();
+  container.appendChild(div);
+}
+
+function renderStep0() { // Marca
+  const marcas = [...new Set(ccaData.map(r => r.marca))].sort();
+  return `
+    <div class="step-num">Paso 1 de ${TOTAL_STEPS}</div>
+    <h2>Marca del vehículo</h2>
+    <label>Seleccioná la marca</label>
+    <select id="wMarca" onchange="validateStep()">
+      <option value="">— Elegí una marca —</option>
+      ${marcas.map(m => `<option value="${m}">${m}</option>`).join('')}
+    </select>
+    <div class="wizard-nav">
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep1() { // Año
+  const anios = [];
+  for (let a = 2026; a >= 2012; a--) anios.push(a);
+  return `
+    <div class="step-num">Paso 2 de ${TOTAL_STEPS}</div>
+    <h2>Año del vehículo</h2>
+    <label>Seleccioná el año</label>
+    <select id="wAnio" onchange="validateStep()">
+      <option value="">— Elegí el año —</option>
+      ${anios.map(a => `<option value="${a}">${a}</option>`).join('')}
+    </select>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep2() { // Modelo
+  const marca = getWizardVal('marca');
+  const anio = getWizardVal('anio');
+  const anioCol = anio === '0' ? '0Km' : anio;
+  const filtered = ccaData.filter(r => {
+    if (r.marca !== marca) return false;
+    const precio = r[anioCol];
+    if (!precio || precio === '' || precio === '0') return false;
+    // Check version year filter
+    const v = r.version;
+    const tieneAnio = /\d{4}/.test(v);
+    if (tieneAnio && v.indexOf(anio) < 0) return false;
+    return true;
+  });
+  const modelos = [...new Set(filtered.map(r => r.modelo))].sort();
+  return `
+    <div class="step-num">Paso 3 de ${TOTAL_STEPS}</div>
+    <h2>Modelo</h2>
+    <label>${marca} — Año ${anio}</label>
+    <select id="wModelo" onchange="validateStep()">
+      <option value="">— Elegí el modelo —</option>
+      ${modelos.map(m => `<option value="${m}">${m}</option>`).join('')}
+    </select>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep3() { // Versión CCA
+  const marca = getWizardVal('marca');
+  const anio = getWizardVal('anio');
+  const modelo = getWizardVal('modelo');
+  const anioCol = anio === '0' ? '0Km' : anio;
+  const filtered = ccaData.filter(r => {
+    if (r.marca !== marca || r.modelo !== modelo) return false;
+    const precio = r[anioCol];
+    if (!precio || precio === '' || precio === '0') return false;
+    const v = r.version;
+    const tieneAnio = /\d{4}/.test(v);
+    if (tieneAnio && v.indexOf(anio) < 0) return false;
+    return true;
+  });
+  const versiones = filtered.map(r => r.version).sort();
+  return `
+    <div class="step-num">Paso 4 de ${TOTAL_STEPS}</div>
+    <h2>Versión</h2>
+    <label>${marca} ${modelo} — Año ${anio}</label>
+    <select id="wVersion" onchange="validateStep()">
+      <option value="">— Elegí la versión —</option>
+      ${versiones.map(v => `<option value="${v}">${v}</option>`).join('')}
+    </select>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep4() { // Modelo VW 0km (solo si aplica)
+  const marca = getWizardVal('marca');
+  if (marca !== 'VOLKSWAGEN') {
+    // Skip this step
+    wizardData.modeloVW = '';
+    return renderStep5_content();
+  }
+  return `
+    <div class="step-num">Paso 5 de ${TOTAL_STEPS}</div>
+    <h2>Modelo VW 0km</h2>
+    <label>Si existe versión 0km actual, seleccionala para aplicar fórmula VW</label>
+    <select id="wModeloVW" onchange="validateStep()">
+      <option value="">— No aplica / Sin equivalente 0km —</option>
+      ${vwData.map(v => `<option value="${v.modelo}">${v.modelo} — $${formatNum(v.precio_0km)}</option>`).join('')}
+    </select>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep5_content() {
+  // This gets called when skipping step 4 for non-VW
+  currentStep = 5;
+  renderWizard();
+  return '';
+}
+
+function renderStep5() { // Kilómetros
+  return `
+    <div class="step-num">Paso 6 de ${TOTAL_STEPS}</div>
+    <h2>Kilómetros</h2>
+    <label>Kilómetros actuales del vehículo</label>
+    <input type="number" id="wKm" placeholder="Ej: 45000" oninput="validateStep()" min="0">
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep6() { // Color + Kavak
+  return `
+    <div class="step-num">Paso 7 de ${TOTAL_STEPS}</div>
+    <h2>Color y precio Kavak</h2>
+    <label>Color del vehículo</label>
+    <input type="text" id="wColor" placeholder="Ej: Blanco, Gris Platino" oninput="validateStep()">
+    <label style="margin-top:16px">Precio Kavak (compra)</label>
+    <input type="number" id="wKavak" placeholder="Precio que ofrece Kavak (opcional)" min="0">
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep7() { // Fotos
+  let slots = '';
+  for (let i = 0; i < 10; i++) {
+    if (fotoPreviews[i]) {
+      slots += `<div class="foto-slot">
+        <img src="${fotoPreviews[i]}">
+        <div class="remove-foto" onclick="removeFoto(${i})">×</div>
+      </div>`;
+    } else if (i === fotoPreviews.length) {
+      slots += `<div class="foto-slot" onclick="document.getElementById('fotoInput').click()">
+        <span class="plus">+</span>
+      </div>`;
+    } else {
+      slots += `<div class="foto-slot"><span class="plus" style="opacity:0.3">+</span></div>`;
+    }
+  }
+  const marca = getWizardVal('marca');
+  const modelo = getWizardVal('modelo');
+  const version = getWizardVal('version');
+  const anio = getWizardVal('anio');
+  const km = getWizardVal('km');
+  const color = getWizardVal('color');
+  return `
+    <div class="step-num">Paso 8 de ${TOTAL_STEPS}</div>
+    <h2>Fotos y envío</h2>
+    <label>Fotos del vehículo (hasta 10)</label>
+    <div class="fotos-grid">${slots}</div>
+    <div style="margin-top:20px; padding:16px; background:var(--vw-grey-1); border-radius:8px; font-size:13px;">
+      <strong>Resumen:</strong><br>
+      ${marca} ${modelo} ${anio}<br>
+      ${version}<br>
+      ${formatNum(km)} km — ${color}
+    </div>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-submit" onclick="submitTasacion()">Enviar tasación</button>
+    </div>
+  `;
+}
+
+// Wizard data storage
+let wizardData = {};
+
+function getWizardVal(field) {
+  return wizardData[field] || '';
+}
+
+function saveCurrentStep() {
+  switch(currentStep) {
+    case 0: wizardData.marca = val('wMarca'); break;
+    case 1: wizardData.anio = val('wAnio'); break;
+    case 2: wizardData.modelo = val('wModelo'); break;
+    case 3: wizardData.version = val('wVersion'); break;
+    case 4:
+      const el = document.getElementById('wModeloVW');
+      wizardData.modeloVW = el ? el.value : '';
+      break;
+    case 5: wizardData.km = val('wKm'); break;
+    case 6:
+      wizardData.color = val('wColor');
+      wizardData.kavak = val('wKavak');
+      break;
+  }
+}
+
+function val(id) {
+  const el = document.getElementById(id);
+  return el ? el.value.trim() : '';
+}
+
+function validateStep() {
+  const btn = document.getElementById('btnNext');
+  if (!btn) return;
+  let valid = false;
+  switch(currentStep) {
+    case 0: valid = !!val('wMarca'); break;
+    case 1: valid = !!val('wAnio'); break;
+    case 2: valid = !!val('wModelo'); break;
+    case 3: valid = !!val('wVersion'); break;
+    case 4: valid = true; break; // modelo VW optional
+    case 5: valid = !!val('wKm') && parseInt(val('wKm')) >= 0; break;
+    case 6: valid = !!val('wColor'); break;
+  }
+  btn.disabled = !valid;
+}
+
+function nextStep() {
+  saveCurrentStep();
+  // Skip step 4 for non-VW
+  if (currentStep === 3 && wizardData.marca !== 'VOLKSWAGEN') {
+    wizardData.modeloVW = '';
+    currentStep = 5;
+  } else {
+    currentStep++;
+  }
+  renderWizard();
+}
+
+function prevStep() {
+  saveCurrentStep();
+  // Skip step 4 for non-VW
+  if (currentStep === 5 && wizardData.marca !== 'VOLKSWAGEN') {
+    currentStep = 3;
+  } else {
+    currentStep--;
+  }
+  if (currentStep < 0) currentStep = 0;
+  renderWizard();
+}
+
+// ============ FOTOS ============
+function handleFotos(files) {
+  for (const f of files) {
+    if (fotos.length >= 10) break;
+    fotos.push(f);
+    const reader = new FileReader();
+    reader.onload = e => {
+      fotoPreviews.push(e.target.result);
+      if (currentStep === 7) renderWizard();
+    };
+    reader.readAsDataURL(f);
+  }
+  document.getElementById('fotoInput').value = '';
+}
+
+function removeFoto(idx) {
+  fotos.splice(idx, 1);
+  fotoPreviews.splice(idx, 1);
+  renderWizard();
+}
+
+// ============ CALCULOS ============
+function getCotiz() {
+  const el = document.getElementById('cotizUsd');
+  return el ? parseFloat(el.value) || DEFAULT_COTIZ : DEFAULT_COTIZ;
+}
+
+function esPesos(marca) {
+  return MARCAS_PESOS.includes(marca.toUpperCase());
+}
+
+function esPickup(modelo) {
+  const m = modelo.toUpperCase();
+  return PICKUPS_KEYWORDS.some(k => m.includes(k));
+}
+
+function calcPrecioCCA(marca, modelo, version, anio) {
+  const anioCol = anio === 0 ? '0Km' : String(anio);
+  const row = ccaData.find(r => r.marca === marca && r.modelo === modelo && r.version === version);
+  if (!row) return null;
+  const val = parseFloat((row[anioCol] || '').replace(/,/g, '.'));
+  if (!val || isNaN(val)) return null;
+  if (esPesos(marca)) {
+    return { precio: val * 1000, moneda: 'ARS' };
+  } else {
+    return { precio: val, moneda: 'USD' };
+  }
+}
+
+function calcAjusteKm(km, anio, modelo) {
+  const anioActual = 2026;
+  const antiguedad = Math.max(1, anioActual - anio);
+  const kmPorAnio = esPickup(modelo) ? 20000 : 15000;
+  const kmEsperados = antiguedad * kmPorAnio;
+  const ratio = km / kmEsperados;
+
+  if (ratio <= 0.15) return 12;
+  if (ratio <= 0.33) return 8;
+  if (ratio <= 0.50) return 5;
+  if (ratio <= 0.66) return 3;
+  if (ratio <= 0.90) return 1;
+  if (ratio <= 1.10) return 0;
+  if (ratio <= 1.33) return -3;
+  if (ratio <= 1.66) return -5;
+  if (ratio <= 2.00) return -8;
+  if (ratio <= 3.00) return -12;
+  return -18;
+}
+
+function calcFormulaVW(modeloVW, anio) {
+  if (!modeloVW) return null;
+  const vw = vwData.find(v => v.modelo === modeloVW);
+  if (!vw) return null;
+  const anioActual = 2026;
+  const anios = Math.max(0, anioActual - anio);
+  const precio0km = vw.precio_0km;
+  const precioMercado = precio0km / 1.05 / Math.pow(1.09, anios);
+  return { precio0km, precioMercado, moneda: 'ARS' };
+}
+
+// ============ SUBMIT TASACION ============
+async function submitTasacion() {
+  showLoading('Subiendo fotos...');
+  try {
+    // Upload fotos
+    const fotoUrls = [];
+    const tasId = crypto.randomUUID();
+    for (let i = 0; i < fotos.length; i++) {
+      document.getElementById('loadingText').textContent = `Subiendo foto ${i+1} de ${fotos.length}...`;
+      const ext = fotos[i].name.split('.').pop();
+      const path = `${tasId}/foto_${i}.${ext}`;
+      const url = await sbUpload('tasaciones-fotos', path, fotos[i]);
+      fotoUrls.push(url);
+    }
+
+    // Calcular precios
+    const marca = wizardData.marca;
+    const modelo = wizardData.modelo;
+    const version = wizardData.version;
+    const anio = parseInt(wizardData.anio);
+    const km = parseInt(wizardData.km);
+    const color = wizardData.color;
+    const kavak = parseFloat(wizardData.kavak) || null;
+    const modeloVW = wizardData.modeloVW || null;
+
+    const cca = calcPrecioCCA(marca, modelo, version, anio);
+    const ajusteKm = calcAjusteKm(km, anio, modelo);
+    const formulaVW = calcFormulaVW(modeloVW, anio);
+
+    let precioCca = cca ? cca.precio : null;
+    let precioCcaMoneda = cca ? cca.moneda : 'ARS';
+    let precioCcaToma = precioCca ? precioCca * (1 + ajusteKm/100) * 0.86 : null;
+
+    let precioFormulaVw = formulaVW ? formulaVW.precioMercado : null;
+    let precioFormulaVwToma = precioFormulaVw ? precioFormulaVw * (1 + ajusteKm/100) * 0.88 : null;
+    let precioVw0km = formulaVW ? formulaVW.precio0km : null;
+
+    document.getElementById('loadingText').textContent = 'Guardando tasación...';
+
+    const record = {
+      id: tasId,
+      vendedor_id: currentUser.id,
+      vendedor_nombre: currentUser.nombre,
+      marca, modelo, version,
+      anio: anio,
+      kilometros: km,
+      color,
+      precio_cca: precioCca,
+      precio_cca_moneda: precioCcaMoneda,
+      precio_cca_toma: precioCcaToma,
+      precio_formula_vw: precioFormulaVw,
+      precio_formula_vw_toma: precioFormulaVwToma,
+      modelo_vw_0km: modeloVW,
+      precio_vw_0km: precioVw0km,
+      precio_kavak: kavak,
+      ajuste_km_porcentaje: ajusteKm,
+      fotos: fotoUrls,
+      estado: 'pendiente'
+    };
+
+    await sbFetch('tasaciones', {
+      method: 'POST',
+      body: JSON.stringify(record)
+    });
+
+    // Send WhatsApp notification
+    try {
+      const msg = `🚗 Nueva tasación de ${currentUser.nombre}:%0A${marca} ${modelo} ${anio}%0A${version}%0A${formatNum(km)} km - ${color}`;
+      await fetch(`https://api.callmebot.com/whatsapp.php?phone=${CALLMEBOT_PHONE}&text=${msg}&apikey=${CALLMEBOT_KEY}`);
+    } catch(e) { console.log('WhatsApp notification error:', e); }
+
+    hideLoading();
+    showToast('Tasación enviada correctamente');
+
+    // Reset wizard
+    wizardData = {};
+    fotos = [];
+    fotoPreviews = [];
+    currentStep = 0;
+    renderWizard();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showToast('Error al enviar tasación');
+  }
+}
+
+// ============ MIS TASACIONES (vendedor) ============
+async function loadMisTasaciones() {
+  const list = document.getElementById('misTasacionesList');
+  list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Cargando...</div>';
+  try {
+    const data = await sbFetch(`tasaciones?vendedor_id=eq.${currentUser.id}&order=created_at.desc`);
+    if (data.length === 0) {
+      list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">No tenés tasaciones todavía</div>';
+      return;
+    }
+    list.innerHTML = data.map(t => {
+      const estadoClass = `estado-${t.estado}`;
+      let precioHTML = '';
+      if (t.precio_toma_final) {
+        precioHTML = `<div class="precio-toma-final">$ ${formatNum(t.precio_toma_final)}</div>`;
+      }
+      return `
+        <div class="tasacion-card">
+          <div class="marca-modelo">${t.marca} ${t.modelo} ${t.anio}</div>
+          <div class="detalles">${t.version} — ${formatNum(t.kilometros)} km — ${t.color || ''}</div>
+          <span class="estado ${estadoClass}">${t.estado.toUpperCase()}</span>
+          ${precioHTML}
+        </div>
+      `;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red)">Error al cargar</div>';
+  }
+}
+
+// ============ ADMIN ============
+async function loadAdminTasaciones(filter) {
+  const list = document.getElementById('adminList');
+  list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Cargando...</div>';
+  try {
+    let query = 'tasaciones?order=created_at.desc';
+    if (filter === 'pendientes') query += '&estado=eq.pendiente';
+    else if (filter === 'tasadas') query += '&estado=eq.tasada';
+    const data = await sbFetch(query);
+    allTasaciones = data;
+    renderAdminList(data);
+  } catch(e) {
+    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red)">Error al cargar</div>';
+  }
+}
+
+function showAdminTab(tab, btn) {
+  document.querySelectorAll('.admin-tabs button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  loadAdminTasaciones(tab);
+}
+
+function renderAdminList(tasaciones) {
+  const list = document.getElementById('adminList');
+  if (tasaciones.length === 0) {
+    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">No hay tasaciones</div>';
+    return;
+  }
+  list.innerHTML = tasaciones.map(t => renderAdminCard(t)).join('');
+}
+
+function renderAdminCard(t) {
+  const cotiz = getCotiz();
+
+  // Recalc CCA con cotización actual
+  let ccaPublico = null;
+  let ccaMoneda = t.precio_cca_moneda || 'ARS';
+  if (t.precio_cca) {
+    if (ccaMoneda === 'USD') {
+      ccaPublico = t.precio_cca * cotiz;
+    } else {
+      ccaPublico = t.precio_cca;
+    }
+  }
+  const ajuste = t.ajuste_km_porcentaje || 0;
+  const ccaAjustado = ccaPublico ? ccaPublico * (1 + ajuste/100) : null;
+  const ccaToma = ccaAjustado ? ccaAjustado * 0.86 : null;
+
+  // Formula VW
+  let vwMercado = t.precio_formula_vw || null;
+  let vwAjustado = vwMercado ? vwMercado * (1 + ajuste/100) : null;
+  let vwToma = vwAjustado ? vwAjustado * 0.88 : null;
+
+  // Kavak
+  const kavak = t.precio_kavak || null;
+
+  // Fotos
+  const fotosArr = t.fotos || [];
+  const fotosHTML = fotosArr.length > 0 ?
+    `<div class="fotos-admin-grid">${fotosArr.map(f => `<img src="${f}" onclick="showPhoto('${f}')">`).join('')}</div>` :
+    '<div style="font-size:13px;color:var(--vw-grey-3)">Sin fotos</div>';
+
+  // Fecha
+  const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+
+  const estadoClass = `estado-${t.estado}`;
+
+  return `
+    <div class="admin-card" id="card-${t.id}">
+      <h3>
+        <span>${t.marca} ${t.modelo} ${t.anio}</span>
+        <span class="estado ${estadoClass}">${t.estado.toUpperCase()}</span>
+      </h3>
+
+      ${fotosHTML}
+
+      <div style="margin-top:16px">
+        <div class="info-row"><span class="label">Versión</span><span class="value">${t.version}</span></div>
+        <div class="info-row"><span class="label">Kilómetros</span><span class="value">${formatNum(t.kilometros)} km</span></div>
+        <div class="info-row"><span class="label">Color</span><span class="value">${t.color || '-'}</span></div>
+        <div class="info-row"><span class="label">Vendedor</span><span class="value">${t.vendedor_nombre}</span></div>
+        <div class="info-row"><span class="label">Fecha</span><span class="value">${fecha}</span></div>
+        <div class="info-row"><span class="label">Ajuste km</span><span class="value" style="color:${ajuste >= 0 ? 'var(--green)' : 'var(--red)'}">${ajuste >= 0 ? '+' : ''}${ajuste}%</span></div>
+        ${t.precio_cca && ccaMoneda === 'USD' ? `<div class="info-row"><span class="label">Precio CCA (USD)</span><span class="value" style="font-family:var(--mono)">USD ${formatNum(t.precio_cca)}</span></div>` : ''}
+        ${t.modelo_vw_0km ? `<div class="info-row"><span class="label">Modelo VW 0km</span><span class="value">${t.modelo_vw_0km}</span></div>` : ''}
+        ${t.precio_vw_0km ? `<div class="info-row"><span class="label">Precio 0km (sin FyF)</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_vw_0km)}</span></div>` : ''}
+      </div>
+
+      <div class="precios-grid">
+        <div class="precio-box cca">
+          <div class="metodo">CCA</div>
+          <div class="valor">${ccaToma ? '$ ' + formatNum(Math.round(ccaToma)) : 'N/A'}</div>
+          <div class="sub">Público: ${ccaAjustado ? '$ ' + formatNum(Math.round(ccaAjustado)) : '-'}<br>Toma -14%</div>
+        </div>
+        <div class="precio-box vw">
+          <div class="metodo">Fórmula VW</div>
+          <div class="valor">${vwToma ? '$ ' + formatNum(Math.round(vwToma)) : 'N/A'}</div>
+          <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>Toma -12%</div>
+        </div>
+        <div class="precio-box kavak">
+          <div class="metodo">Kavak</div>
+          <div class="valor">${kavak ? '$ ' + formatNum(Math.round(kavak)) : 'N/A'}</div>
+          <div class="sub">Precio compra directo</div>
+        </div>
+      </div>
+
+      <div class="precio-toma-input">
+        <input type="number" id="toma-${t.id}" placeholder="Precio de toma final" value="${t.precio_toma_final || ''}">
+        <button onclick="guardarToma('${t.id}')">Guardar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function guardarToma(id) {
+  const input = document.getElementById(`toma-${id}`);
+  const precio = parseFloat(input.value);
+  if (!precio || precio <= 0) { showToast('Ingresá un precio válido'); return; }
+
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        precio_toma_final: precio,
+        estado: 'tasada',
+        updated_at: new Date().toISOString()
+      })
+    });
+    showToast('Precio guardado');
+    // Refresh
+    const activeTab = document.querySelector('.admin-tabs button.active');
+    const filter = activeTab ? activeTab.textContent.toLowerCase() : 'pendientes';
+    loadAdminTasaciones(filter);
+  } catch(e) {
+    console.error(e);
+    showToast('Error al guardar');
+  }
+}
+
+function recalcAll() {
+  // Re-render con nueva cotización
+  if (allTasaciones.length > 0) {
+    renderAdminList(allTasaciones);
+  }
+}
+
+// ============ HELPERS ============
+function formatNum(n) {
+  if (n === null || n === undefined || isNaN(n)) return '-';
+  return Math.round(Number(n)).toLocaleString('es-AR');
+}
+
+function showLoading(text) {
+  document.getElementById('loadingText').textContent = text || 'Cargando...';
+  document.getElementById('loadingOverlay').classList.add('show');
+}
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('show');
+}
+
+function showPhoto(url) {
+  document.getElementById('photoModalImg').src = url;
+  document.getElementById('photoModal').classList.add('show');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// Enter key on login
+document.getElementById('loginPass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') login();
+});
+</script>
+</body>
+</html>
