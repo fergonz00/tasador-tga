@@ -820,7 +820,7 @@ function renderStep6() { // Color + Kavak
     <label>Color del vehículo</label>
     <input type="text" id="wColor" placeholder="Ej: Blanco, Gris Platino" oninput="validateStep()">
     <label style="margin-top:16px">Precio Kavak (compra)</label>
-    <input type="number" id="wKavak" placeholder="Precio que ofrece Kavak (opcional)" min="0">
+    <input type="number" id="wKavak" placeholder="Precio que ofrece Kavak" min="0" oninput="validateStep()">
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
       <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
@@ -909,7 +909,7 @@ function validateStep() {
     case 3: valid = !!val('wVersion'); break;
     case 4: valid = true; break; // modelo VW optional
     case 5: valid = !!val('wKm') && parseInt(val('wKm')) >= 0; break;
-    case 6: valid = !!val('wColor'); break;
+    case 6: valid = !!val('wColor') && !!val('wKavak') && parseInt(val('wKavak')) > 0; break;
   }
   btn.disabled = !valid;
 }
