@@ -465,8 +465,8 @@ input, select, textarea { font-family: var(--font); }
 // ============ CONFIG ============
 const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
-const CCA_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/export?format=csv&gid=904791552';
-const VW_CSV_URL = 'https://docs.google.com/spreadsheets/d/1CCzLO3VBqmPNVyhn9ejinAsXU9p_jDhkMKU5WeXoB64/export?format=csv&gid=1432576316';
+const CCA_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=904791552';
+const VW_CSV_URL = 'https://docs.google.com/spreadsheets/d/1CCzLO3VBqmPNVyhn9ejinAsXU9p_jDhkMKU5WeXoB64/gviz/tq?tqx=out:csv&gid=1432576316';
 const CALLMEBOT_PHONE = '5491156559854';
 const CALLMEBOT_KEY = '6552632';
 const FYF = 1110000;
@@ -557,9 +557,12 @@ function parseCSVLine(line) {
 async function loadCCA() {
   try {
     const res = await fetch(CCA_CSV_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const text = await res.text();
+    console.log('CCA raw first 200 chars:', text.substring(0, 200));
     ccaData = parseCSV(text);
     console.log('CCA cargado:', ccaData.length, 'registros');
+    if (ccaData.length > 0) console.log('CCA primera fila:', JSON.stringify(ccaData[0]));
   } catch(e) {
     console.error('Error cargando CCA:', e);
     showToast('Error cargando precios CCA');
