@@ -978,8 +978,13 @@ function calcPrecioCCA(marca, modelo, version, anio) {
   const anioCol = anio === 0 ? '0Km' : String(anio);
   const row = ccaData.find(r => r.marca === marca && r.modelo === modelo && r.version === version);
   if (!row) return null;
-  const val = parseFloat((row[anioCol] || '').replace(/,/g, '.'));
+  let raw = (row[anioCol] || '').trim();
+  if (!raw || raw === '0') return null;
+  // Parse number: could be "22680", "22680.5", "57735.9", "57735,9"
+  // Google gviz uses dot as decimal separator
+  const val = parseFloat(raw.replace(/,/g, '.'));
   if (!val || isNaN(val)) return null;
+  console.log(`CCA precio ${marca} ${modelo} ${version} año ${anio}: raw="${raw}" parsed=${val}`);
   if (esPesos(marca)) {
     return { precio: val * 1000, moneda: 'ARS' };
   } else {
