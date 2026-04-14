@@ -466,7 +466,7 @@ input, select, textarea { font-family: var(--font); }
 const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
 const CCA_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=904791552';
-const VW_CSV_URL = 'https://docs.google.com/spreadsheets/d/1CCzLO3VBqmPNVyhn9ejinAsXU9p_jDhkMKU5WeXoB64/gviz/tq?tqx=out:csv&gid=1432576316';
+const VW_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=1899724741';
 const CALLMEBOT_PHONE = '5491156559854';
 const CALLMEBOT_KEY = '6552632';
 const FYF = 1110000;
@@ -573,13 +573,19 @@ async function loadVW() {
   try {
     const res = await fetch(VW_CSV_URL);
     const text = await res.text();
+    console.log('VW raw first 300 chars:', text.substring(0, 300));
     const rows = parseCSV(text);
-    // Columnas: modelo, precio de lista, oferta vigente con fyf, stock, DTO, colores disponibles
-    vwData = rows.filter(r => r['modelo'] && (r['oferta vigente con fyf'] || r['oferta vigente con fyfstock'])).map(r => {
-      const precio_raw = r['oferta vigente con fyf'] || r['oferta vigente con fyfstock'] || '';
+    console.log('VW parsed rows:', rows.length);
+    if (rows.length > 0) console.log('VW first row keys:', Object.keys(rows[0]), 'vals:', JSON.stringify(rows[0]));
+    vwData = rows.filter(r => {
+      const modelo = r['Modelo'] || r['modelo'] || '';
+      return modelo.length > 0;
+    }).map(r => {
+      const modelo = (r['Modelo'] || r['modelo'] || '').trim();
+      const precio_raw = r['Oferta con FyF'] || r['oferta vigente con fyf'] || r['Oferta con FyF'] || '';
       const precio_str = precio_raw.replace(/\$/g,'').replace(/,/g,'').replace(/\./g,'').replace(/"/g,'').trim();
       return {
-        modelo: (r['modelo'] || '').replace(/"/g,'').trim(),
+        modelo: modelo,
         precio_oferta_fyf: parseFloat(precio_str) || 0,
         precio_0km: Math.max(0, (parseFloat(precio_str) || 0) - FYF)
       };
