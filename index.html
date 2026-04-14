@@ -465,8 +465,8 @@ input, select, textarea { font-family: var(--font); }
 // ============ CONFIG ============
 const SUPABASE_URL = 'https://wjfglsafgaltusmbnccl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
-const CCA_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQH_9OtgjB7xV7qZEHoogNXq8TE5gLxz4RNb2DvxbbQ1o2A_Be2my532lJF0nxpJCUkghJrEa3TeDw/pub?gid=904791552&single=true&output=csv';
-const VW_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTD4OFCkAXCrVNslz1OtxnYm1DRhDulVOHaCxJ81-kiQL17KnfimCOPn3hJDHAvJsF9ROEZdePuRw2E/pub?gid=1432576316&single=true&output=csv';
+const CCA_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/export?format=csv&gid=904791552';
+const VW_CSV_URL = 'https://docs.google.com/spreadsheets/d/1CCzLO3VBqmPNVyhn9ejinAsXU9p_jDhkMKU5WeXoB64/export?format=csv&gid=1432576316';
 const CALLMEBOT_PHONE = '5491156559854';
 const CALLMEBOT_KEY = '6552632';
 const FYF = 1110000;
@@ -525,9 +525,9 @@ function parseCSV(text) {
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const vals = parseCSVLine(lines[i]);
-    if (vals.length < headers.length) continue;
+    if (vals.length < 2) continue;
     const obj = {};
-    headers.forEach((h, idx) => obj[h.trim()] = (vals[idx] || '').trim());
+    headers.forEach((h, idx) => obj[h.trim().replace(/"/g,'')] = (vals[idx] || '').trim().replace(/"/g,''));
     rows.push(obj);
   }
   return rows;
@@ -572,10 +572,11 @@ async function loadVW() {
     const text = await res.text();
     const rows = parseCSV(text);
     // Columnas: modelo, precio de lista, oferta vigente con fyf, stock, DTO, colores disponibles
-    vwData = rows.filter(r => r['modelo'] && r['oferta vigente con fyf']).map(r => {
-      const precio_str = (r['oferta vigente con fyf'] || '').replace(/\$/g,'').replace(/\./g,'').replace(/,/g,'').trim();
+    vwData = rows.filter(r => r['modelo'] && (r['oferta vigente con fyf'] || r['oferta vigente con fyfstock'])).map(r => {
+      const precio_raw = r['oferta vigente con fyf'] || r['oferta vigente con fyfstock'] || '';
+      const precio_str = precio_raw.replace(/\$/g,'').replace(/,/g,'').replace(/\./g,'').replace(/"/g,'').trim();
       return {
-        modelo: r['modelo'].trim(),
+        modelo: (r['modelo'] || '').replace(/"/g,'').trim(),
         precio_oferta_fyf: parseFloat(precio_str) || 0,
         precio_0km: Math.max(0, (parseFloat(precio_str) || 0) - FYF)
       };
