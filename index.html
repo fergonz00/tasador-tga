@@ -1101,7 +1101,7 @@ async function submitTasacion() {
   try {
     // Upload fotos
     const fotoUrls = [];
-    const tasId = crypto.randomUUID();
+    const tasId = (crypto.randomUUID || function() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:r&0x3|0x8).toString(16)}) })();
     for (let i = 0; i < fotos.length; i++) {
       document.getElementById('loadingText').textContent = `Subiendo foto ${i+1} de ${fotos.length}...`;
       const ext = fotos[i].name.split('.').pop();
