@@ -380,6 +380,43 @@ input, select, textarea { font-family: var(--font); }
   .admin-card { padding: 18px 16px; }
   .fotos-grid { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* Collapsible cards */
+.card-header {
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+}
+.card-header:hover { background: var(--vw-grey-1); }
+.card-header .card-summary {
+  flex: 1;
+}
+.card-header .card-summary .marca-modelo { font-weight: 600; font-size: 16px; color: var(--vw-blue); }
+.card-header .card-summary .detalles { font-size: 13px; color: var(--vw-grey-4); margin-top: 3px; }
+.card-header .card-right {
+  text-align: right; margin-left: 12px;
+}
+.card-header .arrow {
+  font-size: 18px; color: var(--vw-grey-3);
+  transition: transform 0.3s;
+  margin-left: 8px;
+}
+.card-header .arrow.open { transform: rotate(180deg); }
+.card-body {
+  display: none;
+  padding: 0 20px 20px;
+  animation: fadeIn 0.3s ease;
+}
+.card-body.open { display: block; }
+.tasacion-card-compact {
+  background: white;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: box-shadow 0.2s;
+}
+.tasacion-card-compact:hover { box-shadow: var(--shadow-lg); }
 </style>
 </head>
 <body>
@@ -1201,18 +1238,36 @@ async function loadMisTasaciones() {
     list.innerHTML = data.map(t => {
       const estadoClass = `estado-${t.estado}`;
       let precioHTML = '';
+      let tasadoInfo = '';
       if (t.precio_toma_final) {
         const tasadoFecha = t.tasado_at ? new Date(t.tasado_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
         const tasadoPor = t.tasado_por || '';
-        precioHTML = `<div class="precio-toma-final">$ ${formatNum(t.precio_toma_final)}</div>
-          <div style="font-size:12px;color:var(--vw-grey-4);margin-top:4px">Tasado por ${tasadoPor} — ${tasadoFecha}</div>`;
+        precioHTML = `<div class="precio-toma-final" style="font-size:17px">$ ${formatNum(t.precio_toma_final)}</div>`;
+        tasadoInfo = `<div style="font-size:12px;color:var(--vw-grey-4);margin-top:8px">Tasado por ${tasadoPor} — ${tasadoFecha}</div>`;
       }
+      const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
       return `
-        <div class="tasacion-card">
-          <div class="marca-modelo">${t.marca} ${t.modelo} ${t.anio}</div>
-          <div class="detalles">${t.version} — ${formatNum(t.kilometros)} km — ${t.color || ''}</div>
-          <span class="estado ${estadoClass}">${t.estado.toUpperCase()}</span>
-          ${precioHTML}
+        <div class="tasacion-card-compact">
+          <div class="card-header" onclick="toggleCard('${t.id}')">
+            <div class="card-summary">
+              <div class="marca-modelo">${t.marca} ${t.modelo} ${t.anio}</div>
+              <div class="detalles">${t.version} — ${formatNum(t.kilometros)} km</div>
+            </div>
+            <div class="card-right">
+              <span class="estado ${estadoClass}">${t.estado.toUpperCase()}</span>
+              ${precioHTML}
+            </div>
+            <span class="arrow" id="arrow-${t.id}">▼</span>
+          </div>
+          <div class="card-body" id="body-${t.id}">
+            <div class="info-row"><span class="label">Versión</span><span class="value">${t.version}</span></div>
+            <div class="info-row"><span class="label">Kilómetros</span><span class="value">${formatNum(t.kilometros)} km</span></div>
+            <div class="info-row"><span class="label">Color</span><span class="value">${t.color || '-'}</span></div>
+            <div class="info-row"><span class="label">Fecha</span><span class="value">${fecha}</span></div>
+            ${t.modelo_0km_consulta ? `<div class="info-row"><span class="label">0km consultado</span><span class="value">${t.modelo_0km_consulta}</span></div>` : ''}
+            ${t.precio_ofrecido_fyf ? `<div class="info-row"><span class="label">Precio ofrecido FyF</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_ofrecido_fyf)}</span></div>` : ''}
+            ${tasadoInfo}
+          </div>
         </div>
       `;
     }).join('');
@@ -1322,13 +1377,22 @@ function renderAdminCard(t) {
   }
 
   const estadoClass = `estado-${t.estado}`;
+  const fechaCorta = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' });
 
   return `
-    <div class="admin-card" id="card-${t.id}">
-      <h3>
-        <span>${t.marca} ${t.modelo} ${t.anio}</span>
-        <span class="estado ${estadoClass}">${t.estado.toUpperCase()}</span>
-      </h3>
+    <div class="tasacion-card-compact" id="card-${t.id}">
+      <div class="card-header" onclick="toggleCard('${t.id}')">
+        <div class="card-summary">
+          <div class="marca-modelo">${t.marca} ${t.modelo} ${t.anio}</div>
+          <div class="detalles">${t.version} — ${formatNum(t.kilometros)} km — ${t.vendedor_nombre} — ${fechaCorta}</div>
+        </div>
+        <div class="card-right">
+          <span class="estado ${estadoClass}">${t.estado.toUpperCase()}</span>
+          ${t.precio_toma_final ? `<div style="font-family:var(--mono);font-weight:700;color:var(--green);font-size:15px;margin-top:4px">$ ${formatNum(t.precio_toma_final)}</div>` : ''}
+        </div>
+        <span class="arrow" id="arrow-${t.id}">▼</span>
+      </div>
+      <div class="card-body" id="body-${t.id}">
 
       ${fotosHTML}
 
@@ -1365,8 +1429,9 @@ function renderAdminCard(t) {
       ${margenHTML}
 
       <div class="precio-toma-input">
-        <input type="number" id="toma-${t.id}" placeholder="Precio de toma final" value="${t.precio_toma_final || ''}">
-        <button onclick="guardarToma('${t.id}')">Guardar</button>
+        <input type="number" id="toma-${t.id}" placeholder="Precio de toma final" value="${t.precio_toma_final || ''}" onclick="event.stopPropagation()">
+        <button onclick="event.stopPropagation(); guardarToma('${t.id}')">Guardar</button>
+      </div>
       </div>
     </div>
   `;
@@ -1412,6 +1477,13 @@ function generarUUID() {
     var r = Math.random() * 16 | 0;
     return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
   });
+}
+
+function toggleCard(id) {
+  const body = document.getElementById('body-' + id);
+  const arrow = document.getElementById('arrow-' + id);
+  if (body) { body.classList.toggle('open'); }
+  if (arrow) { arrow.classList.toggle('open'); }
 }
 
 function formatNum(n) {
