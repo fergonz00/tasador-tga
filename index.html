@@ -1101,7 +1101,7 @@ async function submitTasacion() {
   try {
     // Upload fotos
     const fotoUrls = [];
-    const tasId = (crypto.randomUUID || function() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:r&0x3|0x8).toString(16)}) })();
+    const tasId = generarUUID();
     for (let i = 0; i < fotos.length; i++) {
       document.getElementById('loadingText').textContent = `Subiendo foto ${i+1} de ${fotos.length}...`;
       const ext = fotos[i].name.split('.').pop();
@@ -1407,6 +1407,13 @@ function recalcAll() {
 }
 
 // ============ HELPERS ============
+function generarUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 function formatNum(n) {
   if (n === null || n === undefined || isNaN(n)) return '-';
   return Math.round(Number(n)).toLocaleString('es-AR');
