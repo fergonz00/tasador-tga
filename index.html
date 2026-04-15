@@ -469,6 +469,7 @@ const CCA_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgN
 const VW_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=1899724741';
 const CALLMEBOT_PHONE = '5491156559854';
 const CALLMEBOT_KEY = '6552632';
+const TGA_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=1074000110';
 const FYF = 1110000;
 const DEFAULT_COTIZ = 1350;
 
@@ -482,11 +483,12 @@ const PICKUPS_KEYWORDS = ['AMAROK','HILUX','RANGER','SAVEIRO','S-10','S10','MONT
 let currentUser = null;
 let ccaData = [];
 let vwData = [];
+let tgaData = []; // margin data from tga sheet
 let fotos = []; // array of File objects
 let fotoPreviews = []; // array of data URLs
 let allTasaciones = [];
 let currentStep = 0;
-const TOTAL_STEPS = 8; // marca, año, modelo, version, modeloVW, km, color+kavak, fotos
+const TOTAL_STEPS = 10; // marca, año, modelo, version, modeloVW, km, color+kavak, 0km consulta, precio ofrecido, fotos
 
 // ============ SUPABASE HELPERS ============
 async function sbFetch(path, options = {}) {
@@ -597,6 +599,35 @@ async function loadVW() {
   }
 }
 
+async function loadTGA() {
+  try {
+    const res = await fetch(TGA_CSV_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    const rows = parseCSV(text);
+    tgaData = rows.filter(r => {
+      const modelo = r['Modelos'] || r['modelos'] || '';
+      return modelo.startsWith('VW ');
+    }).map(r => {
+      const modelo = (r['Modelos'] || r['modelos'] || '').trim();
+      const lista_raw = (r['Lista'] || r['lista'] || '').replace(/\$/g,'').replace(/,/g,'').replace(/\./g,'').trim();
+      const margen_raw = (r['gcia / P lista'] || r['gcia / p lista'] || '').replace(/%/g,'').replace(/,/g,'.').trim();
+      // Last column: "con fyf contado"
+      const fyf_raw = (r['con fyf contado'] || '').replace(/\$/g,'').replace(/,/g,'').replace(/\./g,'').trim();
+      return {
+        modelo: modelo,
+        precio_lista: parseFloat(lista_raw) || 0,
+        margen_base: parseFloat(margen_raw) || 0,
+        precio_fyf_base: parseFloat(fyf_raw) || 0
+      };
+    }).filter(r => r.precio_lista > 0);
+    console.log('TGA cargado:', tgaData.length, 'modelos');
+    if (tgaData.length > 0) console.log('TGA primera fila:', JSON.stringify(tgaData[0]));
+  } catch(e) {
+    console.error('Error cargando TGA:', e);
+  }
+}
+
 // ============ LOGIN ============
 async function login() {
   const user = document.getElementById('loginUser').value.trim().toLowerCase();
@@ -615,7 +646,7 @@ async function login() {
     document.getElementById('headerUser').textContent = currentUser.nombre + ' (' + currentUser.rol + ')';
 
     showLoading('Cargando datos...');
-    await Promise.all([loadCCA(), loadVW()]);
+    await Promise.all([loadCCA(), loadVW(), loadTGA()]);
     hideLoading();
 
     if (currentUser.rol === 'admin') {
@@ -669,7 +700,7 @@ function renderWizard() {
   document.getElementById('progressBar').innerHTML = dots;
 
   const container = document.getElementById('wizardContainer');
-  const steps = [renderStep0, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7];
+  const steps = [renderStep0, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7, renderStep8, renderStep9];
   container.innerHTML = '';
   const div = document.createElement('div');
   div.className = 'wizard-step active';
@@ -828,7 +859,41 @@ function renderStep6() { // Color + Kavak
   `;
 }
 
-function renderStep7() { // Fotos
+function renderStep7() { // Modelo 0km que consulta el cliente
+  const modelos0km = tgaData.length > 0 ? tgaData : vwData.map(v => ({ modelo: v.modelo }));
+  return `
+    <div class="step-num">Paso 8 de ${TOTAL_STEPS}</div>
+    <h2>0km que consulta el cliente</h2>
+    <label>¿Qué modelo 0km está averiguando?</label>
+    <select id="wModelo0km" onchange="validateStep()">
+      <option value="">— Elegí el modelo 0km —</option>
+      ${modelos0km.map(m => `<option value="${m.modelo}">${m.modelo}</option>`).join('')}
+    </select>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep8() { // Precio ofrecido con FyF
+  const modelo0km = getWizardVal('modelo0km');
+  const tga = tgaData.find(t => t.modelo === modelo0km);
+  const precioRef = tga ? `Precio FyF de referencia: $ ${formatNum(tga.precio_fyf_base)}` : '';
+  return `
+    <div class="step-num">Paso 9 de ${TOTAL_STEPS}</div>
+    <h2>Precio ofrecido al cliente</h2>
+    <label>Precio con flete y formulario que le ofreciste (con FyF incluido)</label>
+    <input type="number" id="wPrecioOfrecido" placeholder="Ej: 39000000" min="0" oninput="validateStep()">
+    ${precioRef ? `<div style="margin-top:8px; font-size:13px; color:var(--vw-grey-4)">${precioRef}</div>` : ''}
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function renderStep9() { // Fotos
   let slots = '';
   for (let i = 0; i < 10; i++) {
     if (fotoPreviews[i]) {
@@ -850,16 +915,19 @@ function renderStep7() { // Fotos
   const anio = getWizardVal('anio');
   const km = getWizardVal('km');
   const color = getWizardVal('color');
+  const modelo0km = getWizardVal('modelo0km');
+  const precioOfrecido = getWizardVal('precioOfrecido');
   return `
-    <div class="step-num">Paso 8 de ${TOTAL_STEPS}</div>
+    <div class="step-num">Paso 10 de ${TOTAL_STEPS}</div>
     <h2>Fotos y envío</h2>
     <label>Fotos del vehículo (hasta 10)</label>
     <div class="fotos-grid">${slots}</div>
     <div style="margin-top:20px; padding:16px; background:var(--vw-grey-1); border-radius:8px; font-size:13px;">
       <strong>Resumen:</strong><br>
-      ${marca} ${modelo} ${anio}<br>
-      ${version}<br>
-      ${formatNum(km)} km — ${color}
+      <strong>Usado:</strong> ${marca} ${modelo} ${anio} — ${version}<br>
+      ${formatNum(km)} km — ${color}<br>
+      <strong>0km:</strong> ${modelo0km}<br>
+      Precio ofrecido con FyF: $ ${formatNum(precioOfrecido)}
     </div>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -890,6 +958,8 @@ function saveCurrentStep() {
       wizardData.color = val('wColor');
       wizardData.kavak = val('wKavak');
       break;
+    case 7: wizardData.modelo0km = val('wModelo0km'); break;
+    case 8: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
   }
 }
 
@@ -910,6 +980,8 @@ function validateStep() {
     case 4: valid = true; break; // modelo VW optional
     case 5: valid = !!val('wKm') && parseInt(val('wKm')) >= 0; break;
     case 6: valid = !!val('wColor') && !!val('wKavak') && parseInt(val('wKavak')) > 0; break;
+    case 7: valid = !!val('wModelo0km'); break;
+    case 8: valid = !!val('wPrecioOfrecido') && parseInt(val('wPrecioOfrecido')) > 0; break;
   }
   btn.disabled = !valid;
 }
@@ -946,7 +1018,7 @@ function handleFotos(files) {
     const reader = new FileReader();
     reader.onload = e => {
       fotoPreviews.push(e.target.result);
-      if (currentStep === 7) renderWizard();
+      if (currentStep === 9) renderWizard();
     };
     reader.readAsDataURL(f);
   }
@@ -1060,6 +1132,10 @@ async function submitTasacion() {
     let precioFormulaVwToma = precioFormulaVw ? precioFormulaVw * (1 + ajusteKm/100) * 0.88 : null;
     let precioVw0km = formulaVW ? formulaVW.precio0km : null;
 
+    // 0km consulta data
+    const modelo0km = wizardData.modelo0km || null;
+    const precioOfrecido = parseFloat(wizardData.precioOfrecido) || null;
+
     document.getElementById('loadingText').textContent = 'Guardando tasación...';
 
     const record = {
@@ -1079,6 +1155,8 @@ async function submitTasacion() {
       precio_vw_0km: precioVw0km,
       precio_kavak: kavak,
       ajuste_km_porcentaje: ajusteKm,
+      modelo_0km_consulta: modelo0km,
+      precio_ofrecido_fyf: precioOfrecido,
       fotos: fotoUrls,
       estado: 'pendiente'
     };
@@ -1090,7 +1168,7 @@ async function submitTasacion() {
 
     // Send WhatsApp notification
     try {
-      const msg = `🚗 Nueva tasación de ${currentUser.nombre}:%0A${marca} ${modelo} ${anio}%0A${version}%0A${formatNum(km)} km - ${color}`;
+      const msg = `🚗 Nueva tasación de ${currentUser.nombre}:%0A${marca} ${modelo} ${anio}%0A${version}%0A${formatNum(km)} km - ${color}%0A0km: ${modelo0km || 'N/A'}%0APrecio ofrecido: $${formatNum(precioOfrecido)}`;
       await fetch(`https://api.callmebot.com/whatsapp.php?phone=${CALLMEBOT_PHONE}&text=${msg}&apikey=${CALLMEBOT_KEY}`);
     } catch(e) { console.log('WhatsApp notification error:', e); }
 
@@ -1208,6 +1286,41 @@ function renderAdminCard(t) {
   // Fecha
   const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
 
+  // 0km margin calculation
+  let margenHTML = '';
+  if (t.modelo_0km_consulta && t.precio_ofrecido_fyf) {
+    const tga = tgaData.find(m => m.modelo === t.modelo_0km_consulta);
+    if (tga && tga.precio_lista > 0) {
+      const diff = t.precio_ofrecido_fyf - tga.precio_fyf_base;
+      const varMargen = (diff / tga.precio_lista) * 100;
+      const margenReal = tga.margen_base + varMargen;
+      const margenColor = margenReal >= 0 ? 'var(--green)' : 'var(--red)';
+      const diffColor = diff >= 0 ? 'var(--green)' : 'var(--red)';
+      margenHTML = `
+        <div style="margin-top:16px; padding:16px; background:#FFFBEB; border-radius:8px; border:1px solid #FDE68A;">
+          <div style="font-size:13px; font-weight:600; color:#92400E; margin-bottom:10px;">MARGEN 0KM</div>
+          <div class="info-row"><span class="label">Modelo 0km</span><span class="value">${t.modelo_0km_consulta}</span></div>
+          <div class="info-row"><span class="label">Precio lista</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(tga.precio_lista)}</span></div>
+          <div class="info-row"><span class="label">FyF referencia (margen base)</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(tga.precio_fyf_base)}</span></div>
+          <div class="info-row"><span class="label">FyF ofrecido por vendedor</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_ofrecido_fyf)}</span></div>
+          <div class="info-row"><span class="label">Diferencia</span><span class="value" style="font-family:var(--mono);color:${diffColor}">${diff >= 0 ? '+' : ''}$ ${formatNum(Math.round(diff))}</span></div>
+          <div class="info-row"><span class="label">Margen base</span><span class="value">${tga.margen_base.toFixed(2)}%</span></div>
+          <div class="info-row"><span class="label">Variación</span><span class="value" style="color:${diffColor}">${varMargen >= 0 ? '+' : ''}${varMargen.toFixed(2)}%</span></div>
+          <div class="info-row" style="border-top:2px solid #FDE68A;padding-top:10px"><span class="label" style="font-weight:700;font-size:15px">Margen real</span><span class="value" style="font-family:var(--mono);font-size:18px;font-weight:700;color:${margenColor}">${margenReal.toFixed(2)}%</span></div>
+        </div>
+      `;
+    } else {
+      margenHTML = `
+        <div style="margin-top:16px; padding:16px; background:#FFFBEB; border-radius:8px; border:1px solid #FDE68A;">
+          <div style="font-size:13px; font-weight:600; color:#92400E; margin-bottom:10px;">MARGEN 0KM</div>
+          <div class="info-row"><span class="label">Modelo 0km</span><span class="value">${t.modelo_0km_consulta}</span></div>
+          <div class="info-row"><span class="label">FyF ofrecido</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_ofrecido_fyf)}</span></div>
+          <div style="font-size:12px;color:var(--vw-grey-3);margin-top:8px">Modelo no encontrado en hoja TGA para calcular margen</div>
+        </div>
+      `;
+    }
+  }
+
   const estadoClass = `estado-${t.estado}`;
 
   return `
@@ -1248,6 +1361,8 @@ function renderAdminCard(t) {
           <div class="sub">Precio compra directo</div>
         </div>
       </div>
+
+      ${margenHTML}
 
       <div class="precio-toma-input">
         <input type="number" id="toma-${t.id}" placeholder="Precio de toma final" value="${t.precio_toma_final || ''}">
