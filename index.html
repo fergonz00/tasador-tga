@@ -848,8 +848,8 @@ function renderStep4() { // Modelo VW 0km (solo si aplica)
   }
   return `
     <div class="step-num">Paso 5 de ${TOTAL_STEPS}</div>
-    <h2>Modelo VW 0km</h2>
-    <label>Si existe versión 0km actual, seleccionala para aplicar fórmula VW</label>
+    <h2>Modelo 0km equivalente</h2>
+    <label>Si existe versión 0km actual, seleccionala para aplicar fórmula FG</label>
     <select id="wModeloVW" onchange="validateStep()">
       <option value="">— No aplica / Sin equivalente 0km —</option>
       ${vwData.map(v => `<option value="${v.modelo}">${v.modelo} — $${formatNum(v.precio_0km)}</option>`).join('')}
@@ -1324,7 +1324,7 @@ function renderAdminCard(t) {
   const ccaAjustado = ccaPublico ? ccaPublico * (1 + ajuste/100) : null;
   const ccaToma = ccaAjustado ? ccaAjustado * 0.86 : null;
 
-  // Formula VW
+  // Formula FG
   let vwMercado = t.precio_formula_vw || null;
   let vwAjustado = vwMercado ? vwMercado * (1 + ajuste/100) : null;
   let vwToma = vwAjustado ? vwAjustado * 0.88 : null;
@@ -1404,7 +1404,7 @@ function renderAdminCard(t) {
         <div class="info-row"><span class="label">Fecha</span><span class="value">${fecha}</span></div>
         <div class="info-row"><span class="label">Ajuste km</span><span class="value" style="color:${ajuste >= 0 ? 'var(--green)' : 'var(--red)'}">${ajuste >= 0 ? '+' : ''}${ajuste}%</span></div>
         ${t.precio_cca && ccaMoneda === 'USD' ? `<div class="info-row"><span class="label">Precio CCA (USD)</span><span class="value" style="font-family:var(--mono)">USD ${formatNum(t.precio_cca)}</span></div>` : ''}
-        ${t.modelo_vw_0km ? `<div class="info-row"><span class="label">Modelo VW 0km</span><span class="value">${t.modelo_vw_0km}</span></div>` : ''}
+        ${t.modelo_vw_0km ? `<div class="info-row"><span class="label">Modelo 0km equivalente</span><span class="value">${t.modelo_vw_0km}</span></div>` : ''}
         ${t.precio_vw_0km ? `<div class="info-row"><span class="label">Precio 0km (sin FyF)</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_vw_0km)}</span></div>` : ''}
       </div>
 
@@ -1415,7 +1415,7 @@ function renderAdminCard(t) {
           <div class="sub">Público: ${ccaAjustado ? '$ ' + formatNum(Math.round(ccaAjustado)) : '-'}<br>Toma -14%</div>
         </div>
         <div class="precio-box vw">
-          <div class="metodo">Fórmula VW</div>
+          <div class="metodo">Fórmula FG</div>
           <div class="valor">${vwToma ? '$ ' + formatNum(Math.round(vwToma)) : 'N/A'}</div>
           <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>Toma -12%</div>
         </div>
