@@ -452,6 +452,70 @@ input, select, textarea { font-family: var(--font); }
   }
 }
 
+/* ========== Responsive sweep general (mobile <= 640px) ========== */
+@media (max-width: 640px) {
+  /* Header global más compacto */
+  .app-header {
+    padding: 10px 14px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .app-header h1 { font-size: 15px; }
+  .app-header .user-info { font-size: 11px; }
+  .app-header button {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  /* Tabs: scroll horizontal en lugar de wrap (más prolijo con muchos tabs) */
+  .admin-tabs, .tabs-vendedor {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+  .admin-tabs::-webkit-scrollbar, .tabs-vendedor::-webkit-scrollbar {
+    height: 3px;
+  }
+  .admin-tabs button, .tabs-vendedor button {
+    padding: 8px 14px;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  /* Card header: badge de estado y precio que no se choquen con el título */
+  .card-header {
+    padding: 12px 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .card-header .card-summary { flex: 1 1 100%; min-width: 0; }
+  .card-header .card-right {
+    text-align: left;
+    margin-left: 0;
+    flex: 1 1 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .card-header .arrow { position: absolute; right: 14px; top: 14px; }
+  .tasacion-card-compact { position: relative; }
+  /* Wizard botones */
+  .wizard-buttons { flex-wrap: wrap; gap: 8px; }
+  .btn-back, .btn-next, .btn-submit {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  /* Cotización bar */
+  .cotiz-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  /* Botones flotantes que en desktop son grandes */
+  .precio-toma-input { flex-direction: column; align-items: stretch; }
+  .precio-toma-input button { width: 100%; }
+}
+
 /* Collapsible cards */
 .card-header {
   cursor: pointer;

@@ -14,7 +14,8 @@
       "Bash(npx *)",
       "Bash(curl *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }
