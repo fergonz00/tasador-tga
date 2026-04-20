@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(netstat -ano)",
+      "Bash(python *)",
+      "Bash(where cloudflared *)",
+      "Bash(where ngrok *)",
+      "Bash(where node *)",
+      "Bash(winget install *)",
+      "Bash(cmd *)",
+      "Bash(powershell *)",
+      "Bash(C:/Users/fschneidewind/cloudflared.exe tunnel *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} in %{time_total}s\\\\n\" https://every-destinations-avoid-metro.trycloudflare.com/)",
+      "Bash(npx *)",
+      "Bash(curl *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}
