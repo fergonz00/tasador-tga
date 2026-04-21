@@ -155,9 +155,49 @@ Commit + push a GitHub (rama `main`). El sitio `tasador.titogonzalez.online` se 
 - Render: `loadUsuarios` + `renderUsuarios` (fila compacta de una línea: usuario — nombre · rol · estado · botones).
 - Modales: `_mostrarUsuarioModal(modo, u)` con modos `'nuevo' | 'editar' | 'reset'`. Submit en `guardarUsuarioModal(modo, id)`.
 - Toggle activo: `toggleActivoUsuario(id, nuevoEstado)`. También hay checkbox "Usuario activo" dentro del modal de Editar.
-- Superadmin: constante `SUPERADMIN_USUARIO = 'fngonzalez'` + helper `_esSuperadmin()`. Reemplaza los guards `if (_esAdmin(u))` por `if (_esAdmin(u) && !_esSuperadmin())`.
+- Superadmins: lista `SUPERADMINS_USUARIOS = ['fngonzalez', 'mlubrano']` + helper `_esSuperadmin()`. Reemplaza los guards `if (_esAdmin(u))` por `if (_esAdmin(u) && !_esSuperadmin())`. También gatea el panel de Notificaciones (cambio 5). Extendida a `mlubrano` al agregar el panel WA.
 - Login: en `login()` se chequea `currentUser.debe_cambiar_clave` antes de despachar a modo. Si true → `mostrarModalCambioClave()`. Al confirmar → `confirmarCambioClave()` hace PATCH y llama a `_continuarLogin()`.
 - Validación de clave reutilizable: `validarClaveUsuario(clave)` devuelve `{ok, msg}`.
+
+### Cambio 5 — Notificaciones WhatsApp vía Meta Cloud API (✅ COMPLETO y pusheado 21/04/2026)
+
+**Qué hace:**
+- Reemplaza a CallMeBot. Usa WhatsApp Cloud API de Meta con templates aprobados.
+- 5 eventos disparan notificaciones automáticas:
+  1. `tasacion_pendiente_carga` — vendedor envía una tasación nueva → avisa al admin
+  2. `tasacion_virtual_completada` — admin carga precio virtual → avisa al vendedor
+  3. `visita_fisica_agendada` — vendedor agenda inspección (turno nuevo o cambio) → avisa al admin y Fazzini
+  4. `tasacion_fisica_completada` — Fazzini sube inspección → avisa al admin
+  5. `tasacion_final_definida` — admin cierra precio final → avisa a admin, Fazzini, vendedor
+- Los destinatarios fijos de cada evento son editables desde el panel **🔔 Notificaciones** en el header del admin (solo visible para superadmins `fngonzalez` y `mlubrano`). Por cada evento: toggle "incluir vendedor de la tasación" + checkboxes de usuarios fijos.
+- Para el evento 5, las observaciones de la inspección física pasan por Claude (`claude-haiku-4-5-20251001`) para corregir ortografía/redacción antes de enviar.
+- Log completo por envío en la tabla `notificaciones_log` (incluye `meta_message_id`, payload request/response, error si falló).
+
+**Arquitectura:**
+- **Edge Function `notify-whatsapp`** (`supabase/functions/notify-whatsapp/index.ts`). Recibe `{tasacion_id, evento}`. Lee `notificaciones_config` + `tasaciones` + usuarios, resuelve destinatarios (incluye_vendedor + fixed_ids), filtra por `activo=true` y `notificaciones_wa!=false` y que tengan `telefono_wa`. Llama a Meta Cloud API `POST /{phone_id}/messages` con el template. Loguea cada envío.
+- Secrets usados por la Edge Function (en Supabase secrets, NO en el código): `WA_TASADOR_TOKEN` (permanent token de Meta), `WA_TASADOR_PHONE_ID` = `955401487647411`, `ANTHROPIC_API_KEY` (reutilizado del cambio 2).
+- Meta WABA: "Tito Gonzalez | Tasador" (separada del CRM). App Meta "Tito Gonzalez Tasador" (ID `2218546848681240`). WABA ID `1183788370595856` (no se usa en runtime, solo gestión). Idioma de templates: `es_AR`.
+- **Frontend**: función `notifyWA(tasacion_id, evento)` en `index.html` (fire-and-forget, no bloquea al usuario). Reemplaza las viejas `notificarPrecioVirtualVendedor`, `notificarTurnoATasadorFisico`, `notificarAdminInspeccion`, `notificarPrecioFinal`, y el POST directo a callmebot en `submitTasacion`. Las funciones viejas quedaron residuales (sub-paso F de limpieza pendiente).
+
+**Schema Supabase (cambio 5):**
+- `tasador_usuarios.notificaciones_wa BOOLEAN DEFAULT true` (opt-out por usuario).
+- Tabla `notificaciones_log` (id, tasacion_id, destinatario_id, destinatario_telefono, template, evento, estado, meta_message_id, error_detalle, payload JSONB, created_at).
+- Tabla `notificaciones_config` (evento PK, usuarios_ids UUID[], incluir_vendedor_referencia BOOLEAN, updated_at, updated_by). Se inicializa con 5 filas: todos los eventos con `fngonzalez` como fijo, y eventos 2 y 5 con `incluir_vendedor_referencia = true`.
+- RLS deshabilitado en `notificaciones_log` y `notificaciones_config` (consistente con el resto del proyecto — se usa la anon key para todo).
+
+**Modo Meta (al 21/04/2026):**
+- La app está en **Desarrollo**. En este modo solo se pueden enviar mensajes a números previamente agregados como "recipient test numbers" en Meta for Developers → app → WhatsApp → API Setup. Para pasar a Producción hace falta Business Verification + Display Name aprobado.
+- Primera prueba end-to-end exitosa con Inés Alonso (mensaje llegado al celu).
+
+**Edge cases pendientes (sin template Meta):**
+- Cuando el admin marca la tasación como "NO APTO para toma" (función `notificarNoAptoVendedor`). Hoy sigue usando CallMeBot como residuo.
+- Cuando se cancela un turno (`notificarTurnoATasadorFisico('cancelado', ...)`). Idem.
+- **A decidir**: crear templates `usado_no_apto` y `turno_cancelado`, o dejar sin notificación WA (el vendedor lo ve en la app). Sub-paso F de limpieza depende de esto.
+
+**Cómo agregar un destinatario nuevo:**
+1. En el admin → 👥 Usuarios → asegurarse de que tenga `telefono_wa` cargado (formato `549...` sin `+` ni espacios) y `notificaciones_wa = true`.
+2. Mientras la app Meta esté en Desarrollo: agregar el número como recipient test number en Meta y verificar con código.
+3. En el panel 🔔 Notificaciones del admin, tildar el checkbox del usuario en los eventos que quiera recibir.
 
 ## Estado del entorno local al 16/04/2026
 

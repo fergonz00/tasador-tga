@@ -589,6 +589,7 @@ input, select, textarea { font-family: var(--font); }
       <button id="btnAgenda" onclick="abrirAgenda()" style="background:var(--vw-blue-light); color:white; font-size:13px; padding:8px 14px">📅 Agenda</button>
       <button id="btnCambiarModo" onclick="cambiarModo()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">Cambiar de modo</button>
       <button id="btnUsuarios" onclick="abrirUsuarios()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">👥 Usuarios</button>
+      <button id="btnNotif" onclick="abrirNotif()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">🔔 Notificaciones</button>
       <button onclick="logout()">Salir</button>
     </div>
   </header>
@@ -693,6 +694,20 @@ input, select, textarea { font-family: var(--font); }
         </div>
       </div>
       <div id="usuariosList" style="padding:16px"></div>
+    </div>
+  </div>
+
+  <!-- ======== ADMIN — NOTIFICACIONES (solo superadmins) ======== -->
+  <div id="notifView" class="hidden">
+    <div class="admin-container">
+      <div style="padding:16px; background:white; border-bottom:1px solid var(--vw-grey-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0; font-size:20px; color:var(--vw-blue)">🔔 Notificaciones por WhatsApp</h2>
+          <div style="font-size:13px; color:var(--vw-grey-4); margin-top:2px">Configurá quién recibe cada evento. Los vendedores tienen que tener el teléfono cargado en Usuarios para recibir.</div>
+        </div>
+        <button onclick="cerrarNotif()" style="padding:8px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">← Volver</button>
+      </div>
+      <div id="notifList" style="padding:16px"></div>
     </div>
   </div>
 
@@ -806,6 +821,27 @@ async function sbFetch(path, options = {}) {
   const res = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
   if (!res.ok) { const t = await res.text(); throw new Error(t); }
   return res.json();
+}
+
+// ============ NOTIFY WHATSAPP (Meta Cloud API via Edge Function) ============
+// Fire-and-forget: dispara el evento, no bloquea al usuario. Log a consola si falla.
+// Los destinatarios y el template los resuelve la Edge Function según `notificaciones_config`.
+async function notifyWA(tasacionId, evento) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/notify-whatsapp`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ tasacion_id: tasacionId, evento })
+    });
+    const data = await res.json().catch(() => ({}));
+    console.log(`[notifyWA] evento=${evento} enviados=${data.enviados || 0} errores=${(data.errores || []).length}`, data);
+  } catch(e) {
+    console.error('[notifyWA] error:', e);
+  }
 }
 
 async function sbUpload(bucket, path, file) {
@@ -1111,6 +1147,10 @@ function selectMode(mode) {
   const btnUsuarios = document.getElementById('btnUsuarios');
   btnUsuarios.classList.toggle('hidden', mode !== 'admin');
 
+  // Notificaciones: solo visible para superadmins (fngonzalez, mlubrano) en modo admin.
+  const btnNotif = document.getElementById('btnNotif');
+  btnNotif.classList.toggle('hidden', !(mode === 'admin' && _esSuperadmin()));
+
   // Mostrar la vista correspondiente y esconder las otras.
   document.getElementById('vendedorView').classList.toggle('hidden', mode !== 'vendedor');
   document.getElementById('adminView').classList.toggle('hidden', mode !== 'admin');
@@ -1149,6 +1189,7 @@ function logout() {
   document.getElementById('fisicoInspeccionView').classList.add('hidden');
   document.getElementById('btnCambiarModo').classList.add('hidden');
   document.getElementById('btnUsuarios').classList.add('hidden');
+  document.getElementById('btnNotif').classList.add('hidden');
 }
 
 // ============ VENDEDOR TABS ============
@@ -1814,11 +1855,8 @@ async function submitTasacion() {
       body: JSON.stringify(record)
     });
 
-    // Send WhatsApp notification
-    try {
-      const msg = `🚗 Nueva tasación de ${currentUser.nombre}:%0ACliente: ${clienteNombre || 'N/A'}%0A${marca} ${modelo} ${anio}%0A${version}%0APatente ${patente || 'N/A'} (${provinciaRadicacion || 'N/A'})%0A${formatNum(km)} km - ${color}%0A0km: ${modelo0km || 'N/A'}%0APrecio ofrecido: $${formatNum(precioOfrecido)}`;
-      await fetch(`https://api.callmebot.com/whatsapp.php?phone=${CALLMEBOT_PHONE}&text=${msg}&apikey=${CALLMEBOT_KEY}`);
-    } catch(e) { console.log('WhatsApp notification error:', e); }
+    // WhatsApp: evento "tasacion_pendiente_carga" — avisa al admin que hay una nueva para tasar
+    notifyWA(tasId, 'tasacion_pendiente_carga');
 
     hideLoading();
     showToast('Tasación enviada correctamente');
@@ -2023,6 +2061,8 @@ function renderMisTasacionesList() {
             ${renderPreciosVendedor(t)}
 
             ${(() => {
+              // Si el admin marcó como NO APTO, no mostramos ni el turno ni los mensajes de espera.
+              if (t.virtual_no_apto) return '';
               // El turno solo se puede agendar después de tener precio virtual cargado
               if (t.turno_fecha) {
                 const f = isoAFecha(t.turno_fecha);
@@ -2059,6 +2099,23 @@ function renderMisTasacionesList() {
 // - Si hay precio final: recuadro verde "DEFINITIVO" + comentario para hablar con el cliente.
 function renderPreciosVendedor(t) {
   let html = '';
+  // Si el admin marcó el usado como NO APTO, es el mensaje que prima: recuadro rojo con la razón.
+  if (t.virtual_no_apto) {
+    const fechaNA = t.virtual_no_apto_at ? new Date(t.virtual_no_apto_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
+    html += `
+      <div style="margin-top:12px; padding:12px 14px; background:#FEF2F2; border-radius:8px; border:1px solid #FCA5A5">
+        <div style="font-size:13px; font-weight:700; color:#991B1B; letter-spacing:0.5px">❌ USADO NO APTO PARA TOMA</div>
+        <div style="font-size:11px; color:var(--vw-grey-4); margin-top:2px">${t.virtual_no_apto_por ? 'Por ' + t.virtual_no_apto_por + ' · ' : ''}${fechaNA}</div>
+        ${t.comentario_virtual_vendedor ? `
+          <div style="margin-top:10px; padding:10px; background:white; border-radius:6px; border-left:3px solid #991B1B">
+            <div style="font-size:10px; font-weight:700; color:#991B1B; letter-spacing:0.5px; margin-bottom:4px">📝 MOTIVO</div>
+            <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap">${t.comentario_virtual_vendedor}</div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+    return html;
+  }
   if (t.precio_toma_virtual && !t.precio_toma_final) {
     const fecha = t.precio_toma_virtual_at ? new Date(t.precio_toma_virtual_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
     const yaInspeccionada = !!(t.analisis_fisico && t.precio_sugerido_fisico);
@@ -2072,6 +2129,12 @@ function renderPreciosVendedor(t) {
           <div style="font-family:var(--mono); font-weight:700; color:var(--vw-blue); font-size:20px">$ ${formatNum(t.precio_toma_virtual)}</div>
         </div>
         <div style="margin-top:8px; font-size:11px; color:var(--vw-grey-4); font-style:italic">Usalo para hablar con el cliente. El precio definitivo se confirma luego de la inspección física.</div>
+        ${t.comentario_virtual_vendedor ? `
+          <div style="margin-top:10px; padding:10px; background:white; border-radius:6px; border-left:3px solid var(--vw-blue)">
+            <div style="font-size:10px; font-weight:700; color:var(--vw-blue); letter-spacing:0.5px; margin-bottom:4px">📝 COMENTARIO DEL TASADOR</div>
+            <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap">${t.comentario_virtual_vendedor}</div>
+          </div>
+        ` : ''}
         ${yaInspeccionada ? `
           <div style="margin-top:10px; padding:8px 10px; background:#EDE9FE; border-radius:6px; font-size:12px; color:#5B21B6; border-left:3px solid #5B21B6">
             🔍 <strong>Ya inspeccionada por Jorge</strong> — esperando que el admin confirme el precio final.
@@ -2259,7 +2322,7 @@ function renderAdminList(tasaciones) {
 // Solo muestra: línea compacta de datos + precio virtual + bloque inspección física + input precio final.
 function renderAdminCardEsperando(t) {
   const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
-  const ajuste = t.ajuste_km_porcentaje || 0;
+  const ajuste = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override) : (t.ajuste_km_porcentaje || 0);
 
   // Línea compacta de datos del auto (la misma que el card normal)
   let ajusteKmLbl = `${ajuste >= 0 ? '+' : ''}${ajuste}%`;
@@ -2368,7 +2431,7 @@ function renderAdminCard(t) {
       ccaPublico = t.precio_cca;
     }
   }
-  const ajuste = t.ajuste_km_porcentaje || 0;
+  const ajuste = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override) : (t.ajuste_km_porcentaje || 0);
   const ccaAjustado = ccaPublico ? ccaPublico * (1 + ajuste/100) : null;
   const ccaToma = ccaAjustado ? ccaAjustado * 0.86 : null;
 
@@ -2599,16 +2662,63 @@ function renderAdminCard(t) {
       ${renderAnalisisIAAdmin(t)}
 
       ${(() => {
+        // Panel de ajuste km: advertencia si km supera lo esperado + input editable del %
+        if (!t.kilometros || !t.anio) return '';
+        const antiguedad = Math.max(1, 2026 - t.anio);
+        const kmPorAnio = esPickup(t.modelo) ? 20000 : 15000;
+        const kmEsperados = antiguedad * kmPorAnio;
+        const ratio = t.kilometros / kmEsperados;
+        const kmExcedido = ratio >= 1.0;
+        const ajusteActual = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override) : (t.ajuste_km_porcentaje || 0);
+        const tieneOverride = t.ajuste_km_override != null;
+        const kmRealAnual = Math.round(t.kilometros / antiguedad);
+        return `
+          <div style="margin-top:10px; padding:10px 12px; background:${kmExcedido ? '#FFF7ED' : 'var(--vw-grey-1)'}; border-radius:6px; border:1px solid ${kmExcedido ? '#FDBA74' : 'var(--vw-grey-2)'}">
+            ${kmExcedido ? `
+              <div style="font-size:12px; font-weight:700; color:#9A3412; margin-bottom:4px">⚠️ KM FUERA DE LO COMÚN</div>
+              <div style="font-size:12px; color:#9A3412; margin-bottom:8px">Recorrió <b>${formatNum(kmRealAnual)} km/año</b> — se esperan ${formatNum(kmPorAnio)} km/año (${(ratio*100).toFixed(0)}% del esperado)</div>
+            ` : ''}
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+              <span style="font-size:12px; color:var(--vw-grey-4)"><b>Ajuste km:</b></span>
+              <input type="number" step="0.5" id="ajusteKm-${t.id}" value="${ajusteActual}" onclick="event.stopPropagation()" style="width:80px; padding:6px 8px; font-size:13px; font-family:var(--mono); font-weight:700; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box; text-align:right">
+              <span style="font-size:12px; color:var(--vw-grey-4)">%</span>
+              <button onclick="event.stopPropagation(); aplicarAjusteKm('${t.id}')" style="padding:6px 12px; background:var(--vw-blue); color:white; border:none; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">Aplicar</button>
+              ${tieneOverride ? `<button onclick="event.stopPropagation(); resetAjusteKm('${t.id}')" style="padding:6px 10px; background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:6px; font-weight:600; font-size:11px; cursor:pointer" title="Volver al ajuste automático">↩ Auto (${t.ajuste_km_porcentaje || 0}%)</button>` : ''}
+              <span style="font-size:11px; color:var(--vw-grey-3); flex:1; min-width:80px; text-align:right">${tieneOverride ? 'Editado' : 'Automático'}</span>
+            </div>
+          </div>
+        `;
+      })()}
+
+      ${(() => {
         const fechaVirt = t.precio_toma_virtual_at ? new Date(t.precio_toma_virtual_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : '';
+        const fechaNA = t.virtual_no_apto_at ? new Date(t.virtual_no_apto_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : '';
+        // Si está marcada como NO APTO, mostramos recuadro rojo con la razón y opción de revertir
+        if (t.virtual_no_apto) {
+          return `
+            <div style="margin-top:10px; padding:10px 12px; background:#FEF2F2; border-radius:6px; border:1px solid #FCA5A5">
+              <div style="display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-bottom:6px; flex-wrap:wrap">
+                <span style="font-size:12px; font-weight:700; color:#991B1B">❌ USADO NO APTO PARA TOMA</span>
+                <span style="font-size:10px; color:var(--vw-grey-4)">✓ ${fechaNA}${t.virtual_no_apto_por ? ' · ' + t.virtual_no_apto_por : ''}</span>
+              </div>
+              ${t.comentario_virtual_vendedor ? `<div style="font-size:13px; color:#7F1D1D; padding:8px; background:white; border-radius:4px; white-space:pre-wrap; margin-bottom:8px"><b>Motivo:</b> ${t.comentario_virtual_vendedor}</div>` : ''}
+              <button onclick="event.stopPropagation(); revertirNoApto('${t.id}')" style="padding:6px 12px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">↩ Revertir (volver a cargar precio)</button>
+            </div>
+          `;
+        }
         return `
           <div style="margin-top:10px; padding:10px 12px; background:#FFFBEB; border-radius:6px; border:1px solid #FDE68A">
             <div style="display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-bottom:6px; flex-wrap:wrap">
               <span style="font-size:12px; font-weight:700; color:#92400E">PRECIO VIRTUAL DE TOMA</span>
               <span style="font-size:10px; color:var(--vw-grey-4)">${t.precio_toma_virtual ? '✓ ' + fechaVirt + (t.precio_toma_virtual_por ? ' · ' + t.precio_toma_virtual_por : '') : 'No cargado · al guardar se avisa al vendedor por WA'}</span>
             </div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
               <input type="number" id="virtual-${t.id}" placeholder="Precio virtual" value="${t.precio_toma_virtual || ''}" onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box">
               <button onclick="event.stopPropagation(); guardarPrecioVirtual('${t.id}')" style="padding:8px 14px; background:#92400E; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">${t.precio_toma_virtual ? 'Actualizar' : 'Guardar'}</button>
+            </div>
+            <textarea id="comentario-virtual-${t.id}" placeholder="Comentario para el vendedor (opcional si cargás precio, obligatorio si marcás NO APTO)" onclick="event.stopPropagation()" rows="2" style="width:100%; padding:8px 10px; font-size:13px; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box; resize:vertical; font-family:var(--sans)">${t.comentario_virtual_vendedor || ''}</textarea>
+            <div style="margin-top:8px; text-align:right">
+              <button onclick="event.stopPropagation(); marcarNoApto('${t.id}')" style="padding:6px 12px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">❌ Marcar NO APTO para toma</button>
             </div>
           </div>
         `;
@@ -3408,8 +3518,9 @@ async function confirmarTurno(tasId, fechaISO, hora) {
 
     // WA al tasador físico: nuevo si no había turno, cambio si cambió fecha u hora
     const turnoNuevo = Object.assign({}, turnoAnterior, { turno_fecha: fechaISO, turno_hora: hora });
-    const tipo = (turnoAnterior && turnoAnterior.turno_fecha) ? 'cambio' : 'nuevo';
-    notificarTurnoATasadorFisico(tipo, turnoAnterior, turnoNuevo);
+    // WhatsApp: evento "visita_fisica_agendada" — avisa al admin y a Fazzini del turno
+    // (dispara tanto en turnos nuevos como en cambios; la cancelación no tiene template)
+    notifyWA(tasId, 'visita_fisica_agendada');
 
     // Refresh de las vistas que estén abiertas
     const misSec = document.getElementById('misTasacionesSection');
@@ -3459,13 +3570,13 @@ function cerrarAgenda() {
 }
 
 // ============ ADMIN — USUARIOS ============
-// Superadmin: único usuario que puede editar/crear/tocar admins y dar rol admin.
-const SUPERADMIN_USUARIO = 'fngonzalez';
+// Superadmins: pueden editar/crear/tocar admins, dar rol admin, y acceder al panel de Notificaciones.
+const SUPERADMINS_USUARIOS = ['fngonzalez', 'mlubrano'];
 let usuariosVistaAnterior = null;
 let usuariosData = [];
 
 function _esSuperadmin() {
-  return !!(currentUser && currentUser.usuario === SUPERADMIN_USUARIO);
+  return !!(currentUser && SUPERADMINS_USUARIOS.includes(currentUser.usuario));
 }
 
 async function abrirUsuarios() {
@@ -3813,6 +3924,145 @@ async function toggleActivoUsuario(id, nuevoEstado) {
   }
 }
 
+// ============ ADMIN — NOTIFICACIONES WHATSAPP ============
+// Metadata de los 5 eventos: id del template en Meta + título y descripción para el panel.
+const EVENTOS_NOTIF = [
+  { id: 'tasacion_pendiente_carga',    titulo: 'Tasación pendiente de carga',  desc: 'El vendedor creó una tasación nueva y espera que el admin la cargue.' },
+  { id: 'tasacion_virtual_completada', titulo: 'Tasación virtual completada',  desc: 'El admin cargó el precio virtual de referencia.' },
+  { id: 'visita_fisica_agendada',      titulo: 'Visita física agendada',       desc: 'El vendedor agendó una inspección física.' },
+  { id: 'tasacion_fisica_completada',  titulo: 'Tasación física completada',   desc: 'El tasador físico (Fazzini) subió el análisis.' },
+  { id: 'tasacion_final_definida',     titulo: 'Tasación final definida',      desc: 'El admin cerró el precio final de toma.' }
+];
+
+let notifVistaAnterior = null;
+let notifConfigData = [];
+let notifUsuariosData = [];
+
+async function abrirNotif() {
+  if (currentMode !== 'admin' || !_esSuperadmin()) return;
+  const vistas = ['vendedorView', 'tasadorFisicoView', 'fisicoInspeccionView', 'adminView', 'agendaView', 'usuariosView'];
+  notifVistaAnterior = vistas.find(id => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  });
+  vistas.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  });
+  document.getElementById('notifView').classList.remove('hidden');
+  await loadNotifConfig();
+}
+
+function cerrarNotif() {
+  document.getElementById('notifView').classList.add('hidden');
+  const vuelta = notifVistaAnterior || 'adminView';
+  document.getElementById(vuelta)?.classList.remove('hidden');
+  notifVistaAnterior = null;
+}
+
+async function loadNotifConfig() {
+  const list = document.getElementById('notifList');
+  list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Cargando...</div>';
+  try {
+    // Traemos config + usuarios en paralelo. Solo usuarios activos con notificaciones_wa=true y teléfono cargado.
+    const [cfg, users] = await Promise.all([
+      sbFetch('notificaciones_config?select=*'),
+      sbFetch('tasador_usuarios?select=id,usuario,nombre,telefono_wa,notificaciones_wa,activo,roles,rol&activo=eq.true&order=usuario.asc')
+    ]);
+    notifConfigData = cfg || [];
+    notifUsuariosData = users || [];
+    renderNotifConfig();
+  } catch(e) {
+    console.error(e);
+    list.innerHTML = '<div style="text-align:center; padding:40px; color:#c00">Error cargando config. ¿Corriste el SQL?</div>';
+  }
+}
+
+function renderNotifConfig() {
+  const list = document.getElementById('notifList');
+  const cards = EVENTOS_NOTIF.map(ev => {
+    const cfg = notifConfigData.find(c => c.evento === ev.id) || { evento: ev.id, usuarios_ids: [], incluir_vendedor_referencia: false };
+    const seleccionados = new Set((cfg.usuarios_ids || []).map(String));
+    const incluirVend = !!cfg.incluir_vendedor_referencia;
+    const evIdSafe = _escapeHtmlUsr(ev.id);
+
+    const usuariosRows = notifUsuariosData.map(u => {
+      const idStr = _escapeHtmlUsr(u.id);
+      const chk = seleccionados.has(String(u.id));
+      const sinTel = !u.telefono_wa;
+      const optOut = u.notificaciones_wa === false;
+      const aviso = sinTel ? ' <span style="color:#c00; font-size:11px">(sin teléfono)</span>' : (optOut ? ' <span style="color:#c60; font-size:11px">(opt-out)</span>' : '');
+      return `
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:4px; cursor:pointer; font-size:13px">
+          <input type="checkbox" ${chk ? 'checked' : ''} onchange="toggleNotifUsuario('${evIdSafe}', '${idStr}', this.checked)" style="width:16px; height:16px; cursor:pointer">
+          <span><b>${_escapeHtmlUsr(u.usuario)}</b> — ${_escapeHtmlUsr(u.nombre || '')}${aviso}</span>
+        </label>
+      `;
+    }).join('');
+
+    return `
+      <div style="background:white; border:1px solid var(--vw-grey-2); border-radius:8px; padding:14px; margin-bottom:12px">
+        <div style="font-weight:700; font-size:15px; color:var(--vw-blue); margin-bottom:2px">${_escapeHtmlUsr(ev.titulo)}</div>
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:10px">${_escapeHtmlUsr(ev.desc)}</div>
+        <label style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--vw-grey-1); border-radius:6px; cursor:pointer; margin-bottom:10px">
+          <input type="checkbox" ${incluirVend ? 'checked' : ''} onchange="toggleNotifVendedor('${evIdSafe}', this.checked)" style="width:16px; height:16px; cursor:pointer">
+          <span style="font-size:13px"><b>Incluir vendedor de referencia</b> <span style="color:var(--vw-grey-4)">— el vendedor dueño de la tasación recibe este mensaje</span></span>
+        </label>
+        <div style="font-size:11px; color:var(--vw-grey-4); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; font-weight:700">Destinatarios fijos</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:2px">
+          ${usuariosRows}
+        </div>
+      </div>
+    `;
+  }).join('');
+  list.innerHTML = cards;
+}
+
+async function toggleNotifUsuario(evento, userId, checked) {
+  try {
+    const cfg = notifConfigData.find(c => c.evento === evento) || { evento, usuarios_ids: [], incluir_vendedor_referencia: false };
+    const ids = new Set((cfg.usuarios_ids || []).map(String));
+    if (checked) ids.add(String(userId)); else ids.delete(String(userId));
+    const nuevosIds = Array.from(ids);
+    await sbFetch(`notificaciones_config?evento=eq.${evento}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        usuarios_ids: nuevosIds,
+        updated_at: new Date().toISOString(),
+        updated_by: currentUser.usuario
+      })
+    });
+    // Actualizamos local sin recargar
+    cfg.usuarios_ids = nuevosIds;
+    if (!notifConfigData.find(c => c.evento === evento)) notifConfigData.push(cfg);
+    showToast('Guardado');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al guardar');
+    await loadNotifConfig(); // rollback visual
+  }
+}
+
+async function toggleNotifVendedor(evento, checked) {
+  try {
+    await sbFetch(`notificaciones_config?evento=eq.${evento}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        incluir_vendedor_referencia: checked,
+        updated_at: new Date().toISOString(),
+        updated_by: currentUser.usuario
+      })
+    });
+    const cfg = notifConfigData.find(c => c.evento === evento);
+    if (cfg) cfg.incluir_vendedor_referencia = checked;
+    showToast('Guardado');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al guardar');
+    await loadNotifConfig();
+  }
+}
+
 async function loadAgenda() {
   const list = document.getElementById('agendaList');
   list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Cargando...</div>';
@@ -4014,7 +4264,9 @@ async function notificarTurnoATasadorFisico(tipo, turnoAnterior, turnoNuevo) {
 
 async function guardarPrecioVirtual(id) {
   const input = document.getElementById(`virtual-${id}`);
+  const inputCom = document.getElementById(`comentario-virtual-${id}`);
   const precio = parseFloat(input.value);
+  const comentario = inputCom ? (inputCom.value || '').trim() : '';
   if (!precio || precio <= 0) { showToast('Ingresá un precio virtual válido'); return; }
 
   try {
@@ -4024,19 +4276,109 @@ async function guardarPrecioVirtual(id) {
         precio_toma_virtual: precio,
         precio_toma_virtual_at: new Date().toISOString(),
         precio_toma_virtual_por: currentUser.nombre,
+        comentario_virtual_vendedor: comentario || null,
+        virtual_no_apto: false,
+        virtual_no_apto_at: null,
+        virtual_no_apto_por: null,
         updated_at: new Date().toISOString()
       })
     });
     showToast('Precio virtual guardado');
 
-    // WhatsApp al vendedor con el precio referencial
-    notificarPrecioVirtualVendedor(id, precio);
+    // WhatsApp: evento "tasacion_virtual_completada" — avisa al vendedor con el precio
+    notifyWA(id, 'tasacion_virtual_completada');
 
     // Refresh
     loadAdminTasaciones(adminFiltroEstado || 'pendientes');
   } catch(e) {
     console.error(e);
     showToast('Error al guardar el precio virtual');
+  }
+}
+
+// Marca la tasación como NO APTA para toma. El comentario es la razón (obligatorio).
+async function marcarNoApto(id) {
+  const inputCom = document.getElementById(`comentario-virtual-${id}`);
+  const razon = inputCom ? (inputCom.value || '').trim() : '';
+  if (!razon) { showToast('Poné el motivo en el comentario antes de marcar NO APTO'); return; }
+  if (!confirm('¿Marcar este usado como NO APTO para toma?\nSe avisa al vendedor por WhatsApp.')) return;
+
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        virtual_no_apto: true,
+        virtual_no_apto_at: new Date().toISOString(),
+        virtual_no_apto_por: currentUser.nombre,
+        comentario_virtual_vendedor: razon,
+        precio_toma_virtual: null,
+        precio_toma_virtual_at: null,
+        precio_toma_virtual_por: null,
+        updated_at: new Date().toISOString()
+      })
+    });
+    showToast('Marcado como NO APTO');
+    notificarNoAptoVendedor(id, razon);
+    loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al marcar no apto');
+  }
+}
+
+// Guarda un override manual del % de ajuste km para esta tasación.
+async function aplicarAjusteKm(id) {
+  const input = document.getElementById(`ajusteKm-${id}`);
+  if (!input) return;
+  const raw = input.value;
+  if (raw === '' || raw == null || isNaN(parseFloat(raw))) { showToast('Ingresá un número'); return; }
+  const valor = parseFloat(raw);
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ajuste_km_override: valor, updated_at: new Date().toISOString() })
+    });
+    showToast('Ajuste km aplicado');
+    loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al aplicar ajuste');
+  }
+}
+
+// Vuelve al ajuste km automático (calculado por tabla).
+async function resetAjusteKm(id) {
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ajuste_km_override: null, updated_at: new Date().toISOString() })
+    });
+    showToast('Volvió al ajuste automático');
+    loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al resetear');
+  }
+}
+
+// Revierte el estado "no apto" para volver a permitir cargar precio virtual.
+async function revertirNoApto(id) {
+  if (!confirm('¿Revertir el estado NO APTO?\nVas a poder cargar un precio virtual de nuevo.')) return;
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        virtual_no_apto: false,
+        virtual_no_apto_at: null,
+        virtual_no_apto_por: null,
+        updated_at: new Date().toISOString()
+      })
+    });
+    showToast('Revertido');
+    loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al revertir');
   }
 }
 
@@ -4071,9 +4413,9 @@ async function guardarPrecioFinal(id) {
     });
     showToast('Precio final guardado');
 
-    // Mail al vendedor + WhatsApp a vendedor y tasador físico
+    // WhatsApp: evento "tasacion_final_definida" — avisa a admin, Fazzini y vendedor
     enviarMailVendedor(id);
-    notificarPrecioFinal(id, precio, comentario);
+    notifyWA(id, 'tasacion_final_definida');
 
     // Refresh
     loadAdminTasaciones(adminFiltroEstado || 'pendientes');
@@ -4084,7 +4426,7 @@ async function guardarPrecioFinal(id) {
 }
 
 // WA al vendedor con el precio virtual (referencial)
-async function notificarPrecioVirtualVendedor(tasId, precio) {
+async function notificarPrecioVirtualVendedor(tasId, precio, comentario) {
   try {
     const tasData = await sbFetch(`tasaciones?id=eq.${tasId}`);
     if (!tasData || tasData.length === 0) return;
@@ -4092,10 +4434,26 @@ async function notificarPrecioVirtualVendedor(tasId, precio) {
     if (!t.vendedor_id) return;
     const datosVeh = `${t.marca || ''} ${t.modelo || ''} ${t.anio || ''}\n${t.version || ''}`;
     const cliente = t.cliente_nombre ? `\nCliente: ${t.cliente_nombre}` : '';
-    const msg = `🚗 *Tasación de referencia*\n\n${datosVeh}\n${formatNum(t.kilometros)} km${cliente}\n\n💰 *Precio virtual: $${formatNum(precio)}*\n\n⚠ Es REFERENCIAL — sujeto a inspección física. Usalo para hablar con el cliente.`;
+    const com = comentario ? `\n\n📝 ${comentario}` : '';
+    const msg = `🚗 *Tasación de referencia*\n\n${datosVeh}\n${formatNum(t.kilometros)} km${cliente}\n\n💰 *Precio virtual: $${formatNum(precio)}*${com}\n\n⚠ Es REFERENCIAL — sujeto a inspección física. Usalo para hablar con el cliente.`;
     await enviarWhatsAppA(t.vendedor_id, msg);
   } catch(e) {
     console.log('Error notificando precio virtual:', e);
+  }
+}
+
+async function notificarNoAptoVendedor(tasId, razon) {
+  try {
+    const tasData = await sbFetch(`tasaciones?id=eq.${tasId}`);
+    if (!tasData || tasData.length === 0) return;
+    const t = tasData[0];
+    if (!t.vendedor_id) return;
+    const datosVeh = `${t.marca || ''} ${t.modelo || ''} ${t.anio || ''}\n${t.version || ''}`;
+    const cliente = t.cliente_nombre ? `\nCliente: ${t.cliente_nombre}` : '';
+    const msg = `❌ *USADO NO APTO PARA TOMA*\n\n${datosVeh}\n${formatNum(t.kilometros)} km${cliente}\n\n📝 *Motivo:* ${razon}`;
+    await enviarWhatsAppA(t.vendedor_id, msg);
+  } catch(e) {
+    console.log('Error notificando no apto:', e);
   }
 }
 
@@ -5046,8 +5404,8 @@ async function guardarInspeccion(tasId) {
     hideLoading();
     showToast('Inspección enviada al admin para revisión');
 
-    // WhatsApp al admin avisando que hay precio sugerido para revisar
-    notificarAdminInspeccion(tasId, datosVeh, precioSugerido, totalArreglos);
+    // WhatsApp: evento "tasacion_fisica_completada" — avisa al admin del precio sugerido
+    notifyWA(tasId, 'tasacion_fisica_completada');
 
     // IA: generar borrador del comentario para el vendedor en background (no bloquea)
     generarBorradorComentarioIA(tasId, Object.assign({}, fisicoTasacionActual || {}, datosVeh), analisisFisico, precioSugerido);
