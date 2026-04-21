@@ -134,9 +134,30 @@ Tabs: Pendientes / Tasadas / Todas. Ve:
 - ✅ Secret `ANTHROPIC_API_KEY` cargado en Supabase.
 - ⏳ Prueba end-to-end pendiente (al cerrar sesión del 16/04 quedó sin testear con fotos reales).
 
-### Cambio 3 — Deploy (⏳ pendiente)
-Commit + push a GitHub (rama `main`). El sitio `tasador.titogonzalez.online` se actualiza solo al pushear (GitHub Pages).
-Al día del 16/04/2026, NADA de los cambios está pusheado — todo está solo en `C:\proyectos\tasador-tga\` local.
+### Cambio 3 — Deploy (✅ pusheado a main)
+Commit + push a GitHub (rama `main`). El sitio `tasador.titogonzalez.online` se actualiza solo al pushear (GitHub Pages). Los cambios 1, 2 y 4 están todos en producción al 21/04/2026.
+
+### Cambio 4 — Gestión de usuarios desde admin + cambio de clave forzado (✅ COMPLETO y pusheado)
+
+**Qué hace:**
+- Nueva vista "Usuarios" en el header del admin (botón 👥 Usuarios entre "Cambiar de modo" y "Salir"). Permite alta, edición, reset de clave y activación/desactivación (baja lógica).
+- Modal obligatorio de cambio de clave en el primer login o después de un reset. Sin escape más que "Salir" (logout).
+- Validación de clave: mínimo 8 caracteres, con letras y números.
+- "Modo superadmin" hardcodeado para el usuario `fngonzalez`: único que puede crear/editar admins y cambiar el rol de un admin. Cualquier otro admin ve los admins como "solo lectura" y el select de rol no le muestra la opción "Administrador".
+- El vendedor nunca toca esta vista — solo la ve quien tenga `rol = admin`.
+
+**Schema Supabase:**
+- Columna nueva en `tasador_usuarios`: `debe_cambiar_clave BOOLEAN DEFAULT true`. El `UPDATE tasador_usuarios SET debe_cambiar_clave = true` se corrió en todo el universo al aplicar el cambio, por lo que todos los usuarios existentes están obligados a cambiar la clave la próxima vez que entren. Para exceptuar un usuario puntual (ej. no molestar al admin principal): `UPDATE tasador_usuarios SET debe_cambiar_clave = false WHERE usuario = 'fngonzalez'`.
+- Contraseñas siguen en texto plano (deuda técnica consciente).
+
+**Funciones clave en `index.html`:**
+- Header button: `abrirUsuarios()` / `cerrarUsuarios()`. Vista `#usuariosView` justo después de `#adminView`.
+- Render: `loadUsuarios` + `renderUsuarios` (fila compacta de una línea: usuario — nombre · rol · estado · botones).
+- Modales: `_mostrarUsuarioModal(modo, u)` con modos `'nuevo' | 'editar' | 'reset'`. Submit en `guardarUsuarioModal(modo, id)`.
+- Toggle activo: `toggleActivoUsuario(id, nuevoEstado)`. También hay checkbox "Usuario activo" dentro del modal de Editar.
+- Superadmin: constante `SUPERADMIN_USUARIO = 'fngonzalez'` + helper `_esSuperadmin()`. Reemplaza los guards `if (_esAdmin(u))` por `if (_esAdmin(u) && !_esSuperadmin())`.
+- Login: en `login()` se chequea `currentUser.debe_cambiar_clave` antes de despachar a modo. Si true → `mostrarModalCambioClave()`. Al confirmar → `confirmarCambioClave()` hace PATCH y llama a `_continuarLogin()`.
+- Validación de clave reutilizable: `validarClaveUsuario(clave)` devuelve `{ok, msg}`.
 
 ## Estado del entorno local al 16/04/2026
 
