@@ -588,6 +588,7 @@ input, select, textarea { font-family: var(--font); }
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
       <button id="btnAgenda" onclick="abrirAgenda()" style="background:var(--vw-blue-light); color:white; font-size:13px; padding:8px 14px">📅 Agenda</button>
       <button id="btnCambiarModo" onclick="cambiarModo()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">Cambiar de modo</button>
+      <button id="btnUsuarios" onclick="abrirUsuarios()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">👥 Usuarios</button>
       <button onclick="logout()">Salir</button>
     </div>
   </header>
@@ -675,6 +676,23 @@ input, select, textarea { font-family: var(--font); }
         </select>
       </div>
       <div id="adminList"></div>
+    </div>
+  </div>
+
+  <!-- ======== ADMIN — USUARIOS ======== -->
+  <div id="usuariosView" class="hidden">
+    <div class="admin-container">
+      <div style="padding:16px; background:white; border-bottom:1px solid var(--vw-grey-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0; font-size:20px; color:var(--vw-blue)">👥 Usuarios</h2>
+          <div style="font-size:13px; color:var(--vw-grey-4); margin-top:2px">Alta, baja y gestión de claves</div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button onclick="abrirNuevoUsuario()" style="padding:8px 14px; background:var(--vw-blue); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600">+ Nuevo usuario</button>
+          <button onclick="cerrarUsuarios()" style="padding:8px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">← Volver</button>
+        </div>
+      </div>
+      <div id="usuariosList" style="padding:16px"></div>
     </div>
   </div>
 
@@ -967,15 +985,91 @@ async function login() {
     await Promise.all([loadCCA(), loadVW(), loadTGA(), loadPrecios0km()]);
     hideLoading();
 
-    // Si tiene un solo rol, entra directo; si tiene múltiples, mostramos la pantalla de selección.
-    if (currentUser.rolesArr.length === 1) {
-      selectMode(currentUser.rolesArr[0]);
-    } else {
-      mostrarModeSelect();
+    // Si es primer login o el admin le reseteó la clave, forzamos cambio antes de entrar.
+    if (currentUser.debe_cambiar_clave) {
+      mostrarModalCambioClave();
+      return;
     }
+
+    _continuarLogin();
   } catch(e) {
     console.error(e);
     document.getElementById('loginError').style.display = 'block';
+  }
+}
+
+function _continuarLogin() {
+  // Si tiene un solo rol, entra directo; si tiene múltiples, mostramos la pantalla de selección.
+  if (currentUser.rolesArr.length === 1) {
+    selectMode(currentUser.rolesArr[0]);
+  } else {
+    mostrarModeSelect();
+  }
+}
+
+function mostrarModalCambioClave() {
+  const modal = document.createElement('div');
+  modal.id = 'cambioClaveModal';
+  modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:10000; padding:16px';
+  modal.innerHTML = `
+    <div style="background:white; border-radius:10px; padding:24px; max-width:440px; width:100%">
+      <h3 style="margin:0 0 8px 0; color:var(--vw-blue)">🔐 Cambiá tu clave</h3>
+      <p style="font-size:13px; color:var(--vw-grey-4); margin-bottom:16px">Por seguridad, tenés que definir una clave nueva para continuar.</p>
+      <div id="cambioClaveError" style="display:none; color:#c00; font-size:13px; margin-bottom:10px; padding:8px; background:#fee; border-radius:6px"></div>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Nueva clave (mínimo 8, con letras y números)</div>
+        <input id="nuevaClave1" type="password" autocomplete="new-password" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:block; margin-bottom:16px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Repetí la clave</div>
+        <input id="nuevaClave2" type="password" autocomplete="new-password" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box" onkeydown="if(event.key==='Enter') confirmarCambioClave()">
+      </label>
+      <div style="display:flex; gap:8px; justify-content:space-between; flex-wrap:wrap">
+        <button onclick="cancelarCambioClave()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Salir</button>
+        <button onclick="confirmarCambioClave()" style="padding:10px 16px; background:var(--vw-blue); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600">Guardar y entrar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  setTimeout(() => document.getElementById('nuevaClave1')?.focus(), 100);
+}
+
+function cerrarModalCambioClave() {
+  document.getElementById('cambioClaveModal')?.remove();
+}
+
+function cancelarCambioClave() {
+  cerrarModalCambioClave();
+  logout();
+}
+
+async function confirmarCambioClave() {
+  const c1 = (document.getElementById('nuevaClave1').value || '').trim();
+  const c2 = (document.getElementById('nuevaClave2').value || '').trim();
+  const errEl = document.getElementById('cambioClaveError');
+  const mostrarErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } };
+
+  const v = validarClaveUsuario(c1);
+  if (!v.ok) return mostrarErr(v.msg);
+  if (c1 !== c2) return mostrarErr('Las claves no coinciden');
+  if (c1 === (currentUser.clave || '')) return mostrarErr('La nueva clave tiene que ser distinta a la provisoria');
+
+  try {
+    showLoading('Guardando clave...');
+    await sbFetch(`tasador_usuarios?id=eq.${currentUser.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ clave: c1, debe_cambiar_clave: false })
+    });
+    currentUser.clave = c1;
+    currentUser.debe_cambiar_clave = false;
+    hideLoading();
+    cerrarModalCambioClave();
+    showToast('Clave actualizada');
+    _continuarLogin();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    mostrarErr('Error al guardar: ' + (e.message || ''));
   }
 }
 
@@ -1012,6 +1106,10 @@ function selectMode(mode) {
   // El botón "Cambiar de modo" solo aparece si el usuario tiene más de un rol.
   const btnCambiar = document.getElementById('btnCambiarModo');
   btnCambiar.classList.toggle('hidden', currentUser.rolesArr.length <= 1);
+
+  // El botón "Usuarios" solo se muestra cuando el modo activo es admin.
+  const btnUsuarios = document.getElementById('btnUsuarios');
+  btnUsuarios.classList.toggle('hidden', mode !== 'admin');
 
   // Mostrar la vista correspondiente y esconder las otras.
   document.getElementById('vendedorView').classList.toggle('hidden', mode !== 'vendedor');
@@ -1050,6 +1148,7 @@ function logout() {
   document.getElementById('tasadorFisicoView').classList.add('hidden');
   document.getElementById('fisicoInspeccionView').classList.add('hidden');
   document.getElementById('btnCambiarModo').classList.add('hidden');
+  document.getElementById('btnUsuarios').classList.add('hidden');
 }
 
 // ============ VENDEDOR TABS ============
@@ -3357,6 +3456,361 @@ function cerrarAgenda() {
     document.getElementById('selectModeScreen')?.classList.remove('hidden');
   }
   agendaVistaAnterior = null;
+}
+
+// ============ ADMIN — USUARIOS ============
+// Superadmin: único usuario que puede editar/crear/tocar admins y dar rol admin.
+const SUPERADMIN_USUARIO = 'fngonzalez';
+let usuariosVistaAnterior = null;
+let usuariosData = [];
+
+function _esSuperadmin() {
+  return !!(currentUser && currentUser.usuario === SUPERADMIN_USUARIO);
+}
+
+async function abrirUsuarios() {
+  if (currentMode !== 'admin') return;
+  const vistas = ['vendedorView', 'tasadorFisicoView', 'fisicoInspeccionView', 'adminView', 'agendaView'];
+  usuariosVistaAnterior = vistas.find(id => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  });
+  vistas.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  });
+  document.getElementById('usuariosView').classList.remove('hidden');
+  await loadUsuarios();
+}
+
+function cerrarUsuarios() {
+  document.getElementById('usuariosView').classList.add('hidden');
+  const vuelta = usuariosVistaAnterior || 'adminView';
+  document.getElementById(vuelta)?.classList.remove('hidden');
+  usuariosVistaAnterior = null;
+}
+
+async function loadUsuarios() {
+  const list = document.getElementById('usuariosList');
+  list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Cargando...</div>';
+  try {
+    const data = await sbFetch('tasador_usuarios?select=id,usuario,nombre,email,telefono_wa,callmebot_key,roles,rol,activo,debe_cambiar_clave&order=usuario.asc');
+    usuariosData = data || [];
+    renderUsuarios();
+  } catch(e) {
+    console.error(e);
+    list.innerHTML = '<div style="text-align:center; padding:40px; color:#c00">Error cargando usuarios</div>';
+  }
+}
+
+function _getRolesDeUsuario(u) {
+  return (Array.isArray(u.roles) && u.roles.length > 0) ? u.roles : (u.rol ? [u.rol] : ['vendedor']);
+}
+
+function _esAdmin(u) {
+  return _getRolesDeUsuario(u).includes('admin');
+}
+
+function _escapeHtmlUsr(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderUsuarios() {
+  const list = document.getElementById('usuariosList');
+  if (!usuariosData.length) {
+    list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Sin usuarios</div>';
+    return;
+  }
+  const rows = usuariosData.map(u => {
+    const roles = _getRolesDeUsuario(u).join(', ');
+    const isAdmin = _esAdmin(u);
+    const activo = u.activo !== false;
+    const idStr = _escapeHtmlUsr(u.id);
+    const puedeEditar = !isAdmin || _esSuperadmin();
+    const acciones = !puedeEditar
+      ? '<span style="color:var(--vw-grey-3); font-size:12px">— solo lectura —</span>'
+      : `
+        <button onclick="abrirEditarUsuario('${idStr}')" title="Editar" style="padding:6px 10px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-size:12px">✏️</button>
+        <button onclick="abrirResetClave('${idStr}')" title="Resetear clave" style="padding:6px 10px; background:var(--vw-blue-light); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px">🔄</button>
+        <button onclick="toggleActivoUsuario('${idStr}', ${!activo})" title="${activo ? 'Desactivar' : 'Activar'}" style="padding:6px 10px; background:${activo ? '#fee' : '#efe'}; color:${activo ? '#c00' : '#060'}; border:none; border-radius:6px; cursor:pointer; font-size:12px">${activo ? '⏸' : '▶'}</button>
+      `;
+    const rolBadge = isAdmin
+      ? '<span style="font-size:10px; background:var(--vw-blue); color:white; padding:2px 7px; border-radius:10px; font-weight:600">ADMIN</span>'
+      : `<span style="font-size:11px; color:var(--vw-grey-4)">${_escapeHtmlUsr(roles)}</span>`;
+    const estadoBadge = activo
+      ? '<span style="font-size:11px; color:#060">● Activo</span>'
+      : '<span style="font-size:11px; color:#c00">● Inactivo</span>';
+    const cambioClaveBadge = u.debe_cambiar_clave
+      ? '<span style="font-size:11px; color:#c60">⚠ Debe cambiar clave</span>'
+      : '';
+    return `
+      <div style="background:white; border:1px solid var(--vw-grey-2); border-radius:8px; padding:10px 14px; margin-bottom:8px; opacity:${activo ? '1' : '0.6'}; display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+        <div style="flex:1; min-width:180px; display:flex; flex-direction:column; gap:2px">
+          <div style="font-weight:700; font-size:14px; color:var(--vw-blue)">${_escapeHtmlUsr(u.usuario)} <span style="font-weight:400; color:var(--vw-grey-4); font-size:13px">— ${_escapeHtmlUsr(u.nombre || '')}</span></div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center">${rolBadge} ${estadoBadge} ${cambioClaveBadge}</div>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">${acciones}</div>
+      </div>
+    `;
+  }).join('');
+  list.innerHTML = rows;
+}
+
+function validarClaveUsuario(clave) {
+  if (!clave || clave.length < 8) return { ok: false, msg: 'Mínimo 8 caracteres' };
+  if (!/[a-zA-Z]/.test(clave)) return { ok: false, msg: 'Debe incluir al menos una letra' };
+  if (!/[0-9]/.test(clave)) return { ok: false, msg: 'Debe incluir al menos un número' };
+  return { ok: true };
+}
+
+function abrirNuevoUsuario() {
+  _mostrarUsuarioModal('nuevo', null);
+}
+
+function abrirEditarUsuario(id) {
+  const u = usuariosData.find(x => String(x.id) === String(id));
+  if (!u) return;
+  if (_esAdmin(u) && !_esSuperadmin()) { showToast('No se pueden editar usuarios admin'); return; }
+  _mostrarUsuarioModal('editar', u);
+}
+
+function abrirResetClave(id) {
+  const u = usuariosData.find(x => String(x.id) === String(id));
+  if (!u) return;
+  if (_esAdmin(u) && !_esSuperadmin()) { showToast('No se pueden resetear claves de admin'); return; }
+  _mostrarUsuarioModal('reset', u);
+}
+
+function _mostrarUsuarioModal(modo, u) {
+  const titulos = { nuevo: 'Nuevo usuario', editar: 'Editar usuario', reset: 'Resetear clave' };
+  const existente = u || {};
+  const rolesArr = u ? _getRolesDeUsuario(u) : ['vendedor'];
+  const rolActual = rolesArr[0] || 'vendedor';
+
+  let bodyHtml = '';
+  if (modo === 'nuevo') {
+    bodyHtml = `
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Usuario (sin espacios, en minúscula)</div>
+        <input id="usrUsuario" type="text" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Nombre y apellido</div>
+        <input id="usrNombre" type="text" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Clave provisoria (8+, letras y números)</div>
+        <input id="usrClave" type="text" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+        <div style="font-size:11px; color:var(--vw-grey-3); margin-top:3px">El vendedor deberá cambiarla en el primer login.</div>
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Rol</div>
+        <select id="usrRol" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+          <option value="vendedor">Vendedor</option>
+          <option value="tasador_fisico">Tasador físico</option>
+          ${_esSuperadmin() ? '<option value="admin">Administrador</option>' : ''}
+        </select>
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Email (opcional)</div>
+        <input id="usrEmail" type="email" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Teléfono WhatsApp (opcional, formato 549...)</div>
+        <input id="usrTelWA" type="text" placeholder="5491156559854" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">CallMeBot key (opcional)</div>
+        <input id="usrCallmebot" type="text" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+    `;
+  } else if (modo === 'editar') {
+    const estActivo = existente.activo !== false;
+    bodyHtml = `
+      <div style="font-size:13px; color:var(--vw-grey-4); margin-bottom:12px; padding:8px; background:var(--vw-grey-1); border-radius:6px"><b>${_escapeHtmlUsr(existente.usuario)}</b> — el nombre de usuario no se puede cambiar</div>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Nombre y apellido</div>
+        <input id="usrNombre" type="text" value="${_escapeHtmlUsr(existente.nombre)}" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Rol</div>
+        <select id="usrRol" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+          <option value="vendedor" ${rolActual==='vendedor'?'selected':''}>Vendedor</option>
+          <option value="tasador_fisico" ${rolActual==='tasador_fisico'?'selected':''}>Tasador físico</option>
+          ${_esSuperadmin() ? `<option value="admin" ${rolActual==='admin'?'selected':''}>Administrador</option>` : ''}
+        </select>
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Email</div>
+        <input id="usrEmail" type="email" value="${_escapeHtmlUsr(existente.email)}" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Teléfono WhatsApp</div>
+        <input id="usrTelWA" type="text" value="${_escapeHtmlUsr(existente.telefono_wa)}" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">CallMeBot key</div>
+        <input id="usrCallmebot" type="text" value="${_escapeHtmlUsr(existente.callmebot_key)}" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; padding:10px; background:var(--vw-grey-1); border-radius:6px; cursor:pointer">
+        <input id="usrActivo" type="checkbox" ${estActivo ? 'checked' : ''} style="width:18px; height:18px; cursor:pointer">
+        <span style="font-size:13px"><b>Usuario activo</b> <span style="color:var(--vw-grey-4)">— si lo desmarcás, no podrá entrar al sistema</span></span>
+      </label>
+    `;
+  } else if (modo === 'reset') {
+    bodyHtml = `
+      <div style="font-size:13px; color:var(--vw-grey-4); margin-bottom:12px; padding:10px; background:#fff7e6; border:1px solid #ffd58a; border-radius:6px">Vas a resetear la clave de <b>${_escapeHtmlUsr(existente.usuario)}</b>.<br>Anotá la clave provisoria — el vendedor tendrá que cambiarla en el próximo login.</div>
+      <label style="display:block; margin-bottom:10px">
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:3px">Clave provisoria (8+, letras y números)</div>
+        <input id="usrClave" type="text" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
+      </label>
+    `;
+  }
+
+  const modal = document.createElement('div');
+  modal.id = 'usuarioModal';
+  modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:9999; padding:16px';
+  modal.innerHTML = `
+    <div style="background:white; border-radius:10px; padding:20px; max-width:480px; width:100%; max-height:90vh; overflow-y:auto">
+      <h3 style="margin:0 0 16px 0; color:var(--vw-blue)">${titulos[modo]}</h3>
+      <div id="usrError" style="display:none; color:#c00; font-size:13px; margin-bottom:10px; padding:8px; background:#fee; border-radius:6px"></div>
+      ${bodyHtml}
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap">
+        <button onclick="cerrarUsuarioModal()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+        <button onclick="guardarUsuarioModal('${modo}', ${existente.id ? `'${_escapeHtmlUsr(existente.id)}'` : 'null'})" style="padding:10px 16px; background:var(--vw-blue); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600">Guardar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+function cerrarUsuarioModal() {
+  document.getElementById('usuarioModal')?.remove();
+}
+
+function _mostrarErrorUsuario(msg) {
+  const el = document.getElementById('usrError');
+  if (el) { el.textContent = msg; el.style.display = 'block'; }
+}
+
+async function guardarUsuarioModal(modo, id) {
+  if (modo === 'nuevo') {
+    const usuario = (document.getElementById('usrUsuario').value || '').trim().toLowerCase();
+    const nombre = (document.getElementById('usrNombre').value || '').trim();
+    const clave = (document.getElementById('usrClave').value || '').trim();
+    const rol = document.getElementById('usrRol').value;
+    const email = (document.getElementById('usrEmail').value || '').trim();
+    const telWa = (document.getElementById('usrTelWA').value || '').trim();
+    const callmebot = (document.getElementById('usrCallmebot').value || '').trim();
+
+    if (!usuario) return _mostrarErrorUsuario('Usuario es obligatorio');
+    if (/\s/.test(usuario)) return _mostrarErrorUsuario('El usuario no puede tener espacios');
+    if (!nombre) return _mostrarErrorUsuario('Nombre es obligatorio');
+    const v = validarClaveUsuario(clave);
+    if (!v.ok) return _mostrarErrorUsuario(v.msg);
+    if (usuariosData.some(u => u.usuario === usuario)) return _mostrarErrorUsuario('Ya existe un usuario con ese nombre');
+
+    try {
+      showLoading('Creando usuario...');
+      await sbFetch('tasador_usuarios', {
+        method: 'POST',
+        body: JSON.stringify({
+          usuario, nombre, clave,
+          rol, roles: [rol],
+          email: email || null,
+          telefono_wa: telWa || null,
+          callmebot_key: callmebot || null,
+          activo: true,
+          debe_cambiar_clave: true
+        })
+      });
+      hideLoading();
+      cerrarUsuarioModal();
+      showToast('Usuario creado');
+      await loadUsuarios();
+    } catch(e) {
+      hideLoading();
+      console.error(e);
+      _mostrarErrorUsuario('Error al crear: ' + (e.message || ''));
+    }
+  } else if (modo === 'editar') {
+    const nombre = (document.getElementById('usrNombre').value || '').trim();
+    const rol = document.getElementById('usrRol').value;
+    const email = (document.getElementById('usrEmail').value || '').trim();
+    const telWa = (document.getElementById('usrTelWA').value || '').trim();
+    const callmebot = (document.getElementById('usrCallmebot').value || '').trim();
+    const activo = document.getElementById('usrActivo').checked;
+
+    if (!nombre) return _mostrarErrorUsuario('Nombre es obligatorio');
+
+    try {
+      showLoading('Guardando...');
+      await sbFetch(`tasador_usuarios?id=eq.${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          nombre,
+          rol, roles: [rol],
+          email: email || null,
+          telefono_wa: telWa || null,
+          callmebot_key: callmebot || null,
+          activo
+        })
+      });
+      hideLoading();
+      cerrarUsuarioModal();
+      showToast('Usuario actualizado');
+      await loadUsuarios();
+    } catch(e) {
+      hideLoading();
+      console.error(e);
+      _mostrarErrorUsuario('Error al guardar: ' + (e.message || ''));
+    }
+  } else if (modo === 'reset') {
+    const clave = (document.getElementById('usrClave').value || '').trim();
+    const v = validarClaveUsuario(clave);
+    if (!v.ok) return _mostrarErrorUsuario(v.msg);
+
+    try {
+      showLoading('Reseteando clave...');
+      await sbFetch(`tasador_usuarios?id=eq.${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          clave,
+          debe_cambiar_clave: true
+        })
+      });
+      hideLoading();
+      cerrarUsuarioModal();
+      showToast('Clave reseteada. Anotala y pásasela al vendedor.');
+      await loadUsuarios();
+    } catch(e) {
+      hideLoading();
+      console.error(e);
+      _mostrarErrorUsuario('Error: ' + (e.message || ''));
+    }
+  }
+}
+
+async function toggleActivoUsuario(id, nuevoEstado) {
+  const u = usuariosData.find(x => String(x.id) === String(id));
+  if (!u) return;
+  if (_esAdmin(u) && !_esSuperadmin()) { showToast('No se puede cambiar un admin'); return; }
+  const accion = nuevoEstado ? 'activar' : 'desactivar';
+  if (!confirm(`¿Seguro que querés ${accion} al usuario "${u.usuario}"?`)) return;
+  try {
+    showLoading('Guardando...');
+    await sbFetch(`tasador_usuarios?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ activo: nuevoEstado })
+    });
+    hideLoading();
+    showToast(nuevoEstado ? 'Usuario activado' : 'Usuario desactivado');
+    await loadUsuarios();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showToast('Error al guardar');
+  }
 }
 
 async function loadAgenda() {
