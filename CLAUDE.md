@@ -185,8 +185,10 @@ Commit + push a GitHub (rama `main`). El sitio `tasador.titogonzalez.online` se 
 - Tabla `notificaciones_config` (evento PK, usuarios_ids UUID[], incluir_vendedor_referencia BOOLEAN, updated_at, updated_by). Se inicializa con 5 filas: todos los eventos con `fngonzalez` como fijo, y eventos 2 y 5 con `incluir_vendedor_referencia = true`.
 - RLS deshabilitado en `notificaciones_log` y `notificaciones_config` (consistente con el resto del proyecto — se usa la anon key para todo).
 
-**Modo Meta (al 21/04/2026):**
-- La app está en **Desarrollo**. En este modo solo se pueden enviar mensajes a números previamente agregados como "recipient test numbers" en Meta for Developers → app → WhatsApp → API Setup. Para pasar a Producción hace falta Business Verification + Display Name aprobado.
+**Modo Meta (al 21/04/2026, fin del día):**
+- La app está en **Live / Producción**. Ya NO hace falta agregar test recipients — cualquier número de WhatsApp válido con `telefono_wa` cargado recibe los templates.
+- Requisitos cumplidos: Business Verification aprobada, Display Name aprobado, App Domain `tasador.titogonzalez.online`, Privacy Policy (`/privacy.html`), Terms (`/terms.html`), Data Deletion URL (reusa privacy), Category "Business".
+- Archivos públicos que no hay que borrar: `privacy.html`, `terms.html` (en la raíz del repo, servidos por GitHub Pages).
 - Primera prueba end-to-end exitosa con Inés Alonso (mensaje llegado al celu).
 
 **Edge cases pendientes (sin template Meta):**
