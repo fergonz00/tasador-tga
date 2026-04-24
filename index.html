@@ -5703,18 +5703,15 @@ function renderInspeccionFormulario(tas, prev) {
     const ccaStr = ccaBrutoARS ? '$ ' + formatNum(Math.round(ccaBrutoARS)) : '—';
     contextoHTML = `
       <div style="margin-bottom:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow); border-left:4px solid #EA580C">
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px">
-          <span style="background:#EA580C; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">CLIENTE PRESENCIAL</span>
-          <span style="font-size:12px; color:var(--vw-grey-4)">Tasación sin virtual previa</span>
-        </div>
-        <div style="font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:8px">Precios de referencia</div>
+        <span style="background:#EA580C; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">CLIENTE PRESENCIAL</span>
+        <div style="font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin:10px 0 8px 0">Precios de referencia</div>
         <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:10px">
           <div style="padding:10px; background:var(--vw-grey-1); border-radius:6px">
             <div style="font-size:11px; color:var(--vw-grey-4); font-weight:600">Kavak (compra directa)</div>
             <div style="font-size:18px; font-weight:700; color:var(--vw-blue); font-family:var(--mono); margin-top:3px">${kavakStr}</div>
           </div>
           <div style="padding:10px; background:var(--vw-grey-1); border-radius:6px">
-            <div style="font-size:11px; color:var(--vw-grey-4); font-weight:600">CCA bruto (s/ajuste km, s/ -14%)</div>
+            <div style="font-size:11px; color:var(--vw-grey-4); font-weight:600">CCA</div>
             <div style="font-size:18px; font-weight:700; color:var(--vw-blue); font-family:var(--mono); margin-top:3px">${ccaStr}</div>
           </div>
         </div>
