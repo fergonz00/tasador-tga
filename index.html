@@ -2158,6 +2158,12 @@ function renderMisTasacionesList() {
       if (t.precio_toma_final) {
         estadoLabel = 'TASADO FINAL';
         estadoBgColor = '#D1FAE5'; estadoTxtColor = '#065F46';
+      } else if (t.virtual_no_apto) {
+        estadoLabel = 'USADO NO APTO';
+        estadoBgColor = '#FEE2E2'; estadoTxtColor = '#991B1B';
+      } else if (t.no_avanza_motivo) {
+        estadoLabel = 'NO DEJA USADO';
+        estadoBgColor = '#FEE2E2'; estadoTxtColor = '#991B1B';
       } else if (t.precio_toma_virtual) {
         estadoLabel = 'TASADO VIRTUALMENTE';
         estadoBgColor = '#DBEAFE'; estadoTxtColor = '#1E40AF';
@@ -2851,6 +2857,10 @@ function renderAdminCard(t) {
   let estadoLabelAdm, estadoBgAdm, estadoTxtAdm;
   if (t.precio_toma_final) {
     estadoLabelAdm = 'TASADO FINAL'; estadoBgAdm = '#D1FAE5'; estadoTxtAdm = '#065F46';
+  } else if (t.virtual_no_apto) {
+    estadoLabelAdm = 'USADO NO APTO'; estadoBgAdm = '#FEE2E2'; estadoTxtAdm = '#991B1B';
+  } else if (t.no_avanza_motivo) {
+    estadoLabelAdm = 'NO DEJA USADO'; estadoBgAdm = '#FEE2E2'; estadoTxtAdm = '#991B1B';
   } else if (t.precio_toma_virtual) {
     estadoLabelAdm = 'TASADO VIRTUALMENTE'; estadoBgAdm = '#DBEAFE'; estadoTxtAdm = '#1E40AF';
   } else {
