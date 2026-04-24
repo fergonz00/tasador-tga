@@ -1310,14 +1310,19 @@ function renderStep2() { // Modelo
   const marca = getWizardVal('marca');
   const anio = getWizardVal('anio');
   const anioCol = anio === '0' ? '0Km' : anio;
+  const yUser = parseInt(anio);
   const filtered = ccaData.filter(r => {
     if (r.marca !== marca) return false;
     const precio = r[anioCol];
     if (!precio || precio === '' || precio === '0') return false;
-    // Check version year filter
-    const v = r.version;
-    const tieneAnio = /\d{4}/.test(v);
-    if (tieneAnio && v.indexOf(anio) < 0) return false;
+    // Si el nombre de la versión tiene un año y ese año es MAYOR al buscado, no puede corresponder
+    // (la versión es más nueva que el auto del cliente). Si el año de la versión es <= al buscado,
+    // puede ser una versión vigente que se siguió vendiendo — confiamos en el precio de la columna.
+    const mVers = (r.version || '').match(/\b(20\d{2})\b/);
+    if (mVers && !isNaN(yUser)) {
+      const yVers = parseInt(mVers[1]);
+      if (yVers > yUser) return false;
+    }
     return true;
   });
   const modelos = [...new Set(filtered.map(r => r.modelo))].sort();
@@ -1341,13 +1346,17 @@ function renderStep3() { // Versión CCA
   const anio = getWizardVal('anio');
   const modelo = getWizardVal('modelo');
   const anioCol = anio === '0' ? '0Km' : anio;
+  const yUser = parseInt(anio);
   const filtered = ccaData.filter(r => {
     if (r.marca !== marca || r.modelo !== modelo) return false;
     const precio = r[anioCol];
     if (!precio || precio === '' || precio === '0') return false;
-    const v = r.version;
-    const tieneAnio = /\d{4}/.test(v);
-    if (tieneAnio && v.indexOf(anio) < 0) return false;
+    // Si el nombre de la versión tiene un año mayor al buscado, la versión no podía existir aún
+    const mVers = (r.version || '').match(/\b(20\d{2})\b/);
+    if (mVers && !isNaN(yUser)) {
+      const yVers = parseInt(mVers[1]);
+      if (yVers > yUser) return false;
+    }
     return true;
   });
   const versiones = filtered.map(r => r.version).sort();
