@@ -677,6 +677,14 @@ input, select, textarea { font-family: var(--font); }
         <select id="adminFiltroVendedor" onchange="onAdminFiltroChange()" style="padding:10px 14px; border:1px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:var(--sans); min-width:160px">
           <option value="TODOS">Todos los vendedores</option>
         </select>
+        <button id="btnSelMultiple" onclick="toggleSelMultiple()" class="hidden" style="padding:10px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap">☑ Selección múltiple</button>
+      </div>
+      <div id="adminSelBar" class="hidden" style="margin:0 16px 12px; padding:10px 14px; background:#FEE2E2; border-radius:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
+        <span style="font-size:13px; color:#7F1D1D; font-weight:600"><span id="adminSelCount">0</span> tasacion(es) seleccionada(s)</span>
+        <div style="display:flex; gap:6px">
+          <button onclick="limpiarSelMultiple()" style="padding:6px 12px; background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">Limpiar</button>
+          <button onclick="borrarSeleccionadas()" style="padding:6px 12px; background:#991B1B; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">🗑 Borrar seleccionadas</button>
+        </div>
       </div>
       <div id="adminList"></div>
     </div>
@@ -2379,6 +2387,7 @@ async function loadAdminTasaciones(filter) {
     allTasaciones = data;
     populateAdminVendedorSelect(data);
     adminFiltroEstado = filter || 'pendientes';
+    actualizarBotonSelMultiple();
     renderAdminList(data);
   } catch(e) {
     list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red)">Error al cargar</div>';
@@ -2561,6 +2570,90 @@ function renderAdminCardEsperando(t) {
   `;
 }
 
+// ============ BORRADO DE TASACIONES (solo fngonzalez) ============
+let _selMultipleActivo = false;
+let _selMultipleIds = new Set();
+
+function _puedeBorrar() {
+  return !!(currentUser && currentUser.usuario === 'fngonzalez');
+}
+
+function actualizarBotonSelMultiple() {
+  const btn = document.getElementById('btnSelMultiple');
+  if (!btn) return;
+  btn.classList.toggle('hidden', !_puedeBorrar());
+}
+
+function toggleSelMultiple() {
+  _selMultipleActivo = !_selMultipleActivo;
+  _selMultipleIds.clear();
+  const btn = document.getElementById('btnSelMultiple');
+  const bar = document.getElementById('adminSelBar');
+  if (btn) {
+    btn.textContent = _selMultipleActivo ? '✖ Cancelar selección' : '☑ Selección múltiple';
+    btn.style.background = _selMultipleActivo ? '#FEE2E2' : 'var(--vw-grey-1)';
+    btn.style.color = _selMultipleActivo ? '#991B1B' : 'var(--vw-grey-4)';
+  }
+  if (bar) bar.classList.toggle('hidden', !_selMultipleActivo);
+  actualizarSelCount();
+  loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+}
+
+function toggleCardSeleccion(id, event) {
+  if (event) event.stopPropagation();
+  if (_selMultipleIds.has(id)) _selMultipleIds.delete(id);
+  else _selMultipleIds.add(id);
+  actualizarSelCount();
+  // Feedback visual: marcar la card
+  const card = document.getElementById('card-' + id);
+  if (card) card.style.outline = _selMultipleIds.has(id) ? '3px solid #991B1B' : '';
+}
+
+function limpiarSelMultiple() {
+  _selMultipleIds.clear();
+  actualizarSelCount();
+  document.querySelectorAll('.tasacion-card-compact').forEach(c => c.style.outline = '');
+}
+
+function actualizarSelCount() {
+  const el = document.getElementById('adminSelCount');
+  if (el) el.textContent = _selMultipleIds.size;
+}
+
+async function borrarTasacion(id) {
+  if (!_puedeBorrar()) { showToast('No autorizado'); return; }
+  const t = (allTasaciones || []).find(x => x.id === id);
+  const label = t ? `${t.marca} ${t.modelo} — ${t.cliente_nombre || 'sin cliente'}` : id;
+  if (!confirm(`¿Borrar definitivamente esta tasación?\n\n${label}\n\nEsto no se puede deshacer.`)) return;
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, { method: 'DELETE' });
+    showToast('Tasación borrada');
+    await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al borrar');
+  }
+}
+
+async function borrarSeleccionadas() {
+  if (!_puedeBorrar()) { showToast('No autorizado'); return; }
+  if (_selMultipleIds.size === 0) { showToast('No hay tasaciones seleccionadas'); return; }
+  const n = _selMultipleIds.size;
+  if (!confirm(`¿Borrar ${n} tasacion(es)?\n\nEsto no se puede deshacer.`)) return;
+  try {
+    const ids = Array.from(_selMultipleIds);
+    const idsCsv = ids.map(id => `"${id}"`).join(',');
+    await sbFetch(`tasaciones?id=in.(${idsCsv})`, { method: 'DELETE' });
+    showToast(`${n} tasaciones borradas`);
+    _selMultipleIds.clear();
+    _selMultipleActivo = false;
+    toggleSelMultiple(); // reactiva el toggle a false
+  } catch(e) {
+    console.error(e);
+    showToast('Error al borrar');
+  }
+}
+
 function renderAdminCard(t) {
   const cotiz = getCotiz();
 
@@ -2673,9 +2766,19 @@ function renderAdminCard(t) {
     estadoLabelAdm = 'ESPERANDO TASACIÓN'; estadoBgAdm = '#FEF3C7'; estadoTxtAdm = '#92400E';
   }
 
+  const selActivo = _selMultipleActivo && _puedeBorrar();
+  const marcado = _selMultipleIds.has(t.id);
+  const outlineStyle = (selActivo && marcado) ? 'outline:3px solid #991B1B; ' : '';
+  const checkboxHTML = selActivo
+    ? `<input type="checkbox" ${marcado ? 'checked' : ''} onclick="toggleCardSeleccion('${t.id}', event)" style="width:20px; height:20px; margin-right:8px; cursor:pointer; flex-shrink:0">`
+    : '';
+  const btnBorrarIndiv = (_puedeBorrar() && !selActivo)
+    ? `<button onclick="event.stopPropagation(); borrarTasacion('${t.id}')" title="Borrar tasación" style="background:transparent; border:none; cursor:pointer; font-size:16px; padding:4px 6px; opacity:0.6; margin-left:6px">🗑️</button>`
+    : '';
   return `
-    <div class="tasacion-card-compact" id="card-${t.id}">
-      <div class="card-header" onclick="toggleCard('${t.id}')">
+    <div class="tasacion-card-compact" id="card-${t.id}" style="${outlineStyle}">
+      <div class="card-header" onclick="${selActivo ? `toggleCardSeleccion('${t.id}', event)` : `toggleCard('${t.id}')`}">
+        ${checkboxHTML}
         <div class="card-summary">
           <div class="marca-modelo">${t.marca} ${t.modelo} ${t.anio}</div>
           <div class="detalles">${t.version} — ${formatNum(t.kilometros)} km</div>
@@ -2687,6 +2790,7 @@ function renderAdminCard(t) {
           ${t.precio_toma_final ? `<div style="font-family:var(--mono);font-weight:700;color:var(--green);font-size:15px;margin-top:4px">$ ${formatNum(t.precio_toma_final)}</div>` : ''}
         </div>
         <span class="arrow" id="arrow-${t.id}">▼</span>
+        ${btnBorrarIndiv}
       </div>
       <div class="card-body" id="body-${t.id}">
 
