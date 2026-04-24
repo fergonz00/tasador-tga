@@ -2592,8 +2592,8 @@ function renderAdminList(tasaciones) {
 
 // Card simplificado para tab "Esperando confirmación".
 // Solo muestra: línea compacta de datos + precio virtual + bloque inspección física + input precio final.
-// Bloque de los 3 precios de referencia (Kavak, Fórmula FG si hay, CCA ajustado con -14%).
-// Aplica la fórmula "normal" de cualquier tasación virtual. Lo usa la card "esperando".
+// Bloque de los 3 precios de referencia con el mismo formato de la tasación virtual normal
+// (orden CCA → Fórmula FG → Kavak, clases precio-box cca/vw/kavak). Lo usa la card "esperando".
 function renderPreciosReferenciaHTML(t) {
   const cotiz = getCotiz();
   const ajuste = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override) : (t.ajuste_km_porcentaje || 0);
@@ -2605,7 +2605,7 @@ function renderPreciosReferenciaHTML(t) {
   const ccaAjustado = ccaPublico ? ccaPublico * (1 + ajuste/100) : null;
   const ccaToma = ccaAjustado ? ccaAjustado * 0.86 : null;
 
-  // Fórmula FG (si hay equivalente cargado)
+  // Fórmula FG
   const rotacion = Number(t.rotacion_anual) || 9;
   let vwMercado = null;
   if (t.equiv_0km_precio != null && t.equiv_0km_moneda) {
@@ -2619,21 +2619,56 @@ function renderPreciosReferenciaHTML(t) {
   const vwToma = vwAjustado ? vwAjustado * 0.88 : null;
 
   const kavak = t.precio_kavak || null;
-  const fmt = v => v ? '$ ' + formatNum(Math.round(v)) : '—';
-  const colCell = (titulo, subtitulo, valor) => `
-    <div style="padding:10px; background:white; border-radius:6px; text-align:center; border:1px solid #BFDBFE">
-      <div style="font-size:10px; font-weight:700; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">${titulo}</div>
-      ${subtitulo ? `<div style="font-size:9px; color:var(--vw-grey-3); margin-top:1px">${subtitulo}</div>` : ''}
-      <div style="font-size:16px; font-weight:700; color:var(--vw-blue); font-family:var(--mono); margin-top:4px">${valor}</div>
-    </div>
-  `;
+
+  // Descuento IA (mismo helper que la card normal)
+  const descIA = Number(t.analisis_ia_descuento) || 0;
+  const descRowHTML = (valor) => {
+    if (!descIA || valor == null) return '';
+    const final = Math.round(valor) - descIA;
+    return `
+      <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(0,0,0,0.15)">
+        <div style="font-size:10px; font-weight:600; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">Con desc. IA</div>
+        <div class="valor" style="font-size:17px; color:${final >= 0 ? 'var(--green)' : 'var(--red)'}">$ ${formatNum(final)}</div>
+        <div class="sub">− $ ${formatNum(descIA)}</div>
+      </div>
+    `;
+  };
+
   return `
-    <div style="margin-top:10px; padding:10px 12px; background:#EFF6FF; border-radius:8px; border:1px solid #BFDBFE">
-      <div style="font-size:11px; font-weight:700; color:var(--vw-blue); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px">Precios de referencia</div>
-      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px">
-        ${colCell('Fórmula FG', vwMercado ? `ajuste ${ajuste}% · −12%` : 'sin equivalente 0km', fmt(vwToma))}
-        ${colCell('Kavak', 'compra directa', fmt(kavak))}
-        ${colCell('CCA', `ajuste ${ajuste}% · −14%`, fmt(ccaToma))}
+    <div class="precios-grid">
+      <div class="precio-box cca">
+        <div class="metodo">CCA</div>
+        <div class="valor">${ccaToma ? '$ ' + formatNum(Math.round(ccaToma)) : 'N/A'}</div>
+        <div class="sub">Público: ${ccaAjustado ? '$ ' + formatNum(Math.round(ccaAjustado)) : '-'}<br>Toma -14%</div>
+        ${descRowHTML(ccaToma)}
+      </div>
+      <div class="precio-box vw">
+        <div class="metodo">Fórmula FG</div>
+        <div class="valor">${vwToma ? '$ ' + formatNum(Math.round(vwToma)) : 'N/A'}</div>
+        <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>Toma -12% · Rotación ${rotacion}%</div>
+        ${descRowHTML(vwToma)}
+        <div style="margin-top:6px; display:flex; gap:3px; justify-content:center; flex-wrap:wrap">
+          ${[
+            {v:7, lbl:'Alta', color:'#16A34A'},
+            {v:9, lbl:'Normal', color:'#166534'},
+            {v:11, lbl:'Baja', color:'#B45309'}
+          ].map(o => `
+            <button onclick="event.stopPropagation(); cambiarRotacion('${t.id}', ${o.v})" style="padding:3px 6px; font-size:10px; font-weight:600; border-radius:4px; border:1px solid ${o.color}; background:${rotacion === o.v ? o.color : 'white'}; color:${rotacion === o.v ? 'white' : o.color}; cursor:pointer">${o.lbl} ${o.v}%</button>
+          `).join('')}
+        </div>
+      </div>
+      <div class="precio-box kavak">
+        <div class="metodo">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(editable)</span></div>
+        <div style="display:flex; align-items:center; gap:4px; margin:4px 0">
+          <span style="font-family:var(--mono); font-weight:700">$</span>
+          <input type="number" id="kavak-${t.id}" value="${kavak || ''}" placeholder="0"
+            onclick="event.stopPropagation()"
+            onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
+            style="flex:1; min-width:80px; padding:3px 6px; font-family:var(--mono); font-weight:700; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
+          <button onclick="event.stopPropagation(); guardarKavak('${t.id}')" title="Guardar" style="padding:3px 8px; background:var(--vw-blue); color:white; border:none; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer">✓</button>
+        </div>
+        <div class="sub">Precio compra directo</div>
+        ${descRowHTML(kavak)}
       </div>
     </div>
   `;
