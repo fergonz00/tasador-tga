@@ -612,8 +612,9 @@ input, select, textarea { font-family: var(--font); }
       <div class="admin-tabs" style="margin:0">
         <button class="active" onclick="showMisTab('pendientes', this)">Pendientes</button>
         <button onclick="showMisTab('virtual', this)">Tasación virtual</button>
-        <button onclick="showMisTab('usado_rechazado', this)">Usado no apto para toma</button>
         <button onclick="showMisTab('final', this)">Tasación final</button>
+        <button onclick="showMisTab('usado_rechazado', this)">Usado no apto</button>
+        <button onclick="showMisTab('usado_tomado', this)">Usado tomado</button>
         <button onclick="showMisTab('todas', this)">Todas</button>
       </div>
       <div style="padding:12px 16px 0 16px">
@@ -664,8 +665,9 @@ input, select, textarea { font-family: var(--font); }
         <button class="active" onclick="showAdminTab('pendientes', this)">Pendientes</button>
         <button onclick="showAdminTab('virtual', this)">Tasación virtual</button>
         <button onclick="showAdminTab('esperando', this)">Esperando confirmación</button>
-        <button onclick="showAdminTab('usado_rechazado', this)">Usado no apto para toma</button>
         <button onclick="showAdminTab('final', this)">Tasación final</button>
+        <button onclick="showAdminTab('usado_rechazado', this)">Usado no apto</button>
+        <button onclick="showAdminTab('usado_tomado', this)">Usado tomado</button>
         <button onclick="showAdminTab('todas', this)">Todas</button>
       </div>
       <div class="cotiz-bar">
@@ -2129,7 +2131,9 @@ function renderMisTasacionesList() {
   } else if (misFiltroEstado === 'no_deja_usado') {
     data = data.filter(t => !!t.no_avanza_motivo);
   } else if (misFiltroEstado === 'final') {
-    data = data.filter(t => t.precio_toma_final);
+    data = data.filter(t => t.precio_toma_final && t.usado_tomado !== true);
+  } else if (misFiltroEstado === 'usado_tomado') {
+    data = data.filter(t => t.precio_toma_final && t.usado_tomado === true);
   }
   // Filtro de texto
   const q = misFiltroTexto;
@@ -2144,6 +2148,7 @@ function renderMisTasacionesList() {
     pendientes: '⏳ Tasaciones que ya mandaste a tasar pero todavía no recibiste el precio virtual del admin. Esperá la respuesta.',
     virtual: '💡 Ya tienen precio virtual REFERENCIAL. Para confirmar el precio definitivo el cliente tiene que traer la unidad — agendá un turno de inspección física desde cada tasación.',
     usado_rechazado: '❌ Tasaciones que el admin evaluó como NO APTAS para toma. Mirá el motivo adentro de cada tarjeta.',
+    usado_tomado: '🟢 Tasaciones donde el usado efectivamente se tomó como parte de pago. Ya está cerrada la operación con usado.',
     final: '✅ Tasación final cerrada después de que el tasador físico vio la unidad. Por cada una, marcá si el cliente cerró la operación y si dejó o no el usado.',
     todas: 'Todas tus tasaciones, en cualquier estado.'
   };
@@ -2461,7 +2466,9 @@ function renderAdminList(tasaciones) {
   } else if (adminFiltroEstado === 'no_deja_usado') {
     data = data.filter(t => !!t.no_avanza_motivo);
   } else if (adminFiltroEstado === 'final') {
-    data = data.filter(t => t.precio_toma_final);
+    data = data.filter(t => t.precio_toma_final && t.usado_tomado !== true);
+  } else if (adminFiltroEstado === 'usado_tomado') {
+    data = data.filter(t => t.precio_toma_final && t.usado_tomado === true);
   }
   if (adminFiltroVendedor && adminFiltroVendedor !== 'TODOS') {
     data = data.filter(t => t.vendedor_nombre === adminFiltroVendedor);
@@ -2482,6 +2489,7 @@ function renderAdminList(tasaciones) {
     virtual: '💡 Ya tienen precio virtual REFERENCIAL cargado. Falta que el vendedor agende turno y que el cliente traiga la unidad para inspección física.',
     esperando: '🔍 El tasador físico ya inspeccionó y sugirió precio. Falta que vos cierres con el PRECIO FINAL para notificar al vendedor.',
     usado_rechazado: '❌ Tasaciones que marcaste como NO APTAS para toma (con el motivo cargado). El vendedor recibió notificación por WhatsApp.',
+    usado_tomado: '🟢 Tasaciones donde el usado efectivamente se tomó como parte de pago. Operación cerrada con usado.',
     final: '✅ Tasaciones con precio final cerrado. Acá ves la respuesta del vendedor sobre el cierre de la operación con el cliente.',
     todas: 'Todas las tasaciones del sistema, en cualquier estado.'
   };
@@ -3118,6 +3126,22 @@ function renderAdminCard(t) {
               <button onclick="event.stopPropagation(); guardarPrecioFinal('${t.id}')" ${dis} style="padding:8px 14px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:${btnCursor}; white-space:nowrap">${t.precio_toma_final ? 'Actualizar' : 'Guardar final'}</button>
             </div>
             <textarea id="comentario-${t.id}" placeholder="${hayInspeccion ? 'Comentario para el vendedor (pre-llenado por IA)' : 'Comentario para el vendedor (se habilita con inspección física)'}" ${dis} onclick="event.stopPropagation()" rows="3" style="width:100%; padding:8px 10px; font-size:12px; font-family:var(--sans); border:1px solid ${inputBorder}; border-radius:6px; resize:vertical; background:${inputBg}; box-sizing:border-box; color:var(--vw-grey-5); line-height:1.4">${comentario}</textarea>
+          </div>
+        `;
+      })()}
+
+      ${(() => {
+        // Si la tasación tiene precio final y el cierre todavía no se respondió, el admin también puede marcarlo
+        if (!t.precio_toma_final) return '';
+        if (t.venta_cerrada !== null && t.venta_cerrada !== undefined) return '';
+        return `
+          <div style="margin-top:12px; padding:12px; background:#FEF3C7; border-radius:8px; border:1px solid #FDE68A">
+            <div style="font-size:12px; font-weight:700; color:#92400E; margin-bottom:8px">¿Se cerró la operación con el cliente?</div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap">
+              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, true)" style="flex:1; min-width:110px; padding:8px 12px; background:var(--green); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · con usado</button>
+              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, false)" style="flex:1; min-width:110px; padding:8px 12px; background:#10B981; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · sin usado</button>
+              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', false, false)" style="flex:1; min-width:110px; padding:8px 12px; background:var(--red); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ No cerró</button>
+            </div>
           </div>
         `;
       })()}
