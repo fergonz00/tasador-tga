@@ -612,6 +612,7 @@ input, select, textarea { font-family: var(--font); }
       <div class="admin-tabs" style="margin:0">
         <button class="active" onclick="showMisTab('pendientes', this)">Pendientes</button>
         <button onclick="showMisTab('virtual', this)">Tasación virtual</button>
+        <button onclick="showMisTab('no_deja_usado', this)">No deja usado</button>
         <button onclick="showMisTab('final', this)">Tasación final</button>
         <button onclick="showMisTab('todas', this)">Todas</button>
       </div>
@@ -663,6 +664,7 @@ input, select, textarea { font-family: var(--font); }
         <button class="active" onclick="showAdminTab('pendientes', this)">Pendientes</button>
         <button onclick="showAdminTab('virtual', this)">Tasación virtual</button>
         <button onclick="showAdminTab('esperando', this)">Esperando confirmación</button>
+        <button onclick="showAdminTab('no_deja_usado', this)">No deja usado</button>
         <button onclick="showAdminTab('final', this)">Tasación final</button>
         <button onclick="showAdminTab('todas', this)">Todas</button>
       </div>
@@ -2098,9 +2100,11 @@ function renderMisTasacionesList() {
   // como las viejas), va directo al tab "Tasación final" — no debe quedar en pendientes.
   let data = misTasacionesData;
   if (misFiltroEstado === 'pendientes') {
-    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto);
+    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto && !t.no_avanza_motivo);
   } else if (misFiltroEstado === 'virtual') {
-    data = data.filter(t => (t.precio_toma_virtual || t.virtual_no_apto) && !t.precio_toma_final);
+    data = data.filter(t => (t.precio_toma_virtual || t.virtual_no_apto) && !t.precio_toma_final && !t.no_avanza_motivo);
+  } else if (misFiltroEstado === 'no_deja_usado') {
+    data = data.filter(t => !!t.no_avanza_motivo);
   } else if (misFiltroEstado === 'final') {
     data = data.filter(t => t.precio_toma_final);
   }
@@ -2116,6 +2120,7 @@ function renderMisTasacionesList() {
   const subtitulos = {
     pendientes: '⏳ Tasaciones que ya mandaste a tasar pero todavía no recibiste el precio virtual del admin. Esperá la respuesta.',
     virtual: '💡 Ya tienen precio virtual REFERENCIAL. Para confirmar el precio definitivo el cliente tiene que traer la unidad — agendá un turno de inspección física desde cada tasación.',
+    no_deja_usado: '🚫 Tasaciones donde el cliente no dejó el usado. Separadas entre: compró el 0km (se lleva el 0km pero vende el usado por su cuenta) o no compró el 0km.',
     final: '✅ Tasación final cerrada después de que el tasador físico vio la unidad. Por cada una, marcá si el cliente cerró la operación y si dejó o no el usado.',
     todas: 'Todas tus tasaciones, en cualquier estado.'
   };
@@ -2178,6 +2183,20 @@ function renderMisTasacionesList() {
             ${renderPreciosVendedor(t)}
 
             ${(() => {
+              // Si ya marcó "no avanza con la toma", mostramos el indicador y listo (no turno, no botones).
+              if (t.no_avanza_motivo) {
+                const motivoLbl = t.no_avanza_motivo === 'compro_0km_no_dejo_usado'
+                  ? 'El cliente compró el 0km pero no dejó el usado'
+                  : (t.no_avanza_motivo === 'no_compro_0km' ? 'El cliente no compró el 0km' : t.no_avanza_motivo);
+                const fechaNA = t.no_avanza_at ? new Date(t.no_avanza_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
+                return `
+                  <div style="margin-top:12px; padding:10px 12px; background:#FEE2E2; border-radius:6px; border-left:3px solid #991B1B">
+                    <div style="font-size:12px; font-weight:700; color:#991B1B; letter-spacing:0.5px">🚫 NO AVANZA CON LA TOMA</div>
+                    <div style="font-size:13px; color:#7F1D1D; margin-top:4px">${motivoLbl}</div>
+                    <div style="font-size:11px; color:var(--vw-grey-4); margin-top:2px">${t.no_avanza_por ? 'Marcado por ' + t.no_avanza_por + ' · ' : ''}${fechaNA}</div>
+                  </div>
+                `;
+              }
               // Si el admin marcó como NO APTO, no mostramos ni el turno ni los mensajes de espera.
               if (t.virtual_no_apto) return '';
               // El turno solo se puede agendar después de tener precio virtual cargado
@@ -2187,6 +2206,9 @@ function renderMisTasacionesList() {
                   <div style="margin-top:12px; padding:10px 12px; background:#EFF6FF; border-radius:6px; border-left:3px solid var(--vw-blue); display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
                     <div style="font-size:13px"><span style="color:var(--vw-blue); font-weight:700">📅 Turno inspección:</span> ${formatFechaTurnoLargo(f)} ${t.turno_hora || ''}</div>
                     <button onclick="event.stopPropagation(); abrirAgendarTurno('${t.id}')" style="padding:5px 10px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:4px; font-weight:600; font-size:11px; cursor:pointer">Cambiar</button>
+                  </div>
+                  <div style="margin-top:8px; text-align:center">
+                    <button onclick="event.stopPropagation(); abrirNoAvanzaModal('${t.id}')" style="padding:6px 12px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">🚫 No avanza con la toma</button>
                   </div>
                 `;
               }
@@ -2198,8 +2220,9 @@ function renderMisTasacionesList() {
                 `;
               }
               return `
-                <div style="margin-top:12px; text-align:center">
+                <div style="margin-top:12px; text-align:center; display:flex; gap:8px; justify-content:center; flex-wrap:wrap">
                   <button onclick="event.stopPropagation(); abrirAgendarTurno('${t.id}')" style="padding:8px 16px; background:var(--vw-blue); color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer">📅 Agendar inspección física</button>
+                  <button onclick="event.stopPropagation(); abrirNoAvanzaModal('${t.id}')" style="padding:8px 16px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer">🚫 No avanza con la toma</button>
                 </div>
               `;
             })()}
@@ -2398,11 +2421,13 @@ function renderAdminList(tasaciones) {
   //   final      → con precio final cargado (siempre va a este tab, aunque no haya pasado por virtual)
   //   todas      → todas
   if (adminFiltroEstado === 'pendientes') {
-    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto);
+    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto && !t.no_avanza_motivo);
   } else if (adminFiltroEstado === 'virtual') {
-    data = data.filter(t => (t.precio_toma_virtual || t.virtual_no_apto) && !t.precio_toma_final);
+    data = data.filter(t => (t.precio_toma_virtual || t.virtual_no_apto) && !t.precio_toma_final && !t.no_avanza_motivo);
   } else if (adminFiltroEstado === 'esperando') {
-    data = data.filter(t => t.analisis_fisico && t.precio_sugerido_fisico && !t.precio_toma_final);
+    data = data.filter(t => t.analisis_fisico && t.precio_sugerido_fisico && !t.precio_toma_final && !t.no_avanza_motivo);
+  } else if (adminFiltroEstado === 'no_deja_usado') {
+    data = data.filter(t => !!t.no_avanza_motivo);
   } else if (adminFiltroEstado === 'final') {
     data = data.filter(t => t.precio_toma_final);
   }
@@ -2424,6 +2449,7 @@ function renderAdminList(tasaciones) {
     pendientes: '⏳ Tasaciones que mandaron los vendedores y todavía no les pusiste precio virtual. Es tu primera acción sobre cada una.',
     virtual: '💡 Ya tienen precio virtual REFERENCIAL cargado. Falta que el vendedor agende turno y que el cliente traiga la unidad para inspección física.',
     esperando: '🔍 El tasador físico ya inspeccionó y sugirió precio. Falta que vos cierres con el PRECIO FINAL para notificar al vendedor.',
+    no_deja_usado: '🚫 Tasaciones que el vendedor cerró sin toma: el cliente compró el 0km pero no dejó el usado, o directamente no compró el 0km.',
     final: '✅ Tasaciones con precio final cerrado. Acá ves la respuesta del vendedor sobre el cierre de la operación con el cliente.',
     todas: 'Todas las tasaciones del sistema, en cualquier estado.'
   };
@@ -2810,6 +2836,22 @@ function renderAdminCard(t) {
       ${(() => {
         const fechaVirt = t.precio_toma_virtual_at ? new Date(t.precio_toma_virtual_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : '';
         const fechaNA = t.virtual_no_apto_at ? new Date(t.virtual_no_apto_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : '';
+        // Si el vendedor marcó "no avanza con la toma", mostramos recuadro rojo con el motivo
+        if (t.no_avanza_motivo) {
+          const motivoLbl = t.no_avanza_motivo === 'compro_0km_no_dejo_usado'
+            ? 'Compró 0km pero no dejó el usado'
+            : (t.no_avanza_motivo === 'no_compro_0km' ? 'No compró 0km' : t.no_avanza_motivo);
+          const fechaNAv = t.no_avanza_at ? new Date(t.no_avanza_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : '';
+          return `
+            <div style="margin-top:10px; padding:10px 12px; background:#FEE2E2; border-radius:6px; border:1px solid #FCA5A5">
+              <div style="display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-bottom:6px; flex-wrap:wrap">
+                <span style="font-size:12px; font-weight:700; color:#991B1B">🚫 NO AVANZA CON LA TOMA</span>
+                <span style="font-size:10px; color:var(--vw-grey-4)">${fechaNAv}${t.no_avanza_por ? ' · ' + t.no_avanza_por : ''}</span>
+              </div>
+              <div style="font-size:13px; color:#7F1D1D; padding:8px; background:white; border-radius:4px"><b>Motivo:</b> ${motivoLbl}</div>
+            </div>
+          `;
+        }
         // Si está marcada como NO APTO, mostramos recuadro rojo con la razón y opción de revertir
         if (t.virtual_no_apto) {
           return `
@@ -3488,6 +3530,74 @@ function getProximosDiasHabiles(n = 14) {
     safety++;
   }
   return dias;
+}
+
+// ============ "NO AVANZA CON LA TOMA" (vendedor) ============
+function abrirNoAvanzaModal(tasId) {
+  const prev = document.getElementById('noAvanzaModal');
+  if (prev) prev.remove();
+  const modal = document.createElement('div');
+  modal.id = 'noAvanzaModal';
+  modal.className = 'modal-overlay';
+  modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:10000; padding:16px';
+  modal.onclick = (e) => { if (e.target === modal) cerrarNoAvanzaModal(); };
+  modal.innerHTML = `
+    <div style="background:white; border-radius:10px; padding:22px; max-width:480px; width:100%">
+      <h3 style="margin:0 0 8px 0; color:#991B1B">🚫 No avanza con la toma</h3>
+      <p style="font-size:13px; color:var(--vw-grey-4); margin-bottom:16px">Marcá por qué no se concreta la toma del usado. Esta tasación queda cerrada y sale de la solapa "Tasación virtual".</p>
+      <label style="display:flex; align-items:flex-start; gap:10px; padding:12px; border:2px solid var(--vw-grey-2); border-radius:8px; cursor:pointer; margin-bottom:10px">
+        <input type="radio" name="noAvanzaMotivo" value="compro_0km_no_dejo_usado" style="margin-top:3px">
+        <div>
+          <div style="font-weight:600; font-size:14px">Compró 0km pero no dejó el usado</div>
+          <div style="font-size:12px; color:var(--vw-grey-4)">El cliente se llevó el 0km y vende el usado por su cuenta.</div>
+        </div>
+      </label>
+      <label style="display:flex; align-items:flex-start; gap:10px; padding:12px; border:2px solid var(--vw-grey-2); border-radius:8px; cursor:pointer; margin-bottom:16px">
+        <input type="radio" name="noAvanzaMotivo" value="no_compro_0km" style="margin-top:3px">
+        <div>
+          <div style="font-weight:600; font-size:14px">No compró 0km</div>
+          <div style="font-size:12px; color:var(--vw-grey-4)">El cliente no terminó comprando el 0km.</div>
+        </div>
+      </label>
+      <div style="display:flex; gap:8px; justify-content:space-between; flex-wrap:wrap">
+        <button onclick="cerrarNoAvanzaModal()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+        <button onclick="confirmarNoAvanza('${tasId}')" style="padding:10px 16px; background:#991B1B; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Confirmar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+function cerrarNoAvanzaModal() {
+  const modal = document.getElementById('noAvanzaModal');
+  if (modal) modal.remove();
+}
+
+async function confirmarNoAvanza(tasId) {
+  const sel = document.querySelector('input[name="noAvanzaMotivo"]:checked');
+  if (!sel) { showToast('Elegí un motivo'); return; }
+  const motivo = sel.value;
+  try {
+    // Al marcar "no avanza" liberamos el turno (si había) para no bloquear la agenda del tasador fisico.
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        no_avanza_motivo: motivo,
+        no_avanza_at: new Date().toISOString(),
+        no_avanza_por: currentUser.nombre,
+        turno_fecha: null,
+        turno_hora: null
+      })
+    });
+    cerrarNoAvanzaModal();
+    showToast('Marcada como "no avanza con la toma"');
+    // Refrescar lista del vendedor
+    if (typeof loadMisTasaciones === 'function') await loadMisTasaciones();
+    else if (typeof renderMisTasacionesList === 'function') renderMisTasacionesList();
+  } catch(e) {
+    console.error(e);
+    showToast('Error al guardar');
+  }
 }
 
 function formatFechaTurnoLargo(d) {
