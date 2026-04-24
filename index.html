@@ -1177,6 +1177,9 @@ function cambiarModo() {
 function logout() {
   currentUser = null;
   currentMode = null;
+  _impersonating = null;
+  _renderImpersonateBanner();
+  document.body.style.paddingTop = '';
   document.getElementById('appScreen').classList.add('hidden');
   document.getElementById('modeSelectScreen').classList.add('hidden');
   document.getElementById('loginScreen').classList.remove('hidden');
@@ -3676,6 +3679,76 @@ function cerrarAgenda() {
 // ============ ADMIN — USUARIOS ============
 // Superadmins: pueden editar/crear/tocar admins, dar rol admin, y acceder al panel de Notificaciones.
 const SUPERADMINS_USUARIOS = ['fngonzalez', 'mlubrano'];
+// Lista mas restrictiva: solo fngonzalez puede "entrar como" otro usuario sin clave.
+const IMPERSONATE_USERS = ['fngonzalez'];
+function _puedeImpersonar() {
+  return !!(currentUser && IMPERSONATE_USERS.includes(currentUser.usuario));
+}
+// Cuando estamos impersonando guardamos aca al usuario original para poder volver.
+let _impersonating = null;
+
+function entrarComoUsuario(id) {
+  if (!_puedeImpersonar()) { showToast('No autorizado'); return; }
+  const u = usuariosData.find(x => String(x.id) === String(id));
+  if (!u) { showToast('Usuario no encontrado'); return; }
+  if (u.activo === false) { showToast('Usuario inactivo'); return; }
+  if (String(u.id) === String(currentUser.id)) { showToast('Ya sos vos'); return; }
+  if (!confirm(`Entrar como "${u.usuario}" (${u.nombre || ''})?\n\nVas a navegar como ese usuario hasta que vuelvas a tu sesion.`)) return;
+
+  // Guardamos al original (solo si no estabamos ya impersonando, asi al cambiar entre usuarios no se pierde el original).
+  if (!_impersonating) _impersonating = currentUser;
+
+  // Cambiamos el currentUser y le populamos rolesArr igual que en login normal.
+  const target = { ...u };
+  target.rolesArr = (Array.isArray(target.roles) && target.roles.length > 0)
+    ? target.roles
+    : (target.rol ? [target.rol] : ['vendedor']);
+  currentUser = target;
+
+  // Cerramos el panel de Usuarios y entramos directo (salteando debe_cambiar_clave porque no es login real).
+  cerrarUsuarios();
+  if (currentUser.rolesArr.length === 1) {
+    selectMode(currentUser.rolesArr[0]);
+  } else {
+    mostrarModeSelect();
+  }
+  _renderImpersonateBanner();
+  showToast(`Entraste como ${u.usuario}`);
+}
+
+function volverASesionOriginal() {
+  if (!_impersonating) return;
+  const original = _impersonating;
+  _impersonating = null;
+  currentUser = original;
+  if (currentUser.rolesArr.length === 1) {
+    selectMode(currentUser.rolesArr[0]);
+  } else {
+    mostrarModeSelect();
+  }
+  _renderImpersonateBanner();
+  showToast('Volviste a tu sesion');
+}
+
+function _renderImpersonateBanner() {
+  let banner = document.getElementById('impersonateBanner');
+  if (!_impersonating) {
+    if (banner) banner.remove();
+    document.body.style.paddingTop = '';
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'impersonateBanner';
+    banner.style.cssText = 'position:fixed; top:0; left:0; right:0; background:#9A3412; color:#fff; padding:8px 14px; font-size:13px; font-weight:600; z-index:9999; display:flex; justify-content:space-between; align-items:center; gap:12px; box-shadow:0 2px 6px rgba(0,0,0,0.2)';
+    document.body.appendChild(banner);
+    document.body.style.paddingTop = '36px';
+  }
+  banner.innerHTML = `
+    <span>👤 Estás viendo como <strong>${_escapeHtmlUsr(currentUser.usuario)}</strong> (${_escapeHtmlUsr(currentUser.nombre || '')})</span>
+    <button onclick="volverASesionOriginal()" style="background:#fff; color:#9A3412; border:none; padding:5px 12px; border-radius:5px; cursor:pointer; font-weight:700; font-size:12px">← Volver a ${_escapeHtmlUsr(_impersonating.usuario)}</button>
+  `;
+}
 let usuariosVistaAnterior = null;
 let usuariosData = [];
 
@@ -3742,12 +3815,17 @@ function renderUsuarios() {
     const activo = u.activo !== false;
     const idStr = _escapeHtmlUsr(u.id);
     const puedeEditar = !isAdmin || _esSuperadmin();
+    const puedeImpers = _puedeImpersonar() && activo && String(u.id) !== String(currentUser.id);
+    const btnImpers = puedeImpers
+      ? `<button onclick="entrarComoUsuario('${idStr}')" title="Entrar como este usuario" style="padding:6px 10px; background:#FED7AA; color:#9A3412; border:none; border-radius:6px; cursor:pointer; font-size:12px">👤→</button>`
+      : '';
     const acciones = !puedeEditar
-      ? '<span style="color:var(--vw-grey-3); font-size:12px">— solo lectura —</span>'
+      ? `<span style="color:var(--vw-grey-3); font-size:12px">— solo lectura —</span> ${btnImpers}`
       : `
         <button onclick="abrirEditarUsuario('${idStr}')" title="Editar" style="padding:6px 10px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-size:12px">✏️</button>
         <button onclick="abrirResetClave('${idStr}')" title="Resetear clave" style="padding:6px 10px; background:var(--vw-blue-light); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px">🔄</button>
         <button onclick="toggleActivoUsuario('${idStr}', ${!activo})" title="${activo ? 'Desactivar' : 'Activar'}" style="padding:6px 10px; background:${activo ? '#fee' : '#efe'}; color:${activo ? '#c00' : '#060'}; border:none; border-radius:6px; cursor:pointer; font-size:12px">${activo ? '⏸' : '▶'}</button>
+        ${btnImpers}
       `;
     const rolBadge = isAdmin
       ? '<span style="font-size:10px; background:var(--vw-blue); color:white; padding:2px 7px; border-radius:10px; font-weight:600">ADMIN</span>'
