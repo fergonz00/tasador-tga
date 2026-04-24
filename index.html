@@ -1889,7 +1889,9 @@ function handleFotos(files) {
     const reader = new FileReader();
     reader.onload = e => {
       fotoPreviews.push(e.target.result);
-      if (currentStep === 11) renderWizard();
+      // Re-render siempre para que aparezca el thumbnail. Si el usuario no está en el paso de
+      // fotos no hace daño (renderWizard solo actualiza el step activo).
+      renderWizard();
     };
     reader.readAsDataURL(f);
   }
