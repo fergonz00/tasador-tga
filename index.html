@@ -635,9 +635,6 @@ input, select, textarea { font-family: var(--font); }
         <button class="active" onclick="showFisicoTab('pendientes', this)">Pendientes</button>
         <button onclick="showFisicoTab('inspeccionadas', this)">Inspeccionadas (esperando admin)</button>
         <button onclick="showFisicoTab('final', this)">Tasación final</button>
-        <button onclick="showFisicoTab('ingresar', this)">Ingresar</button>
-        <button onclick="showFisicoTab('stock', this)">Stock</button>
-        <button onclick="showFisicoTab('vendido', this)">Vendido</button>
         <button onclick="showFisicoTab('todas', this)">Todas</button>
       </div>
       <div style="padding: 12px 16px 0 16px;">
@@ -671,9 +668,6 @@ input, select, textarea { font-family: var(--font); }
         <button onclick="showAdminTab('usado_rechazado', this)">Usado rechazado</button>
         <button onclick="showAdminTab('no_deja_usado', this)">No deja usado</button>
         <button onclick="showAdminTab('final', this)">Tasación final</button>
-        <button onclick="showAdminTab('ingresar', this)">Ingresar</button>
-        <button onclick="showAdminTab('stock', this)">Stock</button>
-        <button onclick="showAdminTab('vendido', this)">Vendido</button>
         <button onclick="showAdminTab('todas', this)">Todas</button>
       </div>
       <div class="cotiz-bar">
@@ -1045,6 +1039,7 @@ async function login() {
       return;
     }
 
+    guardarSesion();
     _continuarLogin();
   } catch(e) {
     console.error(e);
@@ -1119,6 +1114,7 @@ async function confirmarCambioClave() {
     hideLoading();
     cerrarModalCambioClave();
     showToast('Clave actualizada');
+    guardarSesion();
     _continuarLogin();
   } catch(e) {
     hideLoading();
@@ -1165,6 +1161,7 @@ function selectMode(mode) {
     return;
   }
   currentMode = mode;
+  guardarSesion();
   document.getElementById('modeSelectScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
   const modeLabels = { admin: 'admin', vendedor: 'vendedor', tasador_fisico: 'tasador físico' };
@@ -1203,6 +1200,7 @@ function cambiarModo() {
 }
 
 function logout() {
+  limpiarSesion();
   currentUser = null;
   currentMode = null;
   _impersonating = null;
@@ -2460,13 +2458,7 @@ function renderAdminList(tasaciones) {
   } else if (adminFiltroEstado === 'no_deja_usado') {
     data = data.filter(t => !!t.no_avanza_motivo);
   } else if (adminFiltroEstado === 'final') {
-    data = data.filter(t => t.precio_toma_final && !t.ingresado_stock_at && !t.vendido_at);
-  } else if (adminFiltroEstado === 'ingresar') {
-    data = data.filter(t => t.precio_toma_final && t.usado_tomado === true && !t.ingresado_stock_at && !t.vendido_at);
-  } else if (adminFiltroEstado === 'stock') {
-    data = data.filter(t => t.ingresado_stock_at && !t.vendido_at);
-  } else if (adminFiltroEstado === 'vendido') {
-    data = data.filter(t => !!t.vendido_at);
+    data = data.filter(t => t.precio_toma_final);
   }
   if (adminFiltroVendedor && adminFiltroVendedor !== 'TODOS') {
     data = data.filter(t => t.vendedor_nombre === adminFiltroVendedor);
@@ -2489,9 +2481,6 @@ function renderAdminList(tasaciones) {
     usado_rechazado: '❌ Tasaciones que marcaste como NO APTAS para toma (con el motivo cargado). El vendedor recibió notificación por WhatsApp.',
     no_deja_usado: '🚫 Tasaciones que el vendedor cerró sin toma: el cliente compró el 0km pero no dejó el usado, o directamente no compró el 0km.',
     final: '✅ Tasaciones con precio final cerrado. Acá ves la respuesta del vendedor sobre el cierre de la operación con el cliente.',
-    ingresar: '📥 Operaciones cerradas con usado tomado, pendientes de que el usado ingrese físicamente al concesionario.',
-    stock: '📦 Usados que ya ingresaron al concesionario y están en stock para la venta.',
-    vendido: '💰 Usados que ya se vendieron. Historial de operaciones cerradas.',
     todas: 'Todas las tasaciones del sistema, en cualquier estado.'
   };
   const subtituloAdminHTML = `<div style="margin:0 16px 12px; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosAdmin[adminFiltroEstado] || ''}</div>`;
@@ -3145,46 +3134,6 @@ function renderAdminCard(t) {
         `;
       })()}
 
-      ${(() => {
-        // Flujo Stock/Vendido
-        if (t.vendido_at) {
-          const fv = new Date(t.vendido_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
-          return `
-            <div style="margin-top:12px; padding:10px 12px; background:#FECACA; border-radius:6px; border-left:3px solid #7F1D1D">
-              <div style="font-size:12px; font-weight:700; color:#7F1D1D">💰 VENDIDO</div>
-              <div style="font-size:11px; color:#7F1D1D; margin-top:2px">${fv}${t.vendido_por ? ' · ' + t.vendido_por : ''}</div>
-              ${t.ingresado_stock_at ? `<div style="font-size:11px; color:var(--vw-grey-4); margin-top:2px">Ingresó a stock el ${new Date(t.ingresado_stock_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' })}${t.ingresado_stock_por ? ' · ' + t.ingresado_stock_por : ''}</div>` : ''}
-            </div>
-          `;
-        }
-        if (t.ingresado_stock_at) {
-          const fi = new Date(t.ingresado_stock_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
-          const btnVendido = _puedeGestionarStock()
-            ? `<button onclick="event.stopPropagation(); marcarVendido('${t.id}')" style="padding:8px 14px; background:#7F1D1D; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">💰 Marcar vendido</button>`
-            : '';
-          return `
-            <div style="margin-top:12px; padding:10px 12px; background:#DBEAFE; border-radius:6px; border-left:3px solid #1E40AF">
-              <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
-                <div>
-                  <div style="font-size:12px; font-weight:700; color:#1E40AF">📦 EN STOCK</div>
-                  <div style="font-size:11px; color:#1E40AF; margin-top:2px">${fi}${t.ingresado_stock_por ? ' · ' + t.ingresado_stock_por : ''}</div>
-                </div>
-                ${btnVendido}
-              </div>
-            </div>
-          `;
-        }
-        // Si ya está cerrado con usado tomado y falta ingresar a stock
-        if (t.precio_toma_final && t.venta_cerrada === true && t.usado_tomado === true && _puedeGestionarStock()) {
-          return `
-            <div style="margin-top:12px; padding:10px 12px; background:#FEF3C7; border-radius:6px; border-left:3px solid #78350F; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
-              <div style="font-size:12px; font-weight:700; color:#78350F">📥 PENDIENTE DE INGRESO A STOCK</div>
-              <button onclick="event.stopPropagation(); marcarIngresoStock('${t.id}')" style="padding:8px 14px; background:#1E40AF; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">🏭 Marcar ingreso a stock</button>
-            </div>
-          `;
-        }
-        return '';
-      })()}
       </div>
     </div>
   `;
@@ -5113,20 +5062,13 @@ function renderFisicoList() {
   const list = document.getElementById('fisicoList');
   let data = fisicoData || [];
 
-  // Pre-filtro: para las solapas de inspección (pendientes/inspeccionadas/final/todas) exigimos precio virtual y turno.
-  // Para las solapas de flujo post-toma (ingresar/stock/vendido) relajamos esos requisitos — solo miramos los flags.
-  const solapasRelajadas = new Set(['ingresar', 'stock', 'vendido']);
-  if (!solapasRelajadas.has(fisicoFiltroEstadoVal)) {
-    data = data.filter(t => t.precio_toma_virtual && t.turno_fecha && t.turno_hora);
-  }
+  // Todas las solapas del tasador físico exigen precio virtual + turno agendado.
+  data = data.filter(t => t.precio_toma_virtual && t.turno_fecha && t.turno_hora);
 
   // Filtro por estado:
   //   pendientes      → sin inspección hecha (no hay analisis_fisico)
   //   inspeccionadas  → ya inspeccionó y mandó al admin, esperando precio final
-  //   final           → admin ya puso precio final, todavía sin cierre de operación
-  //   ingresar        → cierre cerrado con usado tomado, pendiente de ingreso físico a stock
-  //   stock           → ingresado al stock, sin vender
-  //   vendido         → ya se vendió
+  //   final           → admin ya puso precio final
   //   todas           → todo
   const tieneInsp = (t) => !!(t.analisis_fisico && typeof t.analisis_fisico === 'object' && t.precio_sugerido_fisico);
   if (fisicoFiltroEstadoVal === 'pendientes') {
@@ -5134,13 +5076,7 @@ function renderFisicoList() {
   } else if (fisicoFiltroEstadoVal === 'inspeccionadas') {
     data = data.filter(t => tieneInsp(t) && !t.precio_toma_final);
   } else if (fisicoFiltroEstadoVal === 'final') {
-    data = data.filter(t => t.precio_toma_final && !t.ingresado_stock_at && !t.vendido_at);
-  } else if (fisicoFiltroEstadoVal === 'ingresar') {
-    data = data.filter(t => t.precio_toma_final && t.usado_tomado === true && !t.ingresado_stock_at && !t.vendido_at);
-  } else if (fisicoFiltroEstadoVal === 'stock') {
-    data = data.filter(t => t.ingresado_stock_at && !t.vendido_at);
-  } else if (fisicoFiltroEstadoVal === 'vendido') {
-    data = data.filter(t => !!t.vendido_at);
+    data = data.filter(t => t.precio_toma_final);
   }
 
   // Filtro de texto (patente o nombre del cliente)
@@ -5180,9 +5116,6 @@ function renderFisicoList() {
     pendientes: '🛠️ Unidades con turno y precio virtual cargado por el admin. Tenés que inspeccionarlas físicamente cuando llegue el cliente.',
     inspeccionadas: '⏳ Ya las inspeccionaste y mandaste tu precio sugerido. El admin tiene que confirmar el precio final — todavía no las tomó.',
     final: '✅ El admin ya cerró el precio final luego de tu inspección. Si el vendedor no marcó todavía si se tomó el usado, podés marcarlo vos.',
-    ingresar: '📥 Operaciones cerradas con usado tomado. Cuando el usado entre físicamente al concesionario marcalo como ingresado a stock.',
-    stock: '📦 Usados ya ingresados al concesionario. Cuando se venda uno marcalo como vendido.',
-    vendido: '💰 Usados ya vendidos. Historial.',
     todas: 'Todas las unidades con turno y precio virtual.'
   };
   const subtituloFisHTML = `<div style="margin:0 0 12px 0; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosFis[fisicoFiltroEstadoVal] || ''}</div>`;
@@ -5191,15 +5124,7 @@ function renderFisicoList() {
     const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
     const patenteLbl = t.patente ? `<span style="display:inline-block;padding:3px 10px;background:var(--vw-grey-1);border-radius:4px;font-family:var(--mono);font-size:12px;font-weight:700">${t.patente}</span>` : '<span style="font-size:12px;color:var(--vw-grey-3)">sin patente</span>';
     let estadoFisicoBadge, btnLabel, btnBg;
-    if (t.vendido_at) {
-      estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#FECACA;color:#7F1D1D;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">VENDIDO</span>';
-      btnLabel = 'Ver detalle';
-      btnBg = '#7F1D1D';
-    } else if (t.ingresado_stock_at) {
-      estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#DBEAFE;color:#1E40AF;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">EN STOCK</span>';
-      btnLabel = 'Ver detalle';
-      btnBg = '#1E40AF';
-    } else if (t.precio_toma_final) {
+    if (t.precio_toma_final) {
       estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#D1FAE5;color:#065F46;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">TASADO FINAL POR EL ADMIN</span>';
       btnLabel = 'Ver detalle';
       btnBg = '#065F46';
@@ -5213,25 +5138,16 @@ function renderFisicoList() {
       btnBg = 'var(--vw-blue)';
     }
 
-    // Botones extras según el estado (solo visibles para usuarios con permiso de stock)
+    // Si la tasación tiene precio final y el vendedor todavía no respondió el cierre, Fazzini puede marcarlo.
     let accionesExtra = '';
-    if (_puedeGestionarStock()) {
-      if (t.precio_toma_final && !t.ingresado_stock_at && !t.vendido_at) {
-        // Aún sin ingresar a stock. Si falta cierre, mostramos los 3 botones. Si ya está cerrado con usado, mostramos "Ingresar a stock".
-        if (t.venta_cerrada === null || t.venta_cerrada === undefined) {
-          accionesExtra = `
-            <div style="display:flex; gap:6px; flex-wrap:wrap">
-              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, true)" style="padding:8px 12px; background:var(--green); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · con usado</button>
-              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, false)" style="padding:8px 12px; background:#10B981; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · sin usado</button>
-              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', false, false)" style="padding:8px 12px; background:var(--red); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ No cerró</button>
-            </div>
-          `;
-        } else if (t.venta_cerrada === true && t.usado_tomado === true) {
-          accionesExtra = `<button onclick="event.stopPropagation(); marcarIngresoStock('${t.id}')" style="padding:8px 14px; background:#1E40AF; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer; white-space:nowrap">🏭 Marcar ingreso a stock</button>`;
-        }
-      } else if (t.ingresado_stock_at && !t.vendido_at) {
-        accionesExtra = `<button onclick="event.stopPropagation(); marcarVendido('${t.id}')" style="padding:8px 14px; background:#7F1D1D; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer; white-space:nowrap">💰 Marcar vendido</button>`;
-      }
+    if (t.precio_toma_final && (t.venta_cerrada === null || t.venta_cerrada === undefined) && _puedeGestionarStock()) {
+      accionesExtra = `
+        <div style="display:flex; gap:6px; flex-wrap:wrap">
+          <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, true)" style="padding:8px 12px; background:var(--green); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · con usado</button>
+          <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, false)" style="padding:8px 12px; background:#10B981; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · sin usado</button>
+          <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', false, false)" style="padding:8px 12px; background:var(--red); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ No cerró</button>
+        </div>
+      `;
     }
     let turnoBadge = '';
     if (t.turno_fecha) {
@@ -6139,6 +6055,58 @@ function showToast(msg) {
 document.getElementById('loginPass').addEventListener('keydown', e => {
   if (e.key === 'Enter') login();
 });
+
+// ============ PERSISTENCIA DE SESIÓN ============
+// Guardamos currentUser y modo en localStorage. Al recargar la página, si hay sesión, la restauramos
+// sin pedir usuario/contraseña.
+const SESSION_KEY = 'tasadorSession';
+
+function guardarSesion() {
+  if (!currentUser) return;
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      user: currentUser,
+      mode: currentMode
+    }));
+  } catch(e) { console.error('guardarSesion:', e); }
+}
+
+function limpiarSesion() {
+  try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
+}
+
+async function restaurarSesion() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    if (!s || !s.user || !s.user.id) return false;
+    currentUser = s.user;
+    // Por si la sesión guardada es vieja y no trae rolesArr (retrocompat).
+    if (!Array.isArray(currentUser.rolesArr)) {
+      currentUser.rolesArr = (Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
+        ? currentUser.roles
+        : (currentUser.rol ? [currentUser.rol] : ['vendedor']);
+    }
+    document.getElementById('loginScreen').classList.add('hidden');
+    showLoading('Cargando datos...');
+    await Promise.all([loadCCA(), loadVW(), loadTGA(), loadPrecios0km()]);
+    hideLoading();
+    if (s.mode && currentUser.rolesArr.includes(s.mode)) {
+      selectMode(s.mode);
+    } else {
+      _continuarLogin();
+    }
+    return true;
+  } catch(e) {
+    console.error('restaurarSesion:', e);
+    limpiarSesion();
+    return false;
+  }
+}
+
+// Auto-restaurar al cargar la página
+restaurarSesion();
 </script>
 </body>
 </html>
