@@ -2589,6 +2589,53 @@ function renderAdminList(tasaciones) {
 
 // Card simplificado para tab "Esperando confirmación".
 // Solo muestra: línea compacta de datos + precio virtual + bloque inspección física + input precio final.
+// Bloque de los 3 precios de referencia (Kavak, Fórmula FG si hay, CCA ajustado con -14%).
+// Aplica la fórmula "normal" de cualquier tasación virtual. Lo usa la card "esperando".
+function renderPreciosReferenciaHTML(t) {
+  const cotiz = getCotiz();
+  const ajuste = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override) : (t.ajuste_km_porcentaje || 0);
+
+  // CCA
+  let ccaPublico = null;
+  const ccaMoneda = t.precio_cca_moneda || 'ARS';
+  if (t.precio_cca) ccaPublico = (ccaMoneda === 'USD') ? t.precio_cca * cotiz : t.precio_cca;
+  const ccaAjustado = ccaPublico ? ccaPublico * (1 + ajuste/100) : null;
+  const ccaToma = ccaAjustado ? ccaAjustado * 0.86 : null;
+
+  // Fórmula FG (si hay equivalente cargado)
+  const rotacion = Number(t.rotacion_anual) || 9;
+  let vwMercado = null;
+  if (t.equiv_0km_precio != null && t.equiv_0km_moneda) {
+    const p0 = (t.equiv_0km_moneda === 'USD') ? t.equiv_0km_precio * cotiz : t.equiv_0km_precio;
+    const anios = Math.max(0, 2026 - (t.anio || 2026));
+    vwMercado = p0 / 1.05 / Math.pow(1 + rotacion/100, anios);
+  } else {
+    vwMercado = t.precio_formula_vw || null;
+  }
+  const vwAjustado = vwMercado ? vwMercado * (1 + ajuste/100) : null;
+  const vwToma = vwAjustado ? vwAjustado * 0.88 : null;
+
+  const kavak = t.precio_kavak || null;
+  const fmt = v => v ? '$ ' + formatNum(Math.round(v)) : '—';
+  const colCell = (titulo, subtitulo, valor) => `
+    <div style="padding:10px; background:white; border-radius:6px; text-align:center; border:1px solid #BFDBFE">
+      <div style="font-size:10px; font-weight:700; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">${titulo}</div>
+      ${subtitulo ? `<div style="font-size:9px; color:var(--vw-grey-3); margin-top:1px">${subtitulo}</div>` : ''}
+      <div style="font-size:16px; font-weight:700; color:var(--vw-blue); font-family:var(--mono); margin-top:4px">${valor}</div>
+    </div>
+  `;
+  return `
+    <div style="margin-top:10px; padding:10px 12px; background:#EFF6FF; border-radius:8px; border:1px solid #BFDBFE">
+      <div style="font-size:11px; font-weight:700; color:var(--vw-blue); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px">Precios de referencia</div>
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px">
+        ${colCell('Fórmula FG', vwMercado ? `ajuste ${ajuste}% · −12%` : 'sin equivalente 0km', fmt(vwToma))}
+        ${colCell('Kavak', 'compra directa', fmt(kavak))}
+        ${colCell('CCA', `ajuste ${ajuste}% · −14%`, fmt(ccaToma))}
+      </div>
+    </div>
+  `;
+}
+
 function renderAdminCardEsperando(t) {
   const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
   const ajuste = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override) : (t.ajuste_km_porcentaje || 0);
@@ -2680,6 +2727,7 @@ function renderAdminCardEsperando(t) {
       <div class="card-body" id="body-${t.id}">
         ${datosCompactosHTML}
         ${precioVirtualHTML}
+        ${renderPreciosReferenciaHTML(t)}
         ${renderInspeccionFisicaAdmin(t)}
         ${precioFinalHTML}
       </div>
