@@ -789,7 +789,7 @@ let fotos = []; // array of File objects
 let fotoPreviews = []; // array of data URLs
 let allTasaciones = [];
 let currentStep = 0;
-const TOTAL_STEPS = 12; // cliente, marca, año, modelo, version, 0kmEquiv, km, patente+provincia, color+kavak, 0km consulta, precio ofrecido, fotos
+const TOTAL_STEPS = 13; // cliente, marca, año, modelo, version, 0kmEquiv, km, patente+provincia, color+kavak, [si VW: ¿compró en TGA?], 0km consulta, precio ofrecido, fotos
 const PROVINCIAS_AR = [
   'CABA', 'Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba', 'Corrientes',
   'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones',
@@ -1219,12 +1219,13 @@ function renderWizard() {
   document.getElementById('progressBar').innerHTML = dots;
 
   const container = document.getElementById('wizardContainer');
-  const steps = [renderStepCliente, renderStep0, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7, renderStep8, renderStep9, renderStep10];
+  const steps = [renderStepCliente, renderStep0, renderStepVwCompra, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7, renderStep8, renderStep9, renderStep10];
   container.innerHTML = '';
   const div = document.createElement('div');
   div.className = 'wizard-step active';
   div.innerHTML = steps[currentStep]();
   container.appendChild(div);
+  validateStep();
 }
 
 function renderStepCliente() { // Nombre y apellido del cliente (primer paso del wizard)
@@ -1481,6 +1482,59 @@ function renderStep7() { // Color + Kavak
   `;
 }
 
+function renderStepVwCompra() { // Solo si usado es VW: ¿lo compró en Tito Gonzalez?
+  const marcaUsado = (wizardData.marca || '').toUpperCase();
+  if (marcaUsado !== 'VOLKSWAGEN') {
+    // Step inaplicable - el auto-skip en nextStep/prevStep se encarga. Render minimal por si queda parado.
+    return `<div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div><p style="padding:20px">Salteando paso (no aplica)...</p>`;
+  }
+  const comprado = wizardData.vwCompradoTGA;
+  const lugar = wizardData.vwLugarCompra || '';
+  const selSi = comprado === true ? 'checked' : '';
+  const selNo = comprado === false ? 'checked' : '';
+  const showLugar = comprado === false ? '' : 'display:none';
+  return `
+    <style>
+      .vw-opt { display:flex; align-items:center; gap:12px; padding:14px 18px; border:2px solid var(--vw-grey-2); border-radius:10px; cursor:pointer; font-weight:600; transition:all .15s; background:#fff; }
+      .vw-opt input { position:absolute; opacity:0; pointer-events:none; }
+      .vw-opt .tick { width:24px; height:24px; border-radius:50%; border:2px solid var(--vw-grey-3); display:inline-flex; align-items:center; justify-content:center; font-size:14px; color:transparent; font-weight:bold; flex-shrink:0; }
+      .vw-opt:hover { border-color:var(--vw-blue); }
+      .vw-opt:has(input:checked) { border-color:var(--vw-blue); background:#EFF6FF; color:var(--vw-blue); }
+      .vw-opt:has(input:checked) .tick { background:var(--vw-blue); border-color:var(--vw-blue); color:#fff; }
+    </style>
+    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    <h2>Origen del VW usado</h2>
+    <label>¿El cliente compró este VW en Tito Gonzalez?</label>
+    <div style="display:flex; gap:12px; margin-top:10px">
+      <label class="vw-opt" style="flex:1">
+        <input type="radio" name="wVwComprado" value="si" ${selSi} onchange="onVwCompradoChange()">
+        <span class="tick">✓</span>
+        <span>Sí</span>
+      </label>
+      <label class="vw-opt" style="flex:1">
+        <input type="radio" name="wVwComprado" value="no" ${selNo} onchange="onVwCompradoChange()">
+        <span class="tick">✓</span>
+        <span>No</span>
+      </label>
+    </div>
+    <div id="wVwLugarWrap" style="margin-top:16px; ${showLugar}">
+      <label>¿Dónde lo compró?</label>
+      <input type="text" id="wVwLugarCompra" placeholder="Ej: otro concesionario, particular, etc." value="${lugar}" oninput="validateStep()" autocomplete="off">
+    </div>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function onVwCompradoChange() {
+  const val = (document.querySelector('input[name="wVwComprado"]:checked') || {}).value;
+  const wrap = document.getElementById('wVwLugarWrap');
+  if (wrap) wrap.style.display = (val === 'no') ? '' : 'none';
+  validateStep();
+}
+
 function renderStep8() { // Modelo 0km que consulta el cliente
   const modelos0km = tgaData.length > 0 ? tgaData : vwData.map(v => ({ modelo: v.modelo }));
   return `
@@ -1499,11 +1553,17 @@ function renderStep8() { // Modelo 0km que consulta el cliente
 }
 
 function renderStep9() { // Precio ofrecido con FyF
+  const modelo0km = wizardData.modelo0km || '';
+  const vw = modelo0km ? vwData.find(v => v.modelo === modelo0km) : null;
+  const defaultPrecio = (vw && vw.precio_oferta_fyf > 0) ? vw.precio_oferta_fyf : '';
+  const precio = wizardData.precioOfrecido || defaultPrecio;
+  const hint = (precio === defaultPrecio && defaultPrecio) ? '<div style="margin-top:6px; font-size:12px; color:var(--vw-grey-4)">Precargado con la oferta vigente — modificá si hace falta.</div>' : '';
   return `
     <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
     <h2>Precio ofrecido al cliente</h2>
     <label>Precio con flete y formulario que le ofreciste (con FyF incluido)</label>
-    <input type="number" id="wPrecioOfrecido" placeholder="Ej: 39000000" min="0" oninput="validateStep()">
+    <input type="number" id="wPrecioOfrecido" placeholder="Ej: 39000000" value="${precio}" min="0" oninput="validateStep()">
+    ${hint}
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
       <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
@@ -1570,10 +1630,31 @@ function saveCurrentStep() {
   switch(currentStep) {
     case 0: wizardData.clienteNombre = val('wClienteNombre'); break;
     case 1: wizardData.marca = val('wMarca'); break;
-    case 2: wizardData.anio = val('wAnio'); break;
-    case 3: wizardData.modelo = val('wModelo'); break;
-    case 4: wizardData.version = val('wVersion'); break;
-    case 5: {
+    case 2: {
+      // VW usado: ¿comprado en TGA? (aparece justo despues de elegir marca, si es VW)
+      const marcaUsado = (wizardData.marca || '').toUpperCase();
+      if (marcaUsado !== 'VOLKSWAGEN') {
+        wizardData.vwCompradoTGA = null;
+        wizardData.vwLugarCompra = null;
+        break;
+      }
+      const sel = (document.querySelector('input[name="wVwComprado"]:checked') || {}).value;
+      if (sel === 'si') {
+        wizardData.vwCompradoTGA = true;
+        wizardData.vwLugarCompra = null;
+      } else if (sel === 'no') {
+        wizardData.vwCompradoTGA = false;
+        wizardData.vwLugarCompra = val('wVwLugarCompra') || null;
+      } else {
+        wizardData.vwCompradoTGA = null;
+        wizardData.vwLugarCompra = null;
+      }
+      break;
+    }
+    case 3: wizardData.anio = val('wAnio'); break;
+    case 4: wizardData.modelo = val('wModelo'); break;
+    case 5: wizardData.version = val('wVersion'); break;
+    case 6: {
       const marcaUsado = (wizardData.marca || '').toUpperCase();
       const marcasConData = getEquiv0kmMarcas();
       if (!marcasConData.includes(marcaUsado)) {
@@ -1589,17 +1670,17 @@ function saveCurrentStep() {
       wizardData.equiv_0km_version = version;
       break;
     }
-    case 6: wizardData.km = val('wKm'); break;
-    case 7:
+    case 7: wizardData.km = val('wKm'); break;
+    case 8:
       wizardData.patente = val('wPatente').toUpperCase();
       wizardData.provinciaRadicacion = val('wProvincia');
       break;
-    case 8:
+    case 9:
       wizardData.color = val('wColor');
       wizardData.kavak = val('wKavak');
       break;
-    case 9: wizardData.modelo0km = val('wModelo0km'); break;
-    case 10: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
+    case 10: wizardData.modelo0km = val('wModelo0km'); break;
+    case 11: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
   }
 }
 
@@ -1615,10 +1696,19 @@ function validateStep() {
   switch(currentStep) {
     case 0: valid = val('wClienteNombre').length >= 3; break;
     case 1: valid = !!val('wMarca'); break;
-    case 2: valid = !!val('wAnio'); break;
-    case 3: valid = !!val('wModelo'); break;
-    case 4: valid = !!val('wVersion'); break;
-    case 5: {
+    case 2: {
+      const marcaUsado = (wizardData.marca || '').toUpperCase();
+      if (marcaUsado !== 'VOLKSWAGEN') { valid = true; break; }
+      const sel = (document.querySelector('input[name="wVwComprado"]:checked') || {}).value;
+      if (sel === 'si') { valid = true; break; }
+      if (sel === 'no') { valid = !!val('wVwLugarCompra'); break; }
+      valid = false;
+      break;
+    }
+    case 3: valid = !!val('wAnio'); break;
+    case 4: valid = !!val('wModelo'); break;
+    case 5: valid = !!val('wVersion'); break;
+    case 6: {
       const marcaUsado = (wizardData.marca || '').toUpperCase();
       const marcasConData = getEquiv0kmMarcas();
       if (!marcasConData.includes(marcaUsado)) { valid = true; break; }
@@ -1631,8 +1721,8 @@ function validateStep() {
       valid = true;
       break;
     }
-    case 6: valid = !!val('wKm') && parseInt(val('wKm')) >= 0; break;
-    case 7: {
+    case 7: valid = !!val('wKm') && parseInt(val('wKm')) >= 0; break;
+    case 8: {
       const pat = val('wPatente').toUpperCase();
       const prov = val('wProvincia');
       // Patente AR moderna: AB123CD / vieja: ABC123. Aceptamos ambos con regex laxo (>=6 alfanuméricos)
@@ -1640,22 +1730,33 @@ function validateStep() {
       valid = patValida && !!prov;
       break;
     }
-    case 8: valid = !!val('wColor') && !!val('wKavak') && parseInt(val('wKavak')) > 0; break;
-    case 9: valid = !!val('wModelo0km'); break;
-    case 10: valid = !!val('wPrecioOfrecido') && parseInt(val('wPrecioOfrecido')) > 0; break;
+    case 9: valid = !!val('wColor') && !!val('wKavak') && parseInt(val('wKavak')) > 0; break;
+    case 10: valid = !!val('wModelo0km'); break;
+    case 11: valid = !!val('wPrecioOfrecido') && parseInt(val('wPrecioOfrecido')) > 0; break;
   }
   btn.disabled = !valid;
+}
+
+function shouldSkipStep(idx) {
+  // Paso 2 (¿comprado en TGA?) solo aplica si el usado es VW
+  if (idx === 2) {
+    const marcaUsado = (wizardData.marca || '').toUpperCase();
+    return marcaUsado !== 'VOLKSWAGEN';
+  }
+  return false;
 }
 
 function nextStep() {
   saveCurrentStep();
   currentStep++;
+  while (currentStep < TOTAL_STEPS && shouldSkipStep(currentStep)) currentStep++;
   renderWizard();
 }
 
 function prevStep() {
   saveCurrentStep();
   currentStep--;
+  while (currentStep > 0 && shouldSkipStep(currentStep)) currentStep--;
   if (currentStep < 0) currentStep = 0;
   renderWizard();
 }
@@ -1846,6 +1947,8 @@ async function submitTasacion() {
       ajuste_km_porcentaje: ajusteKm,
       modelo_0km_consulta: modelo0km,
       precio_ofrecido_fyf: precioOfrecido,
+      usado_vw_comprado_tga: (marca.toUpperCase() === 'VOLKSWAGEN') ? (wizardData.vwCompradoTGA ?? null) : null,
+      usado_vw_lugar_compra: (marca.toUpperCase() === 'VOLKSWAGEN' && wizardData.vwCompradoTGA === false) ? (wizardData.vwLugarCompra || null) : null,
       fotos: fotoUrls,
       estado: 'pendiente'
     };
@@ -2051,6 +2154,7 @@ function renderMisTasacionesList() {
             <div class="info-row"><span class="label">Color</span><span class="value">${t.color || '-'}</span></div>
             ${t.patente ? `<div class="info-row"><span class="label">Patente</span><span class="value" style="font-family:var(--mono);font-weight:600">${t.patente}</span></div>` : ''}
             ${t.provincia_radicacion ? `<div class="info-row"><span class="label">Radicado en</span><span class="value">${t.provincia_radicacion}</span></div>` : ''}
+            ${(t.marca || '').toUpperCase() === 'VOLKSWAGEN' && t.usado_vw_comprado_tga !== null && t.usado_vw_comprado_tga !== undefined ? `<div class="info-row"><span class="label">Comprado en TGA</span><span class="value">${t.usado_vw_comprado_tga ? 'Sí' : 'No'}${t.usado_vw_lugar_compra ? ` — ${t.usado_vw_lugar_compra}` : ''}</span></div>` : ''}
             <div class="info-row"><span class="label">Fecha</span><span class="value">${fecha}</span></div>
             ${t.modelo_0km_consulta ? `<div class="info-row"><span class="label">0km consultado</span><span class="value">${t.modelo_0km_consulta}</span></div>` : ''}
             ${t.precio_ofrecido_fyf ? `<div class="info-row"><span class="label">Precio ofrecido FyF</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_ofrecido_fyf)}</span></div>` : ''}
