@@ -612,6 +612,7 @@ input, select, textarea { font-family: var(--font); }
       <div class="admin-tabs" style="margin:0">
         <button class="active" onclick="showMisTab('pendientes', this)">Pendientes</button>
         <button onclick="showMisTab('virtual', this)">Tasación virtual</button>
+        <button onclick="showMisTab('usado_rechazado', this)">Usado rechazado</button>
         <button onclick="showMisTab('no_deja_usado', this)">No deja usado</button>
         <button onclick="showMisTab('final', this)">Tasación final</button>
         <button onclick="showMisTab('todas', this)">Todas</button>
@@ -667,6 +668,7 @@ input, select, textarea { font-family: var(--font); }
         <button class="active" onclick="showAdminTab('pendientes', this)">Pendientes</button>
         <button onclick="showAdminTab('virtual', this)">Tasación virtual</button>
         <button onclick="showAdminTab('esperando', this)">Esperando confirmación</button>
+        <button onclick="showAdminTab('usado_rechazado', this)">Usado rechazado</button>
         <button onclick="showAdminTab('no_deja_usado', this)">No deja usado</button>
         <button onclick="showAdminTab('final', this)">Tasación final</button>
         <button onclick="showAdminTab('ingresar', this)">Ingresar</button>
@@ -2125,7 +2127,9 @@ function renderMisTasacionesList() {
   if (misFiltroEstado === 'pendientes') {
     data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto && !t.no_avanza_motivo);
   } else if (misFiltroEstado === 'virtual') {
-    data = data.filter(t => (t.precio_toma_virtual || t.virtual_no_apto) && !t.precio_toma_final && !t.no_avanza_motivo);
+    data = data.filter(t => t.precio_toma_virtual && !t.precio_toma_final && !t.no_avanza_motivo && !t.virtual_no_apto);
+  } else if (misFiltroEstado === 'usado_rechazado') {
+    data = data.filter(t => !!t.virtual_no_apto);
   } else if (misFiltroEstado === 'no_deja_usado') {
     data = data.filter(t => !!t.no_avanza_motivo);
   } else if (misFiltroEstado === 'final') {
@@ -2143,6 +2147,7 @@ function renderMisTasacionesList() {
   const subtitulos = {
     pendientes: '⏳ Tasaciones que ya mandaste a tasar pero todavía no recibiste el precio virtual del admin. Esperá la respuesta.',
     virtual: '💡 Ya tienen precio virtual REFERENCIAL. Para confirmar el precio definitivo el cliente tiene que traer la unidad — agendá un turno de inspección física desde cada tasación.',
+    usado_rechazado: '❌ Tasaciones que el admin evaluó como NO APTAS para toma. Mirá el motivo adentro de cada tarjeta.',
     no_deja_usado: '🚫 Tasaciones donde el cliente no dejó el usado. Separadas entre: compró el 0km (se lleva el 0km pero vende el usado por su cuenta) o no compró el 0km.',
     final: '✅ Tasación final cerrada después de que el tasador físico vio la unidad. Por cada una, marcá si el cliente cerró la operación y si dejó o no el usado.',
     todas: 'Todas tus tasaciones, en cualquier estado.'
@@ -2447,9 +2452,11 @@ function renderAdminList(tasaciones) {
   if (adminFiltroEstado === 'pendientes') {
     data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto && !t.no_avanza_motivo);
   } else if (adminFiltroEstado === 'virtual') {
-    data = data.filter(t => (t.precio_toma_virtual || t.virtual_no_apto) && !t.precio_toma_final && !t.no_avanza_motivo);
+    data = data.filter(t => t.precio_toma_virtual && !t.precio_toma_final && !t.no_avanza_motivo && !t.virtual_no_apto);
   } else if (adminFiltroEstado === 'esperando') {
-    data = data.filter(t => t.analisis_fisico && t.precio_sugerido_fisico && !t.precio_toma_final && !t.no_avanza_motivo);
+    data = data.filter(t => t.analisis_fisico && t.precio_sugerido_fisico && !t.precio_toma_final && !t.no_avanza_motivo && !t.virtual_no_apto);
+  } else if (adminFiltroEstado === 'usado_rechazado') {
+    data = data.filter(t => !!t.virtual_no_apto);
   } else if (adminFiltroEstado === 'no_deja_usado') {
     data = data.filter(t => !!t.no_avanza_motivo);
   } else if (adminFiltroEstado === 'final') {
@@ -2479,6 +2486,7 @@ function renderAdminList(tasaciones) {
     pendientes: '⏳ Tasaciones que mandaron los vendedores y todavía no les pusiste precio virtual. Es tu primera acción sobre cada una.',
     virtual: '💡 Ya tienen precio virtual REFERENCIAL cargado. Falta que el vendedor agende turno y que el cliente traiga la unidad para inspección física.',
     esperando: '🔍 El tasador físico ya inspeccionó y sugirió precio. Falta que vos cierres con el PRECIO FINAL para notificar al vendedor.',
+    usado_rechazado: '❌ Tasaciones que marcaste como NO APTAS para toma (con el motivo cargado). El vendedor recibió notificación por WhatsApp.',
     no_deja_usado: '🚫 Tasaciones que el vendedor cerró sin toma: el cliente compró el 0km pero no dejó el usado, o directamente no compró el 0km.',
     final: '✅ Tasaciones con precio final cerrado. Acá ves la respuesta del vendedor sobre el cierre de la operación con el cliente.',
     ingresar: '📥 Operaciones cerradas con usado tomado, pendientes de que el usado ingrese físicamente al concesionario.',
@@ -4466,7 +4474,8 @@ const EVENTOS_NOTIF = [
   { id: 'tasacion_virtual_completada', titulo: 'Tasación virtual completada',  desc: 'El admin cargó el precio virtual de referencia.' },
   { id: 'visita_fisica_agendada',      titulo: 'Visita física agendada',       desc: 'El vendedor agendó una inspección física.' },
   { id: 'tasacion_fisica_completada',  titulo: 'Tasación física completada',   desc: 'El tasador físico (Fazzini) subió el análisis.' },
-  { id: 'tasacion_final_definida',     titulo: 'Tasación final definida',      desc: 'El admin cerró el precio final de toma.' }
+  { id: 'tasacion_final_definida',     titulo: 'Tasación final definida',      desc: 'El admin cerró el precio final de toma.' },
+  { id: 'usado_no_apto',               titulo: 'Usado NO APTO para toma',      desc: 'El admin marcó una tasación como no apta para tomar el usado.' }
 ];
 
 let notifVistaAnterior = null;
@@ -4846,7 +4855,7 @@ async function marcarNoApto(id) {
       })
     });
     showToast('Marcado como NO APTO');
-    notificarNoAptoVendedor(id, razon);
+    notifyWA(id, 'usado_no_apto');
     loadAdminTasaciones(adminFiltroEstado || 'pendientes');
   } catch(e) {
     console.error(e);

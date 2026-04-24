@@ -23,6 +23,7 @@ const EVENTOS_VALIDOS = new Set([
   "visita_fisica_agendada",
   "tasacion_fisica_completada",
   "tasacion_final_definida",
+  "usado_no_apto",
 ]);
 
 Deno.serve(async (req: Request) => {
@@ -243,7 +244,14 @@ async function buildVariables(
   const cli = tas.cliente_nombre || "—";
 
   if (evento === "tasacion_pendiente_carga") {
-    return (u: any) => [u.nombre || u.usuario || "", uni, cli];
+    // {{1}} = vendedor real de la tasacion (no el destinatario)
+    const vendedor = tas.vendedor_nombre || "—";
+    return (_u: any) => [vendedor, uni, cli];
+  }
+  if (evento === "usado_no_apto") {
+    // {{1}} = vendedor, {{2}} = unidad, {{3}} = cliente
+    const vendedor = tas.vendedor_nombre || "—";
+    return (_u: any) => [vendedor, uni, cli];
   }
   if (evento === "tasacion_virtual_completada") {
     const precio = fmtPrecio(tas.precio_toma_virtual);
@@ -264,15 +272,66 @@ async function buildVariables(
   if (evento === "tasacion_final_definida") {
     const precio = fmtPrecio(tas.precio_toma_final);
     let observaciones = "";
+
+    // 1) Si la IA ya armó un comentario completo, lo usamos como base
     if (typeof tas.comentario_borrador_ia === "string" && tas.comentario_borrador_ia.trim()) {
       observaciones = tas.comentario_borrador_ia.trim();
-    } else if (tas.analisis_fisico && typeof tas.analisis_fisico === "object") {
-      const af = tas.analisis_fisico;
-      if (typeof af.observaciones === "string") observaciones = af.observaciones;
-      else if (typeof af.comentario === "string") observaciones = af.comentario;
-      else if (typeof af.resumen === "string") observaciones = af.resumen;
     }
-    if (anthropicKey && observaciones) {
+
+    // 2) Si no hay comentario IA, armamos desde analisis_fisico crudo (texto libre + danios)
+    if (!observaciones && tas.analisis_fisico && typeof tas.analisis_fisico === "object") {
+      const af = tas.analisis_fisico;
+      const partes: string[] = [];
+
+      // Texto libre del tasador (campo nuevo: observaciones_grales; fallback a viejos)
+      const txtLibre = af.observaciones_grales || af.observaciones || af.comentario || af.resumen || "";
+      if (typeof txtLibre === "string" && txtLibre.trim()) {
+        partes.push(txtLibre.trim());
+      }
+
+      // Pintura
+      if (af.pintura_estado || af.pintura_obs) {
+        const p = [af.pintura_estado, af.pintura_obs].filter((x: any) => x).join(" — ");
+        if (p) partes.push("Pintura: " + p);
+      }
+
+      // Daños con costo (marcadores en la foto) - el campo texto se llama "nota"
+      if (Array.isArray(af.marcadores) && af.marcadores.length > 0) {
+        const danios = af.marcadores
+          .filter((m: any) => m && (m.nota || m.descripcion || m.costo))
+          .map((m: any) => {
+            const desc = m.nota || m.descripcion || "—";
+            const costo = m.costo ? "$" + fmtNum(m.costo) : "";
+            return costo ? `${desc} (${costo})` : desc;
+          });
+        if (danios.length) partes.push("Daños: " + danios.join("; "));
+      }
+
+      // Items del checklist con costo o con observación cargada
+      if (af.items && typeof af.items === "object") {
+        const itemsTxt: string[] = [];
+        for (const grupo of Object.keys(af.items)) {
+          const grp = af.items[grupo] || {};
+          for (const item of Object.keys(grp)) {
+            const it = grp[item] || {};
+            const costo = Number(it.costo) || 0;
+            const obs = (it.obs || "").toString().trim();
+            if (costo > 0 || obs) {
+              const partesItem: string[] = [item];
+              if (obs) partesItem.push(obs);
+              if (costo > 0) partesItem.push("$" + fmtNum(costo));
+              itemsTxt.push(partesItem.join(" — "));
+            }
+          }
+        }
+        if (itemsTxt.length) partes.push("Checklist: " + itemsTxt.join("; "));
+      }
+
+      observaciones = partes.join(". ");
+    }
+
+    // 3) Si quedó muy largo y tenemos IA, pasamos por Claude para sintetizar
+    if (anthropicKey && observaciones && observaciones.length > 250) {
       observaciones = await corregirConAnthropic(observaciones, anthropicKey);
     }
     if (!observaciones) observaciones = "Sin observaciones particulares.";
