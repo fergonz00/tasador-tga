@@ -587,6 +587,7 @@ input, select, textarea { font-family: var(--font); }
     </div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
       <button id="btnAgenda" onclick="abrirAgenda()" style="background:var(--vw-blue-light); color:white; font-size:13px; padding:8px 14px">📅 Agenda</button>
+      <button id="btnPresencial" onclick="abrirTasacionPresencial()" style="background:#EA580C; color:white; font-size:13px; padding:8px 14px">📋 Cliente presencial</button>
       <button id="btnCambiarModo" onclick="cambiarModo()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">Cambiar de modo</button>
       <button id="btnUsuarios" onclick="abrirUsuarios()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">👥 Usuarios</button>
       <button id="btnNotif" onclick="abrirNotif()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">🔔 Notificaciones</button>
@@ -1236,6 +1237,87 @@ function initWizard() {
   fotos = [];
   fotoPreviews = [];
   renderWizard();
+}
+
+// ============ FLUJO "CLIENTE PRESENCIAL" ============
+// Cualquiera (vendedor/admin/tasador físico) puede iniciar una tasación presencial: el cliente
+// llega con el usado al concesionario sin tasación virtual previa. Se llena todo el wizard y
+// la tasación va directo a la cola de Fazzini saltando la etapa de precio virtual.
+function abrirTasacionPresencial() {
+  if (!currentUser) return;
+  // Si es un vendedor "puro" (no admin ni fazzini), arranca directo asignado a sí mismo.
+  const esAdmin = currentUser.rolesArr && currentUser.rolesArr.includes('admin');
+  const esFazzini = currentUser.usuario === 'jfazzini';
+  if (!esAdmin && !esFazzini) {
+    iniciarWizardPresencial(null);
+    return;
+  }
+  // Admin o Fazzini: primero eligen el vendedor responsable de la tasación.
+  mostrarModalVendedorPresencial();
+}
+
+async function mostrarModalVendedorPresencial() {
+  // Traemos todos los usuarios con rol vendedor (o que tengan vendedor entre sus roles).
+  let vendedores = [];
+  try {
+    const data = await sbFetch('tasador_usuarios?select=id,usuario,nombre,roles,rol,activo&order=nombre.asc');
+    vendedores = (data || []).filter(u => {
+      if (u.activo === false) return false;
+      const roles = Array.isArray(u.roles) ? u.roles : (u.rol ? [u.rol] : []);
+      return roles.includes('vendedor');
+    });
+  } catch(e) { console.error(e); }
+
+  const modal = document.createElement('div');
+  modal.id = 'vendedorPresencialModal';
+  modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:10000; padding:16px';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `
+    <div style="background:white; border-radius:10px; padding:22px; max-width:440px; width:100%">
+      <h3 style="margin:0 0 8px 0; color:#EA580C">📋 Cliente presencial</h3>
+      <p style="font-size:13px; color:var(--vw-grey-4); margin-bottom:14px">¿Quién es el vendedor responsable de esta tasación?</p>
+      <select id="selVendedorPresencial" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:14px; margin-bottom:16px">
+        <option value="">— Elegí el vendedor —</option>
+        ${vendedores.map(v => `<option value="${v.id}">${_escapeHtmlUsr(v.nombre || v.usuario)}</option>`).join('')}
+      </select>
+      <div style="display:flex; gap:8px; justify-content:space-between">
+        <button onclick="document.getElementById('vendedorPresencialModal').remove()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+        <button onclick="confirmarVendedorPresencial()" style="padding:10px 16px; background:#EA580C; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Arrancar tasación</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  window.__vendedoresPresencialData = vendedores;
+}
+
+function confirmarVendedorPresencial() {
+  const sel = document.getElementById('selVendedorPresencial');
+  const vid = sel ? sel.value : '';
+  if (!vid) { showToast('Elegí un vendedor'); return; }
+  const vendedores = window.__vendedoresPresencialData || [];
+  const v = vendedores.find(x => String(x.id) === String(vid));
+  if (!v) { showToast('Vendedor no encontrado'); return; }
+  document.getElementById('vendedorPresencialModal')?.remove();
+  iniciarWizardPresencial({ id: v.id, nombre: v.nombre || v.usuario });
+}
+
+function iniciarWizardPresencial(vendedorOverride) {
+  // vendedorOverride: null (vendedor es currentUser) o {id, nombre} (admin/fazzini eligió otro).
+  wizardData = { es_presencial: true };
+  if (vendedorOverride) wizardData.vendedor_override = vendedorOverride;
+  fotos = [];
+  fotoPreviews = [];
+  currentStep = 0;
+  // Forzamos modo vendedor en la UI para mostrar el wizard, aunque el usuario sea admin/fazzini.
+  mostrarSoloVista('vendedorView');
+  // Ocultamos las tabs "Nueva / Mis" y mostramos solo el wizard
+  document.querySelectorAll('.tabs-vendedor button').forEach(b => b.classList.remove('active'));
+  const tabNueva = document.getElementById('tabNueva');
+  if (tabNueva) tabNueva.classList.add('active');
+  document.getElementById('wizardSection')?.classList.remove('hidden');
+  document.getElementById('misTasacionesSection')?.classList.add('hidden');
+  renderWizard();
+  showToast('Modo tasación presencial');
 }
 
 function renderWizard() {
@@ -1960,8 +2042,8 @@ async function submitTasacion() {
 
     const record = {
       id: tasId,
-      vendedor_id: currentUser.id,
-      vendedor_nombre: currentUser.nombre,
+      vendedor_id: (wizardData.vendedor_override && wizardData.vendedor_override.id) ? wizardData.vendedor_override.id : currentUser.id,
+      vendedor_nombre: (wizardData.vendedor_override && wizardData.vendedor_override.nombre) ? wizardData.vendedor_override.nombre : currentUser.nombre,
       cliente_nombre: clienteNombre,
       marca, modelo, version,
       anio: anio,
@@ -1987,6 +2069,7 @@ async function submitTasacion() {
       precio_ofrecido_fyf: precioOfrecido,
       usado_vw_comprado_tga: (marca.toUpperCase() === 'VOLKSWAGEN') ? (wizardData.vwCompradoTGA ?? null) : null,
       usado_vw_lugar_compra: (marca.toUpperCase() === 'VOLKSWAGEN' && wizardData.vwCompradoTGA === false) ? (wizardData.vwLugarCompra || null) : null,
+      es_presencial: wizardData.es_presencial === true,
       fotos: fotoUrls,
       estado: 'pendiente'
     };
@@ -1996,8 +2079,11 @@ async function submitTasacion() {
       body: JSON.stringify(record)
     });
 
-    // WhatsApp: evento "tasacion_pendiente_carga" — avisa al admin que hay una nueva para tasar
-    notifyWA(tasId, 'tasacion_pendiente_carga');
+    // WhatsApp: evento "tasacion_pendiente_carga" — avisa al admin que hay una nueva para tasar.
+    // Las tasaciones presenciales salen de la etapa virtual: no avisan al admin acá.
+    if (!wizardData.es_presencial) {
+      notifyWA(tasId, 'tasacion_pendiente_carga');
+    }
 
     hideLoading();
     showToast('Tasación enviada correctamente');
@@ -5092,8 +5178,8 @@ function renderFisicoList() {
   const list = document.getElementById('fisicoList');
   let data = fisicoData || [];
 
-  // Todas las solapas del tasador físico exigen precio virtual + turno agendado.
-  data = data.filter(t => t.precio_toma_virtual && t.turno_fecha && t.turno_hora);
+  // Fazzini ve: (a) las que pasaron por virtual + turno agendado, O (b) las presenciales (vienen sin virtual).
+  data = data.filter(t => (t.precio_toma_virtual && t.turno_fecha && t.turno_hora) || t.es_presencial === true);
 
   // Filtro por estado:
   //   pendientes      → sin inspección hecha (no hay analisis_fisico)
@@ -5602,20 +5688,53 @@ function renderInspeccionFormulario(tas, prev) {
     </div>
   `;
 
-  // Contexto arriba: precio virtual de referencia (cargado por el admin)
-  const contextoHTML = `
-    <div style="margin-bottom:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow); border-left:4px solid var(--vw-blue)">
-      <div style="font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:6px">Precio virtual de referencia (admin)</div>
-      ${tas.precio_toma_virtual ? `
-        <div style="display:flex; align-items:baseline; gap:10px">
-          <span style="font-size:22px; font-weight:700; color:var(--vw-blue); font-family:var(--mono)">$ ${formatNum(tas.precio_toma_virtual)}</span>
-          ${tas.precio_toma_virtual_por ? `<span style="font-size:11px; color:var(--vw-grey-3)">cargado por ${tas.precio_toma_virtual_por}</span>` : ''}
+  // Contexto arriba: si es presencial → mostramos CCA bruto y Kavak como referencia (sin Fórmula FG).
+  // Si no, mostramos el precio virtual cargado por el admin (flujo tradicional).
+  let contextoHTML;
+  if (tas.es_presencial) {
+    // CCA bruto = precio_cca crudo (sin ajuste km, sin -14%), pesificado si está en USD.
+    const cotiz = getCotiz();
+    let ccaBrutoARS = null;
+    if (tas.precio_cca) {
+      const mon = tas.precio_cca_moneda || 'ARS';
+      ccaBrutoARS = mon === 'USD' ? tas.precio_cca * cotiz : tas.precio_cca;
+    }
+    const kavakStr = tas.precio_kavak ? '$ ' + formatNum(Math.round(tas.precio_kavak)) : '—';
+    const ccaStr = ccaBrutoARS ? '$ ' + formatNum(Math.round(ccaBrutoARS)) : '—';
+    contextoHTML = `
+      <div style="margin-bottom:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow); border-left:4px solid #EA580C">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px">
+          <span style="background:#EA580C; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">CLIENTE PRESENCIAL</span>
+          <span style="font-size:12px; color:var(--vw-grey-4)">Tasación sin virtual previa</span>
         </div>
-      ` : `
-        <div style="font-size:13px; color:var(--orange)">⚠ Sin precio virtual cargado todavía por el admin.</div>
-      `}
-    </div>
-  `;
+        <div style="font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:8px">Precios de referencia</div>
+        <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:10px">
+          <div style="padding:10px; background:var(--vw-grey-1); border-radius:6px">
+            <div style="font-size:11px; color:var(--vw-grey-4); font-weight:600">Kavak (compra directa)</div>
+            <div style="font-size:18px; font-weight:700; color:var(--vw-blue); font-family:var(--mono); margin-top:3px">${kavakStr}</div>
+          </div>
+          <div style="padding:10px; background:var(--vw-grey-1); border-radius:6px">
+            <div style="font-size:11px; color:var(--vw-grey-4); font-weight:600">CCA bruto (s/ajuste km, s/ -14%)</div>
+            <div style="font-size:18px; font-weight:700; color:var(--vw-blue); font-family:var(--mono); margin-top:3px">${ccaStr}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  } else {
+    contextoHTML = `
+      <div style="margin-bottom:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow); border-left:4px solid var(--vw-blue)">
+        <div style="font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:6px">Precio virtual de referencia (admin)</div>
+        ${tas.precio_toma_virtual ? `
+          <div style="display:flex; align-items:baseline; gap:10px">
+            <span style="font-size:22px; font-weight:700; color:var(--vw-blue); font-family:var(--mono)">$ ${formatNum(tas.precio_toma_virtual)}</span>
+            ${tas.precio_toma_virtual_por ? `<span style="font-size:11px; color:var(--vw-grey-3)">cargado por ${tas.precio_toma_virtual_por}</span>` : ''}
+          </div>
+        ` : `
+          <div style="font-size:13px; color:var(--orange)">⚠ Sin precio virtual cargado todavía por el admin.</div>
+        `}
+      </div>
+    `;
+  }
 
   // Bloque editable de datos del vehículo (el tasador puede corregir si vinieron mal del wizard)
   const datosCorregidosWarn = tas.datos_corregidos_at
