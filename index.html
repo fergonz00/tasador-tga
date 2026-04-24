@@ -2943,6 +2943,35 @@ function renderAdminCard(t) {
       </div>
 
       ${(() => {
+        // Panel de ajuste km: editable, afecta CCA y Fórmula FG. Aparece ARRIBA de los precios.
+        if (!t.kilometros || !t.anio) return '';
+        const antiguedad = Math.max(1, 2026 - t.anio);
+        const kmPorAnio = esPickup(t.modelo) ? 20000 : 15000;
+        const kmEsperados = antiguedad * kmPorAnio;
+        const ratio = t.kilometros / kmEsperados;
+        const kmExcedido = ratio >= 1.0;
+        const ajusteActual = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override) : (t.ajuste_km_porcentaje || 0);
+        const tieneOverride = t.ajuste_km_override != null;
+        const kmRealAnual = Math.round(t.kilometros / antiguedad);
+        return `
+          <div style="margin-top:10px; padding:10px 12px; background:${kmExcedido ? '#FFF7ED' : '#EFF6FF'}; border-radius:6px; border:1px solid ${kmExcedido ? '#FDBA74' : '#BFDBFE'}">
+            ${kmExcedido ? `
+              <div style="font-size:12px; font-weight:700; color:#9A3412; margin-bottom:4px">⚠️ KM FUERA DE LO COMÚN</div>
+              <div style="font-size:12px; color:#9A3412; margin-bottom:8px">Recorrió <b>${formatNum(kmRealAnual)} km/año</b> — se esperan ${formatNum(kmPorAnio)} km/año (${(ratio*100).toFixed(0)}% del esperado)</div>
+            ` : ''}
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+              <span style="font-size:12px; color:var(--vw-grey-4)"><b>Ajuste km (afecta CCA + Fórmula FG):</b></span>
+              <input type="number" step="0.5" id="ajusteKm-${t.id}" value="${ajusteActual}" onclick="event.stopPropagation()" onkeydown="if(event.key==='Enter'){event.stopPropagation(); aplicarAjusteKm('${t.id}');}" style="width:80px; padding:6px 8px; font-size:13px; font-family:var(--mono); font-weight:700; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box; text-align:right">
+              <span style="font-size:12px; color:var(--vw-grey-4)">%</span>
+              <button onclick="event.stopPropagation(); aplicarAjusteKm('${t.id}')" style="padding:6px 12px; background:var(--vw-blue); color:white; border:none; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">Aplicar</button>
+              ${tieneOverride ? `<button onclick="event.stopPropagation(); resetAjusteKm('${t.id}')" style="padding:6px 10px; background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:6px; font-weight:600; font-size:11px; cursor:pointer" title="Volver al ajuste automático">↩ Auto (${t.ajuste_km_porcentaje || 0}%)</button>` : ''}
+              <span style="font-size:11px; color:var(--vw-grey-3); flex:1; min-width:80px; text-align:right">${tieneOverride ? 'Editado' : 'Automático'}</span>
+            </div>
+          </div>
+        `;
+      })()}
+
+      ${(() => {
         const descIA = Number(t.analisis_ia_descuento) || 0;
         const conDesc = (valor) => valor != null ? Math.round(valor) - descIA : null;
         const descRowHTML = (valor) => {
@@ -2999,35 +3028,6 @@ function renderAdminCard(t) {
       ${margenHTML}
 
       ${renderAnalisisIAAdmin(t)}
-
-      ${(() => {
-        // Panel de ajuste km: advertencia si km supera lo esperado + input editable del %
-        if (!t.kilometros || !t.anio) return '';
-        const antiguedad = Math.max(1, 2026 - t.anio);
-        const kmPorAnio = esPickup(t.modelo) ? 20000 : 15000;
-        const kmEsperados = antiguedad * kmPorAnio;
-        const ratio = t.kilometros / kmEsperados;
-        const kmExcedido = ratio >= 1.0;
-        const ajusteActual = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override) : (t.ajuste_km_porcentaje || 0);
-        const tieneOverride = t.ajuste_km_override != null;
-        const kmRealAnual = Math.round(t.kilometros / antiguedad);
-        return `
-          <div style="margin-top:10px; padding:10px 12px; background:${kmExcedido ? '#FFF7ED' : 'var(--vw-grey-1)'}; border-radius:6px; border:1px solid ${kmExcedido ? '#FDBA74' : 'var(--vw-grey-2)'}">
-            ${kmExcedido ? `
-              <div style="font-size:12px; font-weight:700; color:#9A3412; margin-bottom:4px">⚠️ KM FUERA DE LO COMÚN</div>
-              <div style="font-size:12px; color:#9A3412; margin-bottom:8px">Recorrió <b>${formatNum(kmRealAnual)} km/año</b> — se esperan ${formatNum(kmPorAnio)} km/año (${(ratio*100).toFixed(0)}% del esperado)</div>
-            ` : ''}
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-              <span style="font-size:12px; color:var(--vw-grey-4)"><b>Ajuste km:</b></span>
-              <input type="number" step="0.5" id="ajusteKm-${t.id}" value="${ajusteActual}" onclick="event.stopPropagation()" style="width:80px; padding:6px 8px; font-size:13px; font-family:var(--mono); font-weight:700; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box; text-align:right">
-              <span style="font-size:12px; color:var(--vw-grey-4)">%</span>
-              <button onclick="event.stopPropagation(); aplicarAjusteKm('${t.id}')" style="padding:6px 12px; background:var(--vw-blue); color:white; border:none; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">Aplicar</button>
-              ${tieneOverride ? `<button onclick="event.stopPropagation(); resetAjusteKm('${t.id}')" style="padding:6px 10px; background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:6px; font-weight:600; font-size:11px; cursor:pointer" title="Volver al ajuste automático">↩ Auto (${t.ajuste_km_porcentaje || 0}%)</button>` : ''}
-              <span style="font-size:11px; color:var(--vw-grey-3); flex:1; min-width:80px; text-align:right">${tieneOverride ? 'Editado' : 'Automático'}</span>
-            </div>
-          </div>
-        `;
-      })()}
 
       ${(() => {
         const fechaVirt = t.precio_toma_virtual_at ? new Date(t.precio_toma_virtual_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : '';
