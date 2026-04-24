@@ -2980,8 +2980,15 @@ function renderAdminCard(t) {
               </div>
             </div>
             <div class="precio-box kavak">
-              <div class="metodo">Kavak</div>
-              <div class="valor">${kavak ? '$ ' + formatNum(Math.round(kavak)) : 'N/A'}</div>
+              <div class="metodo">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(editable)</span></div>
+              <div style="display:flex; align-items:center; gap:4px; margin:4px 0">
+                <span style="font-family:var(--mono); font-weight:700">$</span>
+                <input type="number" id="kavak-${t.id}" value="${kavak || ''}" placeholder="0"
+                  onclick="event.stopPropagation()"
+                  onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
+                  style="flex:1; min-width:80px; padding:3px 6px; font-family:var(--mono); font-weight:700; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
+                <button onclick="event.stopPropagation(); guardarKavak('${t.id}')" title="Guardar" style="padding:3px 8px; background:var(--vw-blue); color:white; border:none; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer">✓</button>
+              </div>
               <div class="sub">Precio compra directo</div>
               ${descRowHTML(kavak)}
             </div>
@@ -4835,6 +4842,29 @@ async function marcarNoApto(id) {
   } catch(e) {
     console.error(e);
     showToast('Error al marcar no apto');
+  }
+}
+
+// Guarda el precio Kavak editado por el admin (pisa el valor que cargó el vendedor).
+async function guardarKavak(id) {
+  const input = document.getElementById(`kavak-${id}`);
+  if (!input) return;
+  const raw = input.value;
+  const valor = raw === '' || raw == null ? null : parseFloat(raw);
+  if (raw !== '' && (valor == null || isNaN(valor) || valor < 0)) {
+    showToast('Ingresá un número válido');
+    return;
+  }
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ precio_kavak: valor, updated_at: new Date().toISOString() })
+    });
+    showToast('Kavak actualizado');
+    loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al guardar Kavak');
   }
 }
 
