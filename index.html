@@ -1127,6 +1127,19 @@ function mostrarModeSelect() {
   document.getElementById('modeSelectScreen').classList.remove('hidden');
 }
 
+// Lista canónica de TODAS las vistas tipo "página" (mutuamente excluyentes).
+// Cualquier vista nueva tiene que sumarse acá.
+const ALL_VIEWS = ['vendedorView', 'adminView', 'tasadorFisicoView', 'fisicoInspeccionView', 'notifView', 'usuariosView', 'agendaView'];
+
+function mostrarSoloVista(viewId) {
+  ALL_VIEWS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (id === viewId) el.classList.remove('hidden');
+    else el.classList.add('hidden');
+  });
+}
+
 function selectMode(mode) {
   if (!currentUser || !currentUser.rolesArr || !currentUser.rolesArr.includes(mode)) {
     // Defensa: no permitimos modos que el usuario no tenga asignados.
@@ -1151,12 +1164,9 @@ function selectMode(mode) {
   const btnNotif = document.getElementById('btnNotif');
   btnNotif.classList.toggle('hidden', !(mode === 'admin' && _esSuperadmin()));
 
-  // Mostrar la vista correspondiente y esconder las otras.
-  document.getElementById('vendedorView').classList.toggle('hidden', mode !== 'vendedor');
-  document.getElementById('adminView').classList.toggle('hidden', mode !== 'admin');
-  document.getElementById('tasadorFisicoView').classList.toggle('hidden', mode !== 'tasador_fisico');
-  // La pantalla de inspección individual siempre arranca oculta; se abre al tocar una unidad.
-  document.getElementById('fisicoInspeccionView').classList.add('hidden');
+  // Mostrar la vista del modo y ocultar todas las demás (incluyendo overlays).
+  const viewByMode = { admin: 'adminView', vendedor: 'vendedorView', tasador_fisico: 'tasadorFisicoView' };
+  mostrarSoloVista(viewByMode[mode]);
 
   if (mode === 'admin') {
     loadAdminTasaciones('pendientes');
@@ -3651,26 +3661,20 @@ let agendaVistaAnterior = null;
 
 async function abrirAgenda() {
   // Recordamos la vista visible para poder volver
-  const vistas = ['vendedorView', 'tasadorFisicoView', 'fisicoInspeccionView', 'adminView', 'selectModeScreen'];
-  agendaVistaAnterior = vistas.find(id => {
+  agendaVistaAnterior = ALL_VIEWS.find(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');
   });
-  vistas.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
-  });
-  document.getElementById('agendaView').classList.remove('hidden');
+  mostrarSoloVista('agendaView');
   await loadAgenda();
 }
 
 function cerrarAgenda() {
-  document.getElementById('agendaView').classList.add('hidden');
   if (agendaVistaAnterior) {
-    const el = document.getElementById(agendaVistaAnterior);
-    if (el) el.classList.remove('hidden');
+    mostrarSoloVista(agendaVistaAnterior);
   } else {
     // Fallback: si no sabemos a dónde, mostramos la pantalla de selección de modo
+    document.getElementById('agendaView').classList.add('hidden');
     document.getElementById('selectModeScreen')?.classList.remove('hidden');
   }
   agendaVistaAnterior = null;
@@ -3758,23 +3762,16 @@ function _esSuperadmin() {
 
 async function abrirUsuarios() {
   if (currentMode !== 'admin') return;
-  const vistas = ['vendedorView', 'tasadorFisicoView', 'fisicoInspeccionView', 'adminView', 'agendaView'];
-  usuariosVistaAnterior = vistas.find(id => {
+  usuariosVistaAnterior = ALL_VIEWS.find(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');
   });
-  vistas.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
-  });
-  document.getElementById('usuariosView').classList.remove('hidden');
+  mostrarSoloVista('usuariosView');
   await loadUsuarios();
 }
 
 function cerrarUsuarios() {
-  document.getElementById('usuariosView').classList.add('hidden');
-  const vuelta = usuariosVistaAnterior || 'adminView';
-  document.getElementById(vuelta)?.classList.remove('hidden');
+  mostrarSoloVista(usuariosVistaAnterior || 'adminView');
   usuariosVistaAnterior = null;
 }
 
@@ -4122,23 +4119,16 @@ let notifUsuariosData = [];
 
 async function abrirNotif() {
   if (currentMode !== 'admin' || !_esSuperadmin()) return;
-  const vistas = ['vendedorView', 'tasadorFisicoView', 'fisicoInspeccionView', 'adminView', 'agendaView', 'usuariosView'];
-  notifVistaAnterior = vistas.find(id => {
+  notifVistaAnterior = ALL_VIEWS.find(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');
   });
-  vistas.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
-  });
-  document.getElementById('notifView').classList.remove('hidden');
+  mostrarSoloVista('notifView');
   await loadNotifConfig();
 }
 
 function cerrarNotif() {
-  document.getElementById('notifView').classList.add('hidden');
-  const vuelta = notifVistaAnterior || 'adminView';
-  document.getElementById(vuelta)?.classList.remove('hidden');
+  mostrarSoloVista(notifVistaAnterior || 'adminView');
   notifVistaAnterior = null;
 }
 
