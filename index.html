@@ -2319,6 +2319,9 @@ function renderMisTasacionesList() {
               }
               // Si el admin marcó como NO APTO, no mostramos ni el turno ni los mensajes de espera.
               if (t.virtual_no_apto) return '';
+              // Si ya hay precio final cargado, el cierre de operación se resuelve con los 3 botones
+              // de abajo (sí·con / sí·sin / no cerró). Acá no mostramos nada para no duplicar.
+              if (t.precio_toma_final) return '';
               // El turno solo se puede agendar después de tener precio virtual cargado
               if (t.turno_fecha) {
                 const f = isoAFecha(t.turno_fecha);
