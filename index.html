@@ -634,6 +634,9 @@ input, select, textarea { font-family: var(--font); }
         <button class="active" onclick="showFisicoTab('pendientes', this)">Pendientes</button>
         <button onclick="showFisicoTab('inspeccionadas', this)">Inspeccionadas (esperando admin)</button>
         <button onclick="showFisicoTab('final', this)">Tasación final</button>
+        <button onclick="showFisicoTab('ingresar', this)">Ingresar</button>
+        <button onclick="showFisicoTab('stock', this)">Stock</button>
+        <button onclick="showFisicoTab('vendido', this)">Vendido</button>
         <button onclick="showFisicoTab('todas', this)">Todas</button>
       </div>
       <div style="padding: 12px 16px 0 16px;">
@@ -666,6 +669,9 @@ input, select, textarea { font-family: var(--font); }
         <button onclick="showAdminTab('esperando', this)">Esperando confirmación</button>
         <button onclick="showAdminTab('no_deja_usado', this)">No deja usado</button>
         <button onclick="showAdminTab('final', this)">Tasación final</button>
+        <button onclick="showAdminTab('ingresar', this)">Ingresar</button>
+        <button onclick="showAdminTab('stock', this)">Stock</button>
+        <button onclick="showAdminTab('vendido', this)">Vendido</button>
         <button onclick="showAdminTab('todas', this)">Todas</button>
       </div>
       <div class="cotiz-bar">
@@ -2438,7 +2444,13 @@ function renderAdminList(tasaciones) {
   } else if (adminFiltroEstado === 'no_deja_usado') {
     data = data.filter(t => !!t.no_avanza_motivo);
   } else if (adminFiltroEstado === 'final') {
-    data = data.filter(t => t.precio_toma_final);
+    data = data.filter(t => t.precio_toma_final && !t.ingresado_stock_at && !t.vendido_at);
+  } else if (adminFiltroEstado === 'ingresar') {
+    data = data.filter(t => t.precio_toma_final && t.usado_tomado === true && !t.ingresado_stock_at && !t.vendido_at);
+  } else if (adminFiltroEstado === 'stock') {
+    data = data.filter(t => t.ingresado_stock_at && !t.vendido_at);
+  } else if (adminFiltroEstado === 'vendido') {
+    data = data.filter(t => !!t.vendido_at);
   }
   if (adminFiltroVendedor && adminFiltroVendedor !== 'TODOS') {
     data = data.filter(t => t.vendedor_nombre === adminFiltroVendedor);
@@ -2460,6 +2472,9 @@ function renderAdminList(tasaciones) {
     esperando: '🔍 El tasador físico ya inspeccionó y sugirió precio. Falta que vos cierres con el PRECIO FINAL para notificar al vendedor.',
     no_deja_usado: '🚫 Tasaciones que el vendedor cerró sin toma: el cliente compró el 0km pero no dejó el usado, o directamente no compró el 0km.',
     final: '✅ Tasaciones con precio final cerrado. Acá ves la respuesta del vendedor sobre el cierre de la operación con el cliente.',
+    ingresar: '📥 Operaciones cerradas con usado tomado, pendientes de que el usado ingrese físicamente al concesionario.',
+    stock: '📦 Usados que ya ingresaron al concesionario y están en stock para la venta.',
+    vendido: '💰 Usados que ya se vendieron. Historial de operaciones cerradas.',
     todas: 'Todas las tasaciones del sistema, en cualquier estado.'
   };
   const subtituloAdminHTML = `<div style="margin:0 16px 12px; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosAdmin[adminFiltroEstado] || ''}</div>`;
@@ -2576,6 +2591,76 @@ let _selMultipleIds = new Set();
 
 function _puedeBorrar() {
   return !!(currentUser && currentUser.usuario === 'fngonzalez');
+}
+
+// Acceso al flujo Stock/Vendido: fngonzalez + jfazzini (el tasador físico).
+const STOCK_USUARIOS = ['fngonzalez', 'jfazzini'];
+function _puedeGestionarStock() {
+  return !!(currentUser && STOCK_USUARIOS.includes(currentUser.usuario));
+}
+
+async function marcarIngresoStock(tasId) {
+  if (!_puedeGestionarStock()) { showToast('No autorizado'); return; }
+  if (!confirm('¿Confirmar que este usado ya ingresó físicamente al concesionario?')) return;
+  try {
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ingresado_stock_at: new Date().toISOString(),
+        ingresado_stock_por: currentUser.nombre
+      })
+    });
+    showToast('Marcado como ingresado a stock');
+    // Refrescar la lista activa
+    if (currentMode === 'admin') await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+    else if (currentMode === 'tasador_fisico') await loadTasadorFisicoList();
+  } catch(e) {
+    console.error(e);
+    showToast('Error al guardar');
+  }
+}
+
+async function marcarVendido(tasId) {
+  if (!_puedeGestionarStock()) { showToast('No autorizado'); return; }
+  if (!confirm('¿Confirmar que este usado fue VENDIDO?')) return;
+  try {
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        vendido_at: new Date().toISOString(),
+        vendido_por: currentUser.nombre
+      })
+    });
+    showToast('Marcado como vendido');
+    if (currentMode === 'admin') await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+    else if (currentMode === 'tasador_fisico') await loadTasadorFisicoList();
+  } catch(e) {
+    console.error(e);
+    showToast('Error al guardar');
+  }
+}
+
+// Fazzini también puede marcar el cierre de la operación (como el vendedor).
+async function marcarCierreComoTasador(tasId, cerrada, dejoUsado) {
+  try {
+    showLoading('Guardando...');
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        venta_cerrada: cerrada,
+        usado_tomado: cerrada ? dejoUsado : false,
+        venta_cerrada_at: new Date().toISOString()
+      })
+    });
+    hideLoading();
+    showToast('Guardado');
+    if (currentMode === 'tasador_fisico') await loadTasadorFisicoList();
+    else if (currentMode === 'admin') await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showToast('Error al guardar');
+  }
 }
 
 function actualizarBotonSelMultiple() {
@@ -3034,6 +3119,47 @@ function renderAdminCard(t) {
             ❌ <strong>Operación no cerrada</strong> ${fr ? '· ' + fr : ''}
           </div>
         `;
+      })()}
+
+      ${(() => {
+        // Flujo Stock/Vendido
+        if (t.vendido_at) {
+          const fv = new Date(t.vendido_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
+          return `
+            <div style="margin-top:12px; padding:10px 12px; background:#FECACA; border-radius:6px; border-left:3px solid #7F1D1D">
+              <div style="font-size:12px; font-weight:700; color:#7F1D1D">💰 VENDIDO</div>
+              <div style="font-size:11px; color:#7F1D1D; margin-top:2px">${fv}${t.vendido_por ? ' · ' + t.vendido_por : ''}</div>
+              ${t.ingresado_stock_at ? `<div style="font-size:11px; color:var(--vw-grey-4); margin-top:2px">Ingresó a stock el ${new Date(t.ingresado_stock_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' })}${t.ingresado_stock_por ? ' · ' + t.ingresado_stock_por : ''}</div>` : ''}
+            </div>
+          `;
+        }
+        if (t.ingresado_stock_at) {
+          const fi = new Date(t.ingresado_stock_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
+          const btnVendido = _puedeGestionarStock()
+            ? `<button onclick="event.stopPropagation(); marcarVendido('${t.id}')" style="padding:8px 14px; background:#7F1D1D; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">💰 Marcar vendido</button>`
+            : '';
+          return `
+            <div style="margin-top:12px; padding:10px 12px; background:#DBEAFE; border-radius:6px; border-left:3px solid #1E40AF">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
+                <div>
+                  <div style="font-size:12px; font-weight:700; color:#1E40AF">📦 EN STOCK</div>
+                  <div style="font-size:11px; color:#1E40AF; margin-top:2px">${fi}${t.ingresado_stock_por ? ' · ' + t.ingresado_stock_por : ''}</div>
+                </div>
+                ${btnVendido}
+              </div>
+            </div>
+          `;
+        }
+        // Si ya está cerrado con usado tomado y falta ingresar a stock
+        if (t.precio_toma_final && t.venta_cerrada === true && t.usado_tomado === true && _puedeGestionarStock()) {
+          return `
+            <div style="margin-top:12px; padding:10px 12px; background:#FEF3C7; border-radius:6px; border-left:3px solid #78350F; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
+              <div style="font-size:12px; font-weight:700; color:#78350F">📥 PENDIENTE DE INGRESO A STOCK</div>
+              <button onclick="event.stopPropagation(); marcarIngresoStock('${t.id}')" style="padding:8px 14px; background:#1E40AF; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">🏭 Marcar ingreso a stock</button>
+            </div>
+          `;
+        }
+        return '';
       })()}
       </div>
     </div>
@@ -4939,14 +5065,20 @@ function renderFisicoList() {
   const list = document.getElementById('fisicoList');
   let data = fisicoData || [];
 
-  // Solo aparecen tasaciones con (1) precio virtual cargado y (2) turno agendado.
-  // Sin esas dos condiciones, no le mostramos nada al tasador físico.
-  data = data.filter(t => t.precio_toma_virtual && t.turno_fecha && t.turno_hora);
+  // Pre-filtro: para las solapas de inspección (pendientes/inspeccionadas/final/todas) exigimos precio virtual y turno.
+  // Para las solapas de flujo post-toma (ingresar/stock/vendido) relajamos esos requisitos — solo miramos los flags.
+  const solapasRelajadas = new Set(['ingresar', 'stock', 'vendido']);
+  if (!solapasRelajadas.has(fisicoFiltroEstadoVal)) {
+    data = data.filter(t => t.precio_toma_virtual && t.turno_fecha && t.turno_hora);
+  }
 
   // Filtro por estado:
   //   pendientes      → sin inspección hecha (no hay analisis_fisico)
   //   inspeccionadas  → ya inspeccionó y mandó al admin, esperando precio final
-  //   final           → admin ya puso precio final
+  //   final           → admin ya puso precio final, todavía sin cierre de operación
+  //   ingresar        → cierre cerrado con usado tomado, pendiente de ingreso físico a stock
+  //   stock           → ingresado al stock, sin vender
+  //   vendido         → ya se vendió
   //   todas           → todo
   const tieneInsp = (t) => !!(t.analisis_fisico && typeof t.analisis_fisico === 'object' && t.precio_sugerido_fisico);
   if (fisicoFiltroEstadoVal === 'pendientes') {
@@ -4954,7 +5086,13 @@ function renderFisicoList() {
   } else if (fisicoFiltroEstadoVal === 'inspeccionadas') {
     data = data.filter(t => tieneInsp(t) && !t.precio_toma_final);
   } else if (fisicoFiltroEstadoVal === 'final') {
-    data = data.filter(t => t.precio_toma_final);
+    data = data.filter(t => t.precio_toma_final && !t.ingresado_stock_at && !t.vendido_at);
+  } else if (fisicoFiltroEstadoVal === 'ingresar') {
+    data = data.filter(t => t.precio_toma_final && t.usado_tomado === true && !t.ingresado_stock_at && !t.vendido_at);
+  } else if (fisicoFiltroEstadoVal === 'stock') {
+    data = data.filter(t => t.ingresado_stock_at && !t.vendido_at);
+  } else if (fisicoFiltroEstadoVal === 'vendido') {
+    data = data.filter(t => !!t.vendido_at);
   }
 
   // Filtro de texto (patente o nombre del cliente)
@@ -4993,7 +5131,10 @@ function renderFisicoList() {
   const subtitulosFis = {
     pendientes: '🛠️ Unidades con turno y precio virtual cargado por el admin. Tenés que inspeccionarlas físicamente cuando llegue el cliente.',
     inspeccionadas: '⏳ Ya las inspeccionaste y mandaste tu precio sugerido. El admin tiene que confirmar el precio final — todavía no las tomó.',
-    final: '✅ El admin ya cerró el precio final luego de tu inspección. Trabajo terminado, podés revisar el detalle si querés.',
+    final: '✅ El admin ya cerró el precio final luego de tu inspección. Si el vendedor no marcó todavía si se tomó el usado, podés marcarlo vos.',
+    ingresar: '📥 Operaciones cerradas con usado tomado. Cuando el usado entre físicamente al concesionario marcalo como ingresado a stock.',
+    stock: '📦 Usados ya ingresados al concesionario. Cuando se venda uno marcalo como vendido.',
+    vendido: '💰 Usados ya vendidos. Historial.',
     todas: 'Todas las unidades con turno y precio virtual.'
   };
   const subtituloFisHTML = `<div style="margin:0 0 12px 0; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosFis[fisicoFiltroEstadoVal] || ''}</div>`;
@@ -5002,7 +5143,15 @@ function renderFisicoList() {
     const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
     const patenteLbl = t.patente ? `<span style="display:inline-block;padding:3px 10px;background:var(--vw-grey-1);border-radius:4px;font-family:var(--mono);font-size:12px;font-weight:700">${t.patente}</span>` : '<span style="font-size:12px;color:var(--vw-grey-3)">sin patente</span>';
     let estadoFisicoBadge, btnLabel, btnBg;
-    if (t.precio_toma_final) {
+    if (t.vendido_at) {
+      estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#FECACA;color:#7F1D1D;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">VENDIDO</span>';
+      btnLabel = 'Ver detalle';
+      btnBg = '#7F1D1D';
+    } else if (t.ingresado_stock_at) {
+      estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#DBEAFE;color:#1E40AF;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">EN STOCK</span>';
+      btnLabel = 'Ver detalle';
+      btnBg = '#1E40AF';
+    } else if (t.precio_toma_final) {
       estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#D1FAE5;color:#065F46;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">TASADO FINAL POR EL ADMIN</span>';
       btnLabel = 'Ver detalle';
       btnBg = '#065F46';
@@ -5014,6 +5163,27 @@ function renderFisicoList() {
       estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#FEF3C7;color:#78350F;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">PENDIENTE DE INSPECCIÓN</span>';
       btnLabel = 'Inspeccionar →';
       btnBg = 'var(--vw-blue)';
+    }
+
+    // Botones extras según el estado (solo visibles para usuarios con permiso de stock)
+    let accionesExtra = '';
+    if (_puedeGestionarStock()) {
+      if (t.precio_toma_final && !t.ingresado_stock_at && !t.vendido_at) {
+        // Aún sin ingresar a stock. Si falta cierre, mostramos los 3 botones. Si ya está cerrado con usado, mostramos "Ingresar a stock".
+        if (t.venta_cerrada === null || t.venta_cerrada === undefined) {
+          accionesExtra = `
+            <div style="display:flex; gap:6px; flex-wrap:wrap">
+              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, true)" style="padding:8px 12px; background:var(--green); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · con usado</button>
+              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, false)" style="padding:8px 12px; background:#10B981; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · sin usado</button>
+              <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', false, false)" style="padding:8px 12px; background:var(--red); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ No cerró</button>
+            </div>
+          `;
+        } else if (t.venta_cerrada === true && t.usado_tomado === true) {
+          accionesExtra = `<button onclick="event.stopPropagation(); marcarIngresoStock('${t.id}')" style="padding:8px 14px; background:#1E40AF; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer; white-space:nowrap">🏭 Marcar ingreso a stock</button>`;
+        }
+      } else if (t.ingresado_stock_at && !t.vendido_at) {
+        accionesExtra = `<button onclick="event.stopPropagation(); marcarVendido('${t.id}')" style="padding:8px 14px; background:#7F1D1D; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer; white-space:nowrap">💰 Marcar vendido</button>`;
+      }
     }
     let turnoBadge = '';
     if (t.turno_fecha) {
@@ -5034,19 +5204,22 @@ function renderFisicoList() {
       preciosLine = `<div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px">Virtual de referencia: <strong style="font-family:var(--mono); color:var(--vw-blue)">$ ${formatNum(t.precio_toma_virtual)}</strong></div>`;
     }
     return `
-      <div class="tasacion-card-compact" style="padding:14px; display:flex; justify-content:space-between; align-items:center; gap:12px">
-        <div style="flex:1; min-width:0">
-          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap">
-            ${patenteLbl}
-            ${estadoFisicoBadge}
-            ${turnoBadge}
+      <div class="tasacion-card-compact" style="padding:14px">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap">
+          <div style="flex:1; min-width:220px">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap">
+              ${patenteLbl}
+              ${estadoFisicoBadge}
+              ${turnoBadge}
+            </div>
+            <div style="font-weight:700; font-size:15px; margin-bottom:2px">${t.cliente_nombre || '—'}</div>
+            <div style="font-size:13px; color:var(--vw-grey-4)">${t.marca || ''} ${t.modelo || ''} ${t.anio || ''} — ${t.version || ''}</div>
+            ${preciosLine}
+            <div style="font-size:12px; color:var(--vw-grey-3); margin-top:4px">Vendedor: ${t.vendedor_nombre || '—'} · ${fecha}</div>
           </div>
-          <div style="font-weight:700; font-size:15px; margin-bottom:2px">${t.cliente_nombre || '—'}</div>
-          <div style="font-size:13px; color:var(--vw-grey-4)">${t.marca || ''} ${t.modelo || ''} ${t.anio || ''} — ${t.version || ''}</div>
-          ${preciosLine}
-          <div style="font-size:12px; color:var(--vw-grey-3); margin-top:4px">Vendedor: ${t.vendedor_nombre || '—'} · ${fecha}</div>
+          <button onclick="abrirInspeccion('${t.id}')" style="padding:10px 16px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; white-space:nowrap">${btnLabel}</button>
         </div>
-        <button onclick="abrirInspeccion('${t.id}')" style="padding:10px 16px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; white-space:nowrap">${btnLabel}</button>
+        ${accionesExtra ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end">${accionesExtra}</div>` : ''}
       </div>
     `;
   }).join('');
