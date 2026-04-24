@@ -2098,9 +2098,9 @@ function renderMisTasacionesList() {
   // como las viejas), va directo al tab "Tasación final" — no debe quedar en pendientes.
   let data = misTasacionesData;
   if (misFiltroEstado === 'pendientes') {
-    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final);
+    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto);
   } else if (misFiltroEstado === 'virtual') {
-    data = data.filter(t => t.precio_toma_virtual && !t.precio_toma_final);
+    data = data.filter(t => (t.precio_toma_virtual || t.virtual_no_apto) && !t.precio_toma_final);
   } else if (misFiltroEstado === 'final') {
     data = data.filter(t => t.precio_toma_final);
   }
@@ -2398,9 +2398,9 @@ function renderAdminList(tasaciones) {
   //   final      → con precio final cargado (siempre va a este tab, aunque no haya pasado por virtual)
   //   todas      → todas
   if (adminFiltroEstado === 'pendientes') {
-    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final);
+    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto);
   } else if (adminFiltroEstado === 'virtual') {
-    data = data.filter(t => t.precio_toma_virtual && !t.precio_toma_final);
+    data = data.filter(t => (t.precio_toma_virtual || t.virtual_no_apto) && !t.precio_toma_final);
   } else if (adminFiltroEstado === 'esperando') {
     data = data.filter(t => t.analisis_fisico && t.precio_sugerido_fisico && !t.precio_toma_final);
   } else if (adminFiltroEstado === 'final') {
@@ -5661,10 +5661,18 @@ function generarUUID() {
 }
 
 function toggleCard(id) {
-  const body = document.getElementById('body-' + id);
-  const arrow = document.getElementById('arrow-' + id);
-  if (body) { body.classList.toggle('open'); }
-  if (arrow) { arrow.classList.toggle('open'); }
+  // Si la tasacion aparece en admin + vendedor, hay IDs duplicados en el DOM.
+  // Solo togglear los que esten dentro de una vista visible.
+  const enVistaVisible = (el) => {
+    const anc = el.closest('#adminView, #vendedorView, #tasadorFisicoView');
+    return anc && !anc.classList.contains('hidden');
+  };
+  document.querySelectorAll(`[id="body-${id}"]`).forEach(el => {
+    if (enVistaVisible(el)) el.classList.toggle('open');
+  });
+  document.querySelectorAll(`[id="arrow-${id}"]`).forEach(el => {
+    if (enVistaVisible(el)) el.classList.toggle('open');
+  });
 }
 
 function formatNum(n) {
