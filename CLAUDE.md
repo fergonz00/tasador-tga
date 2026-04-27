@@ -250,16 +250,39 @@ SELECT cron.schedule(
 );
 ```
 
-## Estado del entorno local al 16/04/2026
+### Cambio 8 — Cartelito "comprado en TGA" en card admin (✅ COMPLETO 27/04/2026)
+
+**Qué hace:**
+- En la card admin, debajo de la línea compacta de datos del usado, si el USADO es VW y el vendedor cargó el dato en el wizard (paso `vwCompradoTGA`), aparece un cartelito:
+  - **Verde** si fue comprado en TGA: `✓ Usado VW comprado en Tito González`.
+  - **Amarillo** si NO: `✗ Usado VW NO comprado en TGA — <lugar>` (lugar = `usado_vw_lugar_compra`).
+- Si el usado no es VW o el vendedor no completó el dato, no se muestra nada.
+- Sirve para que el admin tenga el historial visible al cargar el precio virtual.
+
+**Implementación:** IIFE inline en `renderAdminCard`, justo después de la línea compacta de datos y antes del bloque `datos_corregidos_at`. Sin schema nuevo (usa `usado_vw_comprado_tga` y `usado_vw_lugar_compra` que ya existían).
+
+## Gotchas y decisiones del proyecto
+
+### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
+- Este proyecto Supabase usa el formato nuevo de keys, **NO JWTs clásicos** (`eyJ...`).
+- Cualquier Edge Function que verifique JWT (toggle "Verify JWT with legacy secret" en Settings) va a rechazar las llamadas internas con 401 `UNAUTHORIZED_INVALID_JWT_FORMAT`.
+- **Decisión**: tener ese toggle **OFF** en `notify-whatsapp` y `notify-pending-sweep`. Las funciones validan internamente sus inputs.
+- Si en algún momento se vuelve a activar el toggle, las llamadas internas (sweeper → notify-whatsapp, cron → sweeper) dejan de funcionar.
+
+### Project ref Supabase
+- `wjfglsafgaltusmbnccl` — usar para construir URLs de funciones: `https://wjfglsafgaltusmbnccl.supabase.co/functions/v1/<nombre>`.
+
+## Estado del entorno local al 27/04/2026
 
 - Servidor local corriendo en `http://localhost:8765/` (iniciado con `python -m http.server 8765` desde la raíz del proyecto). Si se cerró la terminal, hay que reiniciarlo.
-- Fer probó sub-paso 2 y 3 con un Ford Bronco Sport 2021. Funcionó el paso 5 (selección del equiv 0km). Tema abierto: en el CCA para ese Bronco apareció el precio del año 2023 cuando Fer cargó 2024. Sospecha: la columna "2024" en la planilla CCA tiene la data vieja del 2023 (data issue, no bug de código). A verificar en la planilla de Google Sheets de CCA.
+- Producción se sirve desde GitHub Pages en `tasador.titogonzalez.online`. Tras un push a `main` puede haber **caché del browser**: si los cambios no aparecen, hacer **Ctrl+Shift+R** (hard reload) o probar en ventana incógnita antes de pensar que el cambio falló.
+- Tema abierto histórico (16/04/2026): en el CCA para un Ford Bronco Sport 2021 apareció el precio del año 2023 cuando Fer cargó 2024. Sospecha: la columna "2024" en la planilla CCA tiene la data vieja del 2023 (data issue, no bug). A verificar en la planilla de Google Sheets de CCA.
 
 ## Pendientes al retomar
 
-1. **Probar cambio 2 end-to-end**: refrescar local (Ctrl+F5), hacer una tasación con 2-3 fotos reales, esperar ~60s, entrar como admin, verificar recuadro celeste "ANÁLISIS IA".
-2. **Verificar tema CCA 2024**: abrir la planilla CCA, columna 2024, ver si para Ford Bronco Sport BIG BEND la data está desactualizada. Si sí, es tema de la planilla.
-3. **Cambio 3 — deploy**: commit + push a main una vez que cambio 2 esté probado. Mensaje de commit sugerido: `feat: rediseño paso 5 wizard + análisis de fotos con IA`.
+1. **Verificar tema CCA 2024** (heredado): abrir la planilla CCA, columna 2024, ver si para Ford Bronco Sport BIG BEND la data está desactualizada.
+2. **Edge cases sin template Meta** (heredado del cambio 5): decidir si crear templates `usado_no_apto` y `turno_cancelado` o dejar sin notificación WA. Mientras tanto sigue usando CallMeBot para esos casos puntuales.
+3. **Eventual**: si el sweeper detecta tasaciones que se reintentan muchas veces sin éxito, mirar `notificaciones_log` para entender la causa (Meta error, número inválido, etc).
 
 ## Convenciones y restricciones
 
