@@ -3104,6 +3104,24 @@ function renderAdminCard(t) {
         `;
       })()}
 
+      ${(() => {
+        // Si el USADO es VW, mostramos si fue comprado en TGA o no (dato cargado por el vendedor en el wizard)
+        if ((t.marca || '').toUpperCase() !== 'VOLKSWAGEN') return '';
+        if (t.usado_vw_comprado_tga === null || t.usado_vw_comprado_tga === undefined) return '';
+        if (t.usado_vw_comprado_tga === true) {
+          return `
+            <div style="margin-top:8px; padding:8px 12px; background:#ECFDF5; border:1px solid #A7F3D0; border-radius:6px; font-size:12px; color:#065F46; display:inline-block; font-weight:600">
+              ✓ Usado VW comprado en Tito González
+            </div>
+          `;
+        }
+        return `
+          <div style="margin-top:8px; padding:8px 12px; background:#FEF3C7; border:1px solid #FDE68A; border-radius:6px; font-size:12px; color:#92400E; display:inline-block; font-weight:600">
+            ✗ Usado VW NO comprado en TGA${t.usado_vw_lugar_compra ? ` — <span style="font-weight:400">${t.usado_vw_lugar_compra}</span>` : ''}
+          </div>
+        `;
+      })()}
+
       ${t.datos_corregidos_at ? `
         <div style="margin-top:8px; padding:6px 10px; background:#FEF3C7; border-radius:6px; font-size:11px; color:#92400E; display:inline-block">
           ⚠ Datos del vehículo corregidos por <strong>${t.datos_corregidos_por || 'el tasador'}</strong> el ${new Date(t.datos_corregidos_at).toLocaleDateString('es-AR')}
