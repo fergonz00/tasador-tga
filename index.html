@@ -3112,28 +3112,7 @@ function renderAdminCard(t) {
 
       <div style="margin-top:10px">
         ${t.precio_cca && ccaMoneda === 'USD' ? `<div class="info-row"><span class="label">Precio CCA (USD)</span><span class="value" style="font-family:var(--mono)">USD ${formatNum(t.precio_cca)}</span></div>` : ''}
-        ${(() => {
-          // 0km equivalente del usado (nuevo formato con fallback al viejo)
-          let label = '', precioArs = null, monedaLbl = '';
-          if (t.equiv_0km_marca && t.equiv_0km_modelo) {
-            label = t.equiv_0km_version
-              ? `${t.equiv_0km_marca} ${t.equiv_0km_modelo} — ${t.equiv_0km_version}`
-              : `${t.equiv_0km_marca} ${t.equiv_0km_modelo}`;
-            if (t.equiv_0km_precio != null) {
-              precioArs = (t.equiv_0km_moneda === 'USD') ? t.equiv_0km_precio * cotiz : t.equiv_0km_precio;
-              monedaLbl = (t.equiv_0km_moneda === 'USD') ? ` (USD ${formatNum(t.equiv_0km_precio)} × ${cotiz})` : '';
-            }
-          } else if (t.modelo_vw_0km) {
-            label = t.modelo_vw_0km;
-            precioArs = t.precio_vw_0km;
-          } else {
-            return '';
-          }
-          return `
-            <div class="info-row"><span class="label">0km equivalente</span><span class="value">${label}</span></div>
-            ${precioArs ? `<div class="info-row"><span class="label">Precio 0km</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(precioArs)}${monedaLbl}</span></div>` : ''}
-          `;
-        })()}
+        ${renderEquivBlockAdmin(t)}
       </div>
 
       ${(() => {
@@ -5056,6 +5035,181 @@ async function aplicarAjusteKm(id) {
   } catch(e) {
     console.error(e);
     showToast('Error al aplicar ajuste');
+  }
+}
+
+// ============ EDITAR 0KM EQUIVALENTE DESDE ADMIN ============
+// Cuando el vendedor no carga el 0km equivalente (paso 5 del wizard) la Fórmula FG queda N/A.
+// Este editor inline le permite al admin elegir marca/modelo/versión desde la card y recuperar el cálculo.
+let _equivEditState = {};
+
+function renderEquivBlockAdmin(t) {
+  if (_equivEditState[t.id]) {
+    return `<div id="equiv-block-${t.id}">${renderEquivBlockEdit(t)}</div>`;
+  }
+  const cotiz = getCotiz();
+  let label = '', precioArs = null, monedaLbl = '';
+  if (t.equiv_0km_marca && t.equiv_0km_modelo) {
+    label = t.equiv_0km_version
+      ? `${t.equiv_0km_marca} ${t.equiv_0km_modelo} — ${t.equiv_0km_version}`
+      : `${t.equiv_0km_marca} ${t.equiv_0km_modelo}`;
+    if (t.equiv_0km_precio != null) {
+      precioArs = (t.equiv_0km_moneda === 'USD') ? t.equiv_0km_precio * cotiz : t.equiv_0km_precio;
+      monedaLbl = (t.equiv_0km_moneda === 'USD') ? ` (USD ${formatNum(t.equiv_0km_precio)} × ${cotiz})` : '';
+    }
+  } else if (t.modelo_vw_0km) {
+    label = t.modelo_vw_0km;
+    precioArs = t.precio_vw_0km;
+  }
+  const tieneData = !!label;
+  const btnLabel = tieneData ? '✎ Editar' : '+ Cargar';
+  const btn = `<button onclick="event.stopPropagation(); editEquiv0km('${t.id}')" style="padding:2px 8px; font-size:10px; font-weight:600; border:1px solid var(--vw-blue); background:white; color:var(--vw-blue); border-radius:4px; cursor:pointer; margin-left:8px">${btnLabel}</button>`;
+  if (!tieneData) {
+    return `
+      <div id="equiv-block-${t.id}">
+        <div class="info-row"><span class="label">0km equivalente</span><span class="value" style="color:#B45309; font-style:italic">⚠ Sin cargar — Fórmula FG no disponible${btn}</span></div>
+      </div>
+    `;
+  }
+  return `
+    <div id="equiv-block-${t.id}">
+      <div class="info-row"><span class="label">0km equivalente</span><span class="value">${label}${btn}</span></div>
+      ${precioArs ? `<div class="info-row"><span class="label">Precio 0km</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(precioArs)}${monedaLbl}</span></div>` : ''}
+    </div>
+  `;
+}
+
+function renderEquivBlockEdit(t) {
+  const st = _equivEditState[t.id] || {};
+  const marca = st.marca || '';
+  const modelo = st.modelo || '';
+  const version = st.version || '';
+  const marcas = getEquiv0kmMarcas();
+  const modelos = marca ? getEquiv0kmModelos(marca) : [];
+  const versiones = (marca && marca !== 'VOLKSWAGEN' && modelo) ? getEquiv0kmVersiones(marca, modelo) : [];
+  const showVersion = !!modelo && marca !== 'VOLKSWAGEN';
+  const cols = showVersion ? '1fr 1fr 1fr' : '1fr 1fr';
+  return `
+    <div style="padding:10px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:6px; margin:6px 0">
+      <div style="font-size:11px; font-weight:700; color:var(--vw-blue); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px">Editar 0km equivalente (afecta Fórmula FG)</div>
+      <div style="display:grid; grid-template-columns:${cols}; gap:6px; margin-bottom:8px">
+        <div>
+          <label style="display:block; font-size:10px; font-weight:600; color:var(--vw-grey-4); margin-bottom:2px">Marca</label>
+          <select onchange="onAdminEquivMarcaChange('${t.id}', this.value)" onclick="event.stopPropagation()" style="width:100%; padding:6px; font-size:12px; border:1px solid var(--vw-grey-2); border-radius:4px; box-sizing:border-box">
+            <option value="">— Sin equivalente —</option>
+            ${marcas.map(m => `<option value="${m}" ${m===marca?'selected':''}>${m}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:10px; font-weight:600; color:var(--vw-grey-4); margin-bottom:2px">Modelo</label>
+          <select onchange="onAdminEquivModeloChange('${t.id}', this.value)" onclick="event.stopPropagation()" ${!marca ? 'disabled' : ''} style="width:100%; padding:6px; font-size:12px; border:1px solid var(--vw-grey-2); border-radius:4px; box-sizing:border-box">
+            <option value="">— Elegí —</option>
+            ${modelos.map(m => `<option value="${m}" ${m===modelo?'selected':''}>${m}</option>`).join('')}
+          </select>
+        </div>
+        ${showVersion ? `
+          <div>
+            <label style="display:block; font-size:10px; font-weight:600; color:var(--vw-grey-4); margin-bottom:2px">Versión</label>
+            <select onchange="onAdminEquivVersionChange('${t.id}', this.value)" onclick="event.stopPropagation()" style="width:100%; padding:6px; font-size:12px; border:1px solid var(--vw-grey-2); border-radius:4px; box-sizing:border-box">
+              <option value="">— Elegí —</option>
+              ${versiones.map(v => `<option value="${v}" ${v===version?'selected':''}>${v}</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
+      </div>
+      <div style="display:flex; gap:6px; justify-content:flex-end">
+        <button onclick="event.stopPropagation(); cancelEditEquiv0km('${t.id}')" style="padding:6px 12px; font-size:11px; background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:4px; cursor:pointer; font-weight:600">Cancelar</button>
+        <button onclick="event.stopPropagation(); guardarEquiv0km('${t.id}')" style="padding:6px 14px; font-size:11px; background:var(--vw-blue); color:white; border:none; border-radius:4px; font-weight:700; cursor:pointer">Guardar</button>
+      </div>
+    </div>
+  `;
+}
+
+function _refreshEquivBlock(tasId) {
+  const t = (allTasaciones || []).find(x => x.id === tasId);
+  if (!t) return;
+  const el = document.getElementById(`equiv-block-${tasId}`);
+  if (el) el.outerHTML = renderEquivBlockAdmin(t);
+}
+
+function editEquiv0km(tasId) {
+  const t = (allTasaciones || []).find(x => x.id === tasId);
+  _equivEditState[tasId] = {
+    marca: (t && t.equiv_0km_marca) || '',
+    modelo: (t && t.equiv_0km_modelo) || '',
+    version: (t && t.equiv_0km_version) || ''
+  };
+  _refreshEquivBlock(tasId);
+}
+
+function cancelEditEquiv0km(tasId) {
+  delete _equivEditState[tasId];
+  _refreshEquivBlock(tasId);
+}
+
+function onAdminEquivMarcaChange(tasId, valor) {
+  if (!_equivEditState[tasId]) _equivEditState[tasId] = {};
+  _equivEditState[tasId].marca = valor;
+  _equivEditState[tasId].modelo = '';
+  _equivEditState[tasId].version = '';
+  _refreshEquivBlock(tasId);
+}
+
+function onAdminEquivModeloChange(tasId, valor) {
+  if (!_equivEditState[tasId]) _equivEditState[tasId] = {};
+  _equivEditState[tasId].modelo = valor;
+  _equivEditState[tasId].version = '';
+  _refreshEquivBlock(tasId);
+}
+
+function onAdminEquivVersionChange(tasId, valor) {
+  if (!_equivEditState[tasId]) _equivEditState[tasId] = {};
+  _equivEditState[tasId].version = valor;
+}
+
+async function guardarEquiv0km(tasId) {
+  const st = _equivEditState[tasId] || {};
+  const marca = st.marca || null;
+  const modelo = st.modelo || null;
+  const version = st.version || null;
+
+  let precio = null;
+  let moneda = null;
+
+  if (marca && modelo) {
+    if (marca === 'VOLKSWAGEN') {
+      const vw = vwData.find(v => v.modelo === modelo);
+      if (vw) { precio = vw.precio_0km; moneda = 'ARS'; }
+      else { showToast('No encontré ese modelo VW en la planilla'); return; }
+    } else {
+      if (!version) { showToast('Falta elegir la versión'); return; }
+      const csv = precios0kmData.find(r => r.marca === marca && r.modelo === modelo && r.version === version);
+      if (csv) { precio = csv.precio; moneda = csv.moneda || 'ARS'; }
+      else { showToast('No encontré el precio en la planilla'); return; }
+    }
+  } else if (marca && !modelo) {
+    showToast('Falta elegir el modelo');
+    return;
+  }
+
+  try {
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        equiv_0km_marca: marca,
+        equiv_0km_modelo: modelo,
+        equiv_0km_version: version,
+        equiv_0km_precio: precio,
+        equiv_0km_moneda: moneda,
+        updated_at: new Date().toISOString()
+      })
+    });
+    delete _equivEditState[tasId];
+    showToast(marca ? '0km equivalente actualizado' : '0km equivalente quitado');
+    loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    console.error(e);
+    showToast('Error al guardar el 0km equivalente');
   }
 }
 

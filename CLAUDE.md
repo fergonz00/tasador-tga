@@ -201,6 +201,55 @@ Commit + push a GitHub (rama `main`). El sitio `tasador.titogonzalez.online` se 
 2. Mientras la app Meta esté en Desarrollo: agregar el número como recipient test number en Meta y verificar con código.
 3. En el panel 🔔 Notificaciones del admin, tildar el checkbox del usuario en los eventos que quiera recibir.
 
+### Cambio 6 — Editor de 0km equivalente desde admin (✅ COMPLETO 27/04/2026)
+
+**Qué hace:**
+- En la card de cada tasación admin, junto al "0km equivalente", aparece un botón **"+ Cargar"** (si el vendedor no completó el paso 5) o **"✎ Editar"** (si ya hay datos).
+- Al tocarlo se abre un editor inline en cascada (marca → modelo → versión) con la misma data del wizard (`precios0kmData` + `vwData`). VW = 2 niveles, otras 8 marcas = 3 niveles.
+- Al guardar hace PATCH a los 5 campos `equiv_0km_*` y la Fórmula FG aparece automáticamente (recalcula dinámicamente).
+- Permite también limpiar (seleccionar "— Sin equivalente —") para revertir.
+
+**Funciones clave en `index.html`:**
+- `renderEquivBlockAdmin(t)`: render del bloque (modo vista o modo edición según `_equivEditState`).
+- `renderEquivBlockEdit(t)`: render del editor con los desplegables.
+- `editEquiv0km(tasId)`, `cancelEditEquiv0km(tasId)`: abrir/cerrar.
+- `onAdminEquivMarcaChange/ModeloChange/VersionChange(tasId, valor)`: handlers en cascada.
+- `guardarEquiv0km(tasId)`: lookup de precio en `vwData`/`precios0kmData` y PATCH.
+- Se reemplazó el IIFE viejo del bloque "0km equivalente" en `renderAdminCard` por un único llamado a `renderEquivBlockAdmin(t)`.
+
+**Schema Supabase:** sin cambios — usa las columnas `equiv_0km_*` que ya existen del cambio 1.
+
+### Cambio 7 — Sweeper para garantizar WhatsApp "tasacion_pendiente_carga" (✅ COMPLETO 27/04/2026)
+
+**Por qué:** el `notifyWA` del cliente es fire-and-forget. El sábado 25/04 una vendedora cargó una tasación y el WA al admin no llegó (causa puntual no identificada — probablemente red o tab cerrada al momento del submit). Como respaldo defensivo se agregó un sweeper que se autoejecuta y reintenta.
+
+**Edge Function `notify-pending-sweep`** (`supabase/functions/notify-pending-sweep/index.ts`):
+- Lista tasaciones con `estado = 'pendiente'` creadas en últimas 48h y `es_presencial != true`.
+- Filtra las que ya tienen un envío `enviado` con evento `tasacion_pendiente_carga` en `notificaciones_log`.
+- Para las que faltan, llama a `notify-whatsapp` con la `SUPABASE_ANON_KEY` (en este proyecto la `SERVICE_ROLE_KEY` es formato nuevo `sb_secret_*` que no es JWT y se rechaza).
+- Devuelve `{revisadas, ya_notificadas, reintentadas, detalle[]}`.
+
+**Configuración importante (gotcha del proyecto):**
+- Las keys de este proyecto Supabase son **formato nuevo** (`sb_publishable_*` y `sb_secret_*`), NO JWTs clásicos.
+- Por eso, en las Edge Functions `notify-whatsapp` y `notify-pending-sweep` está **desactivado el toggle "Verify JWT with legacy secret"**. Si se vuelve a activar, las llamadas internas dejan de funcionar.
+- Las funciones validan internamente sus inputs (evento válido, env vars presentes), así que el riesgo de tener JWT off es bajo.
+
+**pg_cron schedule activo:** `notify-pending-sweep` corre cada 5 minutos (`*/5 * * * *`, jobid 1). Llama al sweeper sin auth header (porque JWT verification está off).
+
+**SQL pendiente para correr en otra instalación o si se rompe:**
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net;
+SELECT cron.schedule(
+  'notify-pending-sweep', '*/5 * * * *',
+  $$ SELECT net.http_post(
+    url := 'https://wjfglsafgaltusmbnccl.supabase.co/functions/v1/notify-pending-sweep',
+    headers := jsonb_build_object('Content-Type', 'application/json'),
+    body := '{}'::jsonb
+  ); $$
+);
+```
+
 ## Estado del entorno local al 16/04/2026
 
 - Servidor local corriendo en `http://localhost:8765/` (iniciado con `python -m http.server 8765` desde la raíz del proyecto). Si se cerró la terminal, hay que reiniciarlo.
