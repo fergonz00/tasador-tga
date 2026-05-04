@@ -6464,8 +6464,30 @@ document.getElementById('loginPass').addEventListener('keydown', e => {
 
 // ============ PERSISTENCIA DE SESIÓN ============
 // Guardamos currentUser y modo en localStorage. Al recargar la página, si hay sesión, la restauramos
-// sin pedir usuario/contraseña.
+// sin pedir usuario/contraseña. Además sincronizamos con una cookie compartida en
+// .titogonzalez.online para SSO entre todas las apps del ecosistema TGA.
 const SESSION_KEY = 'tasadorSession';
+const SHARED_COOKIE = 'tga_session';
+const SHARED_DOMAIN = '.titogonzalez.online';
+
+function setSharedCookie(user) {
+  if (!user) return;
+  try {
+    const safe = Object.assign({}, user);
+    delete safe.clave;
+    const value = encodeURIComponent(JSON.stringify(safe));
+    const maxAge = 7 * 24 * 60 * 60;
+    document.cookie = SHARED_COOKIE + '=' + value + '; path=/; domain=' + SHARED_DOMAIN + '; max-age=' + maxAge + '; Secure; SameSite=Lax';
+  } catch(e) { console.error('setSharedCookie:', e); }
+}
+function getSharedCookie() {
+  const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + SHARED_COOKIE + '=([^;]+)'));
+  if (!m) return null;
+  try { return JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
+}
+function clearSharedCookie() {
+  document.cookie = SHARED_COOKIE + '=; path=/; domain=' + SHARED_DOMAIN + '; max-age=0; Secure; SameSite=Lax';
+}
 
 function guardarSesion() {
   if (!currentUser) return;
@@ -6474,18 +6496,31 @@ function guardarSesion() {
       user: currentUser,
       mode: currentMode
     }));
+    setSharedCookie(currentUser);
   } catch(e) { console.error('guardarSesion:', e); }
 }
 
 function limpiarSesion() {
   try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
+  clearSharedCookie();
 }
 
 async function restaurarSesion() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return false;
-    const s = JSON.parse(raw);
+    let s = null;
+
+    // 1) Prioridad: cookie compartida (SSO entre apps TGA).
+    const cookieUser = getSharedCookie();
+    if (cookieUser && cookieUser.id) {
+      s = { user: cookieUser, mode: null };
+      try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch(e) {}
+    } else {
+      // 2) Fallback: sesión local previa.
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return false;
+      s = JSON.parse(raw);
+    }
+
     if (!s || !s.user || !s.user.id) return false;
     currentUser = s.user;
     // Por si la sesión guardada es vieja y no trae rolesArr (retrocompat).
