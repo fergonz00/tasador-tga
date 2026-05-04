@@ -1048,8 +1048,25 @@ async function login() {
   }
 }
 
+// Modos que tasador entiende. Otros roles del ecosistema TGA (f01_admin, f01_owner, etc.)
+// no aparecen como modos de tasador.
+const TASADOR_MODES = ['admin', 'vendedor', 'tasador_fisico'];
+
+function computeTasadorRoles(user) {
+  const allRoles = (Array.isArray(user.roles) && user.roles.length)
+    ? user.roles
+    : (user.rol ? [user.rol] : []);
+  return allRoles.filter(r => TASADOR_MODES.includes(r));
+}
+
 function _continuarLogin() {
-  // Si tiene un solo rol, entra directo; si tiene múltiples, mostramos la pantalla de selección.
+  // Filtrar a los modos que tasador entiende (descartar roles de otras apps TGA).
+  currentUser.rolesArr = computeTasadorRoles(currentUser);
+  if (!currentUser.rolesArr.length) {
+    alert('Tu usuario no tiene acceso al tasador.');
+    logout();
+    return;
+  }
   if (currentUser.rolesArr.length === 1) {
     selectMode(currentUser.rolesArr[0]);
   } else {
@@ -4216,20 +4233,12 @@ function entrarComoUsuario(id) {
   // Guardamos al original (solo si no estabamos ya impersonando, asi al cambiar entre usuarios no se pierde el original).
   if (!_impersonating) _impersonating = currentUser;
 
-  // Cambiamos el currentUser y le populamos rolesArr igual que en login normal.
-  const target = { ...u };
-  target.rolesArr = (Array.isArray(target.roles) && target.roles.length > 0)
-    ? target.roles
-    : (target.rol ? [target.rol] : ['vendedor']);
-  currentUser = target;
+  // Cambiamos el currentUser. _continuarLogin filtra rolesArr a TASADOR_MODES.
+  currentUser = { ...u };
 
   // Cerramos el panel de Usuarios y entramos directo (salteando debe_cambiar_clave porque no es login real).
   cerrarUsuarios();
-  if (currentUser.rolesArr.length === 1) {
-    selectMode(currentUser.rolesArr[0]);
-  } else {
-    mostrarModeSelect();
-  }
+  _continuarLogin();
   _renderImpersonateBanner();
   showToast(`Entraste como ${u.usuario}`);
 }
