@@ -625,29 +625,6 @@ input, select, textarea { font-family: var(--font); }
     </div>
   </div>
 
-  <!-- ======== GERENTE VIEW (solo lectura, ve tasaciones de todos los vendedores) ======== -->
-  <div id="gerenteView" class="hidden">
-    <div style="padding:16px; background:white; border-bottom:1px solid var(--vw-grey-2);">
-      <h2 style="margin:0; font-size:20px; color:var(--vw-blue);">Vista de gerente</h2>
-      <div style="font-size:13px; color:var(--vw-grey-4); margin-top:2px">Tasaciones de todos los vendedores. Solo lectura.</div>
-    </div>
-    <div class="admin-tabs" style="margin:12px 16px 4px 16px; gap:10px">
-      <button class="active" onclick="showGerenteTab('pendientes', this)">Pendientes</button>
-      <button onclick="showGerenteTab('virtual', this)">Tasación virtual</button>
-      <button onclick="showGerenteTab('final', this)">Tasación final</button>
-      <button onclick="showGerenteTab('usado_rechazado', this)">Usado no apto</button>
-      <button onclick="showGerenteTab('usado_tomado', this)">Usado tomado</button>
-      <button onclick="showGerenteTab('todas', this)">Todas</button>
-    </div>
-    <div style="padding:12px 16px 0 16px; display:flex; gap:10px; flex-wrap:wrap">
-      <input type="text" id="gerenteBuscador" placeholder="Buscar por cliente, patente, marca, modelo o vendedor..." oninput="onGerenteFiltroChange()" style="flex:1; min-width:200px; padding:10px 14px; border:1px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:var(--sans)">
-      <select id="gerenteFiltroVendedor" onchange="onGerenteFiltroChange()" style="padding:10px 14px; border:1px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:var(--sans); min-width:180px">
-        <option value="TODOS">Todos los vendedores</option>
-      </select>
-    </div>
-    <div class="tasaciones-list" id="gerenteList"></div>
-  </div>
-
   <!-- ======== TASADOR FÍSICO VIEW ======== -->
   <div id="tasadorFisicoView" class="hidden">
     <div class="admin-container">
@@ -1150,7 +1127,7 @@ async function confirmarCambioClave() {
 function mostrarModeSelect() {
   // Rendereamos un botón por cada rol disponible.
   const roles = (currentUser && currentUser.rolesArr) || [];
-  const labels = { admin: 'Administrador', vendedor: 'Vendedor', tasador_fisico: 'Tasador físico', gerente: 'Gerente' };
+  const labels = { admin: 'Administrador', vendedor: 'Vendedor', tasador_fisico: 'Tasador físico' };
   const cont = document.getElementById('modeSelectButtons');
   cont.innerHTML = roles.map(r => {
     const lbl = labels[r] || (r.charAt(0).toUpperCase() + r.slice(1));
@@ -1167,7 +1144,7 @@ function mostrarModeSelect() {
 
 // Lista canónica de TODAS las vistas tipo "página" (mutuamente excluyentes).
 // Cualquier vista nueva tiene que sumarse acá.
-const ALL_VIEWS = ['vendedorView', 'adminView', 'tasadorFisicoView', 'fisicoInspeccionView', 'notifView', 'usuariosView', 'agendaView', 'gerenteView'];
+const ALL_VIEWS = ['vendedorView', 'adminView', 'tasadorFisicoView', 'fisicoInspeccionView', 'notifView', 'usuariosView', 'agendaView'];
 
 function mostrarSoloVista(viewId) {
   ALL_VIEWS.forEach(id => {
@@ -1188,7 +1165,7 @@ function selectMode(mode) {
   guardarSesion();
   document.getElementById('modeSelectScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
-  const modeLabels = { admin: 'admin', vendedor: 'vendedor', tasador_fisico: 'tasador físico', gerente: 'gerente' };
+  const modeLabels = { admin: 'admin', vendedor: 'vendedor', tasador_fisico: 'tasador físico' };
   document.getElementById('headerUser').textContent = currentUser.nombre + ' (' + (modeLabels[mode] || mode) + ')';
 
   // El botón "Cambiar de modo" solo aparece si el usuario tiene más de un rol.
@@ -1204,7 +1181,7 @@ function selectMode(mode) {
   btnNotif.classList.toggle('hidden', !(mode === 'admin' && _esSuperadmin()));
 
   // Mostrar la vista del modo y ocultar todas las demás (incluyendo overlays).
-  const viewByMode = { admin: 'adminView', vendedor: 'vendedorView', tasador_fisico: 'tasadorFisicoView', gerente: 'gerenteView' };
+  const viewByMode = { admin: 'adminView', vendedor: 'vendedorView', tasador_fisico: 'tasadorFisicoView' };
   mostrarSoloVista(viewByMode[mode]);
 
   if (mode === 'admin') {
@@ -1213,8 +1190,6 @@ function selectMode(mode) {
     initWizard();
   } else if (mode === 'tasador_fisico') {
     loadTasadorFisicoList();
-  } else if (mode === 'gerente') {
-    loadGerenteTasaciones();
   }
 }
 
@@ -1619,7 +1594,7 @@ function renderStep7() { // Color + Kavak
     <label>Color del vehículo</label>
     <input type="text" id="wColor" placeholder="Ej: Blanco, Gris Platino" oninput="validateStep()">
     <label style="margin-top:16px">Precio Kavak (compra)</label>
-    <input type="text" inputmode="numeric" id="wKavak" placeholder="$ Ej: 28.000.000" value="${formatPriceForInput(wizardData.kavak)}" oninput="formatPriceInput(this); validateStep();">
+    <input type="number" id="wKavak" placeholder="Precio que ofrece Kavak" min="0" oninput="validateStep()">
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
       <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
@@ -1707,7 +1682,7 @@ function renderStep9() { // Precio ofrecido con FyF
     <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
     <h2>Precio ofrecido al cliente</h2>
     <label>Precio con flete y formulario que le ofreciste (con FyF incluido)</label>
-    <input type="text" inputmode="numeric" id="wPrecioOfrecido" placeholder="Ej: $ 39.000.000" value="${formatPriceForInput(precio)}" oninput="formatPriceInput(this); validateStep();">
+    <input type="number" id="wPrecioOfrecido" placeholder="Ej: 39000000" value="${precio}" min="0" oninput="validateStep()">
     ${hint}
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -1822,10 +1797,10 @@ function saveCurrentStep() {
       break;
     case 9:
       wizardData.color = val('wColor');
-      wizardData.kavak = parsePriceInput('wKavak');
+      wizardData.kavak = val('wKavak');
       break;
     case 10: wizardData.modelo0km = val('wModelo0km'); break;
-    case 11: wizardData.precioOfrecido = parsePriceInput('wPrecioOfrecido'); break;
+    case 11: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
   }
 }
 
@@ -1875,9 +1850,9 @@ function validateStep() {
       valid = patValida && !!prov;
       break;
     }
-    case 9: valid = !!val('wColor') && (parsePriceInput('wKavak') || 0) > 0; break;
+    case 9: valid = !!val('wColor') && !!val('wKavak') && parseInt(val('wKavak')) > 0; break;
     case 10: valid = !!val('wModelo0km'); break;
-    case 11: valid = (parsePriceInput('wPrecioOfrecido') || 0) > 0; break;
+    case 11: valid = !!val('wPrecioOfrecido') && parseInt(val('wPrecioOfrecido')) > 0; break;
   }
   btn.disabled = !valid;
 }
@@ -2519,214 +2494,6 @@ function matchTasacion(t, q) {
   return hay.indexOf(q) >= 0;
 }
 
-// ============ GERENTE (solo lectura, ve todas las tasaciones de todos los vendedores) ============
-let gerenteData = [];
-let gerenteFiltroEstado = 'pendientes';
-let gerenteFiltroTexto = '';
-let gerenteFiltroVendedor = 'TODOS';
-
-async function loadGerenteTasaciones() {
-  const list = document.getElementById('gerenteList');
-  list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Cargando...</div>';
-  try {
-    const data = await sbFetch('tasaciones?order=created_at.desc');
-    gerenteData = data;
-    populateGerenteVendedorSelect(data);
-    renderGerenteList();
-  } catch(e) {
-    console.error(e);
-    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--red)">Error al cargar</div>';
-  }
-}
-
-function populateGerenteVendedorSelect(data) {
-  const sel = document.getElementById('gerenteFiltroVendedor');
-  if (!sel) return;
-  const vendedores = [...new Set((data || []).map(t => t.vendedor_nombre).filter(v => v))].sort();
-  const valorActual = sel.value || 'TODOS';
-  sel.innerHTML = '<option value="TODOS">Todos los vendedores</option>' +
-    vendedores.map(v => `<option value="${v}">${v}</option>`).join('');
-  // Mantener selección si sigue existiendo
-  if (vendedores.includes(valorActual)) sel.value = valorActual;
-  else sel.value = 'TODOS';
-  gerenteFiltroVendedor = sel.value;
-}
-
-function showGerenteTab(tab, btn) {
-  document.querySelectorAll('#gerenteView .admin-tabs button').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  gerenteFiltroEstado = tab || 'pendientes';
-  renderGerenteList();
-}
-
-function onGerenteFiltroChange() {
-  const txt = document.getElementById('gerenteBuscador');
-  const sel = document.getElementById('gerenteFiltroVendedor');
-  gerenteFiltroTexto = txt ? txt.value.trim().toUpperCase() : '';
-  gerenteFiltroVendedor = sel ? sel.value : 'TODOS';
-  renderGerenteList();
-}
-
-function renderGerenteList() {
-  const list = document.getElementById('gerenteList');
-  if (!gerenteData || gerenteData.length === 0) {
-    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">No hay tasaciones cargadas</div>';
-    return;
-  }
-  // Filtro por estado (mismos criterios que la vista vendedor)
-  let data = gerenteData;
-  if (gerenteFiltroEstado === 'pendientes') {
-    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto && !t.no_avanza_motivo);
-  } else if (gerenteFiltroEstado === 'virtual') {
-    data = data.filter(t => t.precio_toma_virtual && !t.precio_toma_final && !t.no_avanza_motivo && !t.virtual_no_apto);
-  } else if (gerenteFiltroEstado === 'usado_rechazado') {
-    data = data.filter(t => !!t.virtual_no_apto);
-  } else if (gerenteFiltroEstado === 'final') {
-    data = data.filter(t => t.precio_toma_final && t.usado_tomado !== true);
-  } else if (gerenteFiltroEstado === 'usado_tomado') {
-    data = data.filter(t => t.precio_toma_final && t.usado_tomado === true);
-  }
-  // Filtro por vendedor
-  if (gerenteFiltroVendedor && gerenteFiltroVendedor !== 'TODOS') {
-    data = data.filter(t => t.vendedor_nombre === gerenteFiltroVendedor);
-  }
-  // Filtro de texto
-  const q = gerenteFiltroTexto;
-  if (q) data = data.filter(t => matchTasacion(t, q));
-  if (data.length === 0) {
-    const msg = q ? 'No hay resultados para "' + q + '"' : 'No hay tasaciones en este estado';
-    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">' + msg + '</div>';
-    return;
-  }
-  const subtitulos = {
-    pendientes: '⏳ Tasaciones que el vendedor mandó a tasar y todavía no recibieron precio virtual del admin.',
-    virtual: '💡 Ya tienen precio virtual REFERENCIAL. Falta inspección física para confirmar el definitivo.',
-    usado_rechazado: '❌ Tasaciones que el admin evaluó como NO APTAS para toma.',
-    usado_tomado: '🟢 Tasaciones donde el usado efectivamente se tomó como parte de pago.',
-    final: '✅ Tasación final cerrada después de la inspección física.',
-    todas: 'Todas las tasaciones, en cualquier estado.'
-  };
-  const subtituloHTML = `<div style="margin:0 0 12px 0; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulos[gerenteFiltroEstado] || ''}</div>`;
-
-  list.innerHTML = subtituloHTML + data.map(t => renderGerenteCard(t)).join('');
-}
-
-// Card de tasación en vista gerente: misma info que ve el vendedor (precios virtual/final, IA, etc.)
-// pero con la línea "Vendedor:" arriba y SIN botones de acción (es solo lectura).
-function renderGerenteCard(t) {
-  let estadoLabel, estadoBgColor, estadoTxtColor;
-  if (t.precio_toma_final) {
-    estadoLabel = 'TASADO FINAL';
-    estadoBgColor = '#D1FAE5'; estadoTxtColor = '#065F46';
-  } else if (t.virtual_no_apto) {
-    estadoLabel = 'USADO NO APTO';
-    estadoBgColor = '#FEE2E2'; estadoTxtColor = '#991B1B';
-  } else if (t.no_avanza_motivo) {
-    estadoLabel = 'NO DEJA USADO';
-    estadoBgColor = '#FEE2E2'; estadoTxtColor = '#991B1B';
-  } else if (t.precio_toma_virtual) {
-    estadoLabel = 'TASADO VIRTUALMENTE';
-    estadoBgColor = '#DBEAFE'; estadoTxtColor = '#1E40AF';
-  } else {
-    estadoLabel = 'ESPERANDO TASACIÓN';
-    estadoBgColor = '#FEF3C7'; estadoTxtColor = '#92400E';
-  }
-  let precioHTML = '';
-  if (t.precio_toma_final) {
-    precioHTML = `<div class="precio-toma-final" style="font-size:17px">$ ${formatNum(t.precio_toma_final)}</div>`;
-  } else if (t.precio_toma_virtual) {
-    precioHTML = `
-      <div style="font-family:var(--mono); font-weight:700; color:var(--vw-blue); font-size:15px; margin-top:4px">$ ${formatNum(t.precio_toma_virtual)}</div>
-      <div style="font-size:9px; color:var(--vw-blue); font-weight:700; margin-top:2px; letter-spacing:0.5px">REFERENCIAL</div>
-    `;
-  }
-  const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
-  const patenteLbl = t.patente ? `<span style="display:inline-block;padding:2px 8px;background:var(--vw-grey-1);border-radius:4px;font-family:var(--mono);font-size:11px;font-weight:600;margin-top:4px">${t.patente}</span>` : '';
-
-  // Bloque de turno (solo info, sin botón de cambiar)
-  let turnoHTML = '';
-  if (t.turno_fecha && !t.precio_toma_final && !t.virtual_no_apto && !t.no_avanza_motivo) {
-    const f = isoAFecha(t.turno_fecha);
-    turnoHTML = `
-      <div style="margin-top:12px; padding:10px 12px; background:#EFF6FF; border-radius:6px; border-left:3px solid var(--vw-blue)">
-        <div style="font-size:13px"><span style="color:var(--vw-blue); font-weight:700">📅 Turno inspección:</span> ${formatFechaTurnoLargo(f)} ${t.turno_hora || ''}</div>
-      </div>
-    `;
-  }
-
-  // Bloque de "no avanza" (solo info)
-  let noAvanzaHTML = '';
-  if (t.no_avanza_motivo) {
-    const motivoLbl = t.no_avanza_motivo === 'compro_0km_no_dejo_usado'
-      ? 'El cliente compró el 0km pero no dejó el usado'
-      : (t.no_avanza_motivo === 'no_compro_0km' ? 'El cliente no compró el 0km' : t.no_avanza_motivo);
-    const fechaNA = t.no_avanza_at ? new Date(t.no_avanza_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
-    noAvanzaHTML = `
-      <div style="margin-top:12px; padding:10px 12px; background:#FEE2E2; border-radius:6px; border-left:3px solid #991B1B">
-        <div style="font-size:12px; font-weight:700; color:#991B1B; letter-spacing:0.5px">🚫 NO AVANZA CON LA TOMA</div>
-        <div style="font-size:13px; color:#7F1D1D; margin-top:4px">${motivoLbl}</div>
-        <div style="font-size:11px; color:var(--vw-grey-4); margin-top:2px">${t.no_avanza_por ? 'Marcado por ' + t.no_avanza_por + ' · ' : ''}${fechaNA}</div>
-      </div>
-    `;
-  }
-
-  // Estado de cierre de operación (solo lectura, sin formulario)
-  let cierreHTML = '';
-  if (t.precio_toma_final && (t.venta_cerrada !== null && t.venta_cerrada !== undefined)) {
-    const fechaResp = t.venta_cerrada_at ? new Date(t.venta_cerrada_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
-    if (t.venta_cerrada) {
-      cierreHTML = `
-        <div style="margin-top:12px; padding:10px 12px; background:#ECFDF5; border-radius:6px; border-left:3px solid var(--green); font-size:13px; color:#065F46">
-          ✅ <strong>Operación cerrada</strong> ${t.usado_tomado ? 'con usado tomado' : 'sin usado'} ${fechaResp ? '· ' + fechaResp : ''}
-        </div>
-      `;
-    } else {
-      cierreHTML = `
-        <div style="margin-top:12px; padding:10px 12px; background:#FEE2E2; border-radius:6px; border-left:3px solid var(--red); font-size:13px; color:#991B1B">
-          ❌ <strong>Operación no cerrada</strong> ${fechaResp ? '· ' + fechaResp : ''}
-        </div>
-      `;
-    }
-  }
-
-  return `
-    <div class="tasacion-card-compact">
-      <div class="card-header" onclick="toggleCard('${t.id}')">
-        <div class="card-summary">
-          <div class="marca-modelo">${t.marca} ${t.modelo} ${t.anio}</div>
-          <div class="detalles">${t.version} — ${formatNum(t.kilometros)} km</div>
-          ${patenteLbl}
-        </div>
-        <div class="card-right">
-          <span class="estado" style="background:${estadoBgColor}; color:${estadoTxtColor}; padding:4px 10px; border-radius:4px; font-weight:700; font-size:11px; letter-spacing:0.5px">${estadoLabel}</span>
-          ${precioHTML}
-        </div>
-        <span class="arrow" id="arrow-${t.id}">▼</span>
-      </div>
-      <div class="card-body" id="body-${t.id}">
-        <div class="info-row"><span class="label">Vendedor</span><span class="value" style="font-weight:600">${t.vendedor_nombre || '—'}</span></div>
-        ${t.cliente_nombre ? `<div class="info-row"><span class="label">Cliente</span><span class="value" style="font-weight:600">${t.cliente_nombre}</span></div>` : ''}
-        <div class="info-row"><span class="label">Versión</span><span class="value">${t.version}</span></div>
-        <div class="info-row"><span class="label">Kilómetros</span><span class="value">${formatNum(t.kilometros)} km</span></div>
-        <div class="info-row"><span class="label">Color</span><span class="value">${t.color || '-'}</span></div>
-        ${t.patente ? `<div class="info-row"><span class="label">Patente</span><span class="value" style="font-family:var(--mono);font-weight:600">${t.patente}</span></div>` : ''}
-        ${t.provincia_radicacion ? `<div class="info-row"><span class="label">Radicado en</span><span class="value">${t.provincia_radicacion}</span></div>` : ''}
-        ${(t.marca || '').toUpperCase() === 'VOLKSWAGEN' && t.usado_vw_comprado_tga !== null && t.usado_vw_comprado_tga !== undefined ? `<div class="info-row"><span class="label">Comprado en TGA</span><span class="value">${t.usado_vw_comprado_tga ? 'Sí' : 'No'}${t.usado_vw_lugar_compra ? ` — ${t.usado_vw_lugar_compra}` : ''}</span></div>` : ''}
-        <div class="info-row"><span class="label">Fecha</span><span class="value">${fecha}</span></div>
-        ${t.modelo_0km_consulta ? `<div class="info-row"><span class="label">0km consultado</span><span class="value">${t.modelo_0km_consulta}</span></div>` : ''}
-        ${t.precio_ofrecido_fyf ? `<div class="info-row"><span class="label">Precio ofrecido FyF</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_ofrecido_fyf)}</span></div>` : ''}
-        ${t.datos_corregidos_at ? `<div style="margin-top:8px; padding:8px 10px; background:#FEF3C7; border-radius:6px; font-size:11px; color:#92400E">⚠ Datos del vehículo corregidos por ${t.datos_corregidos_por || 'el tasador'} el ${new Date(t.datos_corregidos_at).toLocaleDateString('es-AR')}</div>` : ''}
-        ${t.analisis_ia_estado === 'pendiente' ? `<div style="margin-top:10px; padding:10px; background:var(--vw-grey-1); border-radius:6px; font-size:12px; color:var(--vw-grey-4); text-align:center">Analizando fotos con IA...</div>` : ''}
-        ${t.analisis_ia_resumen ? `<div style="margin-top:10px; padding:10px; background:#EFF6FF; border-radius:6px; font-size:13px; color:var(--vw-grey-4); border-left:3px solid var(--vw-blue)"><div style="font-weight:600; color:var(--vw-blue); font-size:11px; margin-bottom:4px">OBSERVACIONES</div>${t.analisis_ia_resumen}</div>` : ''}
-        ${renderPreciosVendedor(t)}
-        ${turnoHTML}
-        ${noAvanzaHTML}
-        ${cierreHTML}
-      </div>
-    </div>
-  `;
-}
-
 // ============ ADMIN ============
 async function loadAdminTasaciones(filter) {
   const list = document.getElementById('adminList');
@@ -2896,8 +2663,7 @@ function renderPreciosReferenciaHTML(t) {
         <div class="metodo">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(editable)</span></div>
         <div style="display:flex; align-items:center; gap:4px; margin:4px 0">
           <span style="font-family:var(--mono); font-weight:700">$</span>
-          <input type="text" inputmode="numeric" id="kavak-${t.id}" value="${formatPriceForInput(kavak)}" placeholder="0"
-            oninput="formatPriceInput(this)"
+          <input type="number" id="kavak-${t.id}" value="${kavak || ''}" placeholder="0"
             onclick="event.stopPropagation()"
             onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
             style="flex:1; min-width:80px; padding:3px 6px; font-family:var(--mono); font-weight:700; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
@@ -2963,7 +2729,7 @@ function renderAdminCardEsperando(t) {
         <span style="font-size:10px; color:var(--vw-grey-4)">${subtitulo}</span>
       </div>
       <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
-        <input type="text" inputmode="numeric" id="final-${t.id}" placeholder="$ Precio final" value="${formatPriceForInput(t.precio_toma_final)}" oninput="formatPriceInput(this)" onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid #A7F3D0; border-radius:6px; background:white; box-sizing:border-box">
+        <input type="number" id="final-${t.id}" placeholder="Precio final" value="${t.precio_toma_final || ''}" onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid #A7F3D0; border-radius:6px; background:white; box-sizing:border-box">
         <button onclick="event.stopPropagation(); guardarPrecioFinal('${t.id}')" style="padding:8px 14px; background:#065F46; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">${t.precio_toma_final ? 'Actualizar' : 'Guardar final'}</button>
       </div>
       <textarea id="comentario-${t.id}" placeholder="Comentario para el vendedor (pre-llenado por IA)" onclick="event.stopPropagation()" rows="3" style="width:100%; padding:8px 10px; font-size:12px; font-family:var(--sans); border:1px solid #A7F3D0; border-radius:6px; resize:vertical; background:white; box-sizing:border-box; color:var(--vw-grey-5); line-height:1.4">${comentario}</textarea>
@@ -3437,8 +3203,7 @@ function renderAdminCard(t) {
               <div class="metodo">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(editable)</span></div>
               <div style="display:flex; align-items:center; gap:4px; margin:4px 0">
                 <span style="font-family:var(--mono); font-weight:700">$</span>
-                <input type="text" inputmode="numeric" id="kavak-${t.id}" value="${formatPriceForInput(kavak)}" placeholder="0"
-                  oninput="formatPriceInput(this)"
+                <input type="number" id="kavak-${t.id}" value="${kavak || ''}" placeholder="0"
                   onclick="event.stopPropagation()"
                   onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
                   style="flex:1; min-width:80px; padding:3px 6px; font-family:var(--mono); font-weight:700; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
@@ -3494,7 +3259,7 @@ function renderAdminCard(t) {
               <span style="font-size:10px; color:var(--vw-grey-4)">${t.precio_toma_virtual ? '✓ ' + fechaVirt + (t.precio_toma_virtual_por ? ' · ' + t.precio_toma_virtual_por : '') : 'No cargado · al guardar se avisa al vendedor por WA'}</span>
             </div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
-              <input type="text" inputmode="numeric" id="virtual-${t.id}" placeholder="$ Precio virtual" value="${formatPriceForInput(t.precio_toma_virtual)}" oninput="formatPriceInput(this)" onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box">
+              <input type="number" id="virtual-${t.id}" placeholder="Precio virtual" value="${t.precio_toma_virtual || ''}" onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box">
               <button onclick="event.stopPropagation(); guardarPrecioVirtual('${t.id}')" style="padding:8px 14px; background:#92400E; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">${t.precio_toma_virtual ? 'Actualizar' : 'Guardar'}</button>
             </div>
             <textarea id="comentario-virtual-${t.id}" placeholder="Comentario para el vendedor (opcional si cargás precio, obligatorio si marcás NO APTO)" onclick="event.stopPropagation()" rows="2" style="width:100%; padding:8px 10px; font-size:13px; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box; resize:vertical; font-family:var(--sans)">${t.comentario_virtual_vendedor || ''}</textarea>
@@ -3528,7 +3293,7 @@ function renderAdminCard(t) {
               <span style="font-size:10px; color:${hayInspeccion ? 'var(--vw-grey-4)' : 'var(--orange)'}">${subtitulo}</span>
             </div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
-              <input type="text" inputmode="numeric" id="final-${t.id}" placeholder="$ Precio final" value="${formatPriceForInput(t.precio_toma_final)}" ${dis} oninput="formatPriceInput(this)" onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid ${inputBorder}; border-radius:6px; background:${inputBg}; box-sizing:border-box">
+              <input type="number" id="final-${t.id}" placeholder="Precio final" value="${t.precio_toma_final || ''}" ${dis} onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid ${inputBorder}; border-radius:6px; background:${inputBg}; box-sizing:border-box">
               <button onclick="event.stopPropagation(); guardarPrecioFinal('${t.id}')" ${dis} style="padding:8px 14px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:${btnCursor}; white-space:nowrap">${t.precio_toma_final ? 'Actualizar' : 'Guardar final'}</button>
             </div>
             <textarea id="comentario-${t.id}" placeholder="${hayInspeccion ? 'Comentario para el vendedor (pre-llenado por IA)' : 'Comentario para el vendedor (se habilita con inspección física)'}" ${dis} onclick="event.stopPropagation()" rows="3" style="width:100%; padding:8px 10px; font-size:12px; font-family:var(--sans); border:1px solid ${inputBorder}; border-radius:6px; resize:vertical; background:${inputBg}; box-sizing:border-box; color:var(--vw-grey-5); line-height:1.4">${comentario}</textarea>
@@ -4647,7 +4412,6 @@ function _mostrarUsuarioModal(modo, u) {
         <select id="usrRol" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
           <option value="vendedor">Vendedor</option>
           <option value="tasador_fisico">Tasador físico</option>
-          <option value="gerente">Gerente</option>
           ${_esSuperadmin() ? '<option value="admin">Administrador</option>' : ''}
         </select>
       </label>
@@ -4677,7 +4441,6 @@ function _mostrarUsuarioModal(modo, u) {
         <select id="usrRol" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">
           <option value="vendedor" ${rolActual==='vendedor'?'selected':''}>Vendedor</option>
           <option value="tasador_fisico" ${rolActual==='tasador_fisico'?'selected':''}>Tasador físico</option>
-          <option value="gerente" ${rolActual==='gerente'?'selected':''}>Gerente</option>
           ${_esSuperadmin() ? `<option value="admin" ${rolActual==='admin'?'selected':''}>Administrador</option>` : ''}
         </select>
       </label>
@@ -5189,7 +4952,7 @@ async function notificarTurnoATasadorFisico(tipo, turnoAnterior, turnoNuevo) {
 async function guardarPrecioVirtual(id) {
   const input = document.getElementById(`virtual-${id}`);
   const inputCom = document.getElementById(`comentario-virtual-${id}`);
-  const precio = parsePriceInput(input);
+  const precio = parseFloat(input.value);
   const comentario = inputCom ? (inputCom.value || '').trim() : '';
   if (!precio || precio <= 0) { showToast('Ingresá un precio virtual válido'); return; }
 
@@ -5254,8 +5017,8 @@ async function marcarNoApto(id) {
 async function guardarKavak(id) {
   const input = document.getElementById(`kavak-${id}`);
   if (!input) return;
-  const raw = (input.value || '').trim();
-  const valor = parsePriceInput(input);
+  const raw = input.value;
+  const valor = raw === '' || raw == null ? null : parseFloat(raw);
   if (raw !== '' && (valor == null || isNaN(valor) || valor < 0)) {
     showToast('Ingresá un número válido');
     return;
@@ -5508,7 +5271,7 @@ async function revertirNoApto(id) {
 async function guardarPrecioFinal(id) {
   const inputPrecio = document.getElementById(`final-${id}`);
   const inputCom = document.getElementById(`comentario-${id}`);
-  const precio = parsePriceInput(inputPrecio);
+  const precio = parseFloat(inputPrecio.value);
   const comentario = inputCom ? (inputCom.value || '').trim() : '';
 
   if (!precio || precio <= 0) { showToast('Ingresá un precio final válido'); return; }
@@ -6073,7 +5836,7 @@ function renderInspeccionFormulario(tas, prev) {
               <option value="regular" ${estadoActual==='regular'?'selected':''}>Regular</option>
               <option value="malo" ${estadoActual==='malo'?'selected':''}>Malo</option>
             </select>
-            <input type="text" inputmode="numeric" data-insp-grupo="${g.key}" data-insp-item="${it.key}" data-insp-field="costo" placeholder="$ Costo" value="${formatPriceForInput(getItemVal(g.key,it.key,'costo',''))}" oninput="formatPriceInput(this); actualizarTotalArreglos()" style="padding:6px 8px; font-size:13px; font-family:var(--mono); text-align:right">
+            <input type="number" data-insp-grupo="${g.key}" data-insp-item="${it.key}" data-insp-field="costo" placeholder="Costo $" value="${getItemVal(g.key,it.key,'costo','')}" min="0" oninput="actualizarTotalArreglos()" style="padding:6px 8px; font-size:13px; font-family:var(--mono); text-align:right">
             <input type="text" data-insp-grupo="${g.key}" data-insp-item="${it.key}" data-insp-field="obs" placeholder="Observación" value="${getItemVal(g.key,it.key,'obs','')}" style="padding:6px 8px; font-size:13px">
           </div>
           `;
@@ -6150,7 +5913,7 @@ function renderInspeccionFormulario(tas, prev) {
 
       <div style="margin-bottom:14px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px">
         <label style="display:block; font-size:13px; font-weight:700; margin-bottom:6px; color:#92400E">Precio sugerido de toma <span style="font-weight:400; color:var(--vw-grey-4)">(neto, ya descontando arreglos)</span></label>
-        <input type="text" inputmode="numeric" id="inspPrecioFisico" placeholder="$ Ej: 8.500.000" value="${formatPriceForInput(precioFisico)}" oninput="formatPriceInput(this); actualizarPrecioImplicito()" style="width:100%; padding:10px; font-size:18px; font-family:var(--mono); font-weight:700; box-sizing:border-box; border:1px solid #FDE68A; border-radius:6px">
+        <input type="number" id="inspPrecioFisico" placeholder="Ej: 8500000" value="${precioFisico}" min="0" oninput="actualizarPrecioImplicito()" style="width:100%; padding:10px; font-size:18px; font-family:var(--mono); font-weight:700; box-sizing:border-box; border:1px solid #FDE68A; border-radius:6px">
         <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:12px">
           <div style="padding:8px; background:white; border-radius:4px">
             <div style="color:var(--vw-grey-4); font-weight:600; text-transform:uppercase; letter-spacing:0.5px; font-size:10px">Arreglos estimados</div>
@@ -6349,7 +6112,7 @@ function renderMarcadores() {
           ${TIPOS_DANIO.map(td => `<option value="${td.key}" ${td.key===m.tipo?'selected':''}>${td.label}</option>`).join('')}
         </select>
         <input type="text" value="${m.nota || ''}" oninput="actualizarMarcadorNota(${idx}, this.value)" placeholder="Descripción del daño" style="padding:6px 8px; font-size:12px">
-        <input type="text" inputmode="numeric" value="${formatPriceForInput(m.costo)}" oninput="formatPriceInput(this); actualizarMarcadorCosto(${idx}, parsePriceInput(this))" placeholder="$ Costo" style="padding:6px 8px; font-size:12px; font-family:var(--mono); text-align:right">
+        <input type="number" value="${m.costo || ''}" oninput="actualizarMarcadorCosto(${idx}, this.value)" placeholder="Costo $" min="0" style="padding:6px 8px; font-size:12px; font-family:var(--mono); text-align:right">
         <button onclick="borrarMarcador(${idx})" style="padding:6px 0; background:var(--red); color:white; border:none; border-radius:4px; font-size:14px; cursor:pointer">×</button>
       </div>
     `;
@@ -6370,7 +6133,7 @@ function onCarImgClick(event) {
 
 function actualizarMarcadorCosto(idx, costo) {
   if (!window.__fisicoMarcadores || !window.__fisicoMarcadores[idx]) return;
-  const v = costo == null ? 0 : Number(costo);
+  const v = parseFloat(costo);
   window.__fisicoMarcadores[idx].costo = isNaN(v) ? 0 : v;
   actualizarTotalArreglos();
 }
@@ -6380,7 +6143,7 @@ function getTotalArreglosFisico() {
   let total = 0;
   (window.__fisicoMarcadores || []).forEach(m => total += Number(m.costo) || 0);
   document.querySelectorAll('[data-insp-field="costo"]').forEach(el => {
-    total += parsePriceInput(el) || 0;
+    total += parseFloat(el.value) || 0;
   });
   return total;
 }
@@ -6398,7 +6161,7 @@ function actualizarPrecioImplicito() {
   const inputPrecio = document.getElementById('inspPrecioFisico');
   const lbl = document.getElementById('precioImplicito');
   if (!inputPrecio || !lbl) return;
-  const precio = parsePriceInput(inputPrecio) || 0;
+  const precio = parseFloat(inputPrecio.value) || 0;
   const total = getTotalArreglosFisico();
   if (precio > 0) {
     lbl.textContent = '$ ' + formatNum(precio + total);
@@ -6470,7 +6233,7 @@ async function guardarInspeccion(tasId) {
     if (!items[g]) items[g] = {};
     if (!items[g][it]) items[g][it] = {};
     let v = el.value;
-    if (field === 'costo') v = parsePriceInput(el) || 0;
+    if (field === 'costo') v = v ? Number(v) : 0;
     items[g][it][field] = v;
   });
 
@@ -6491,7 +6254,7 @@ async function guardarInspeccion(tasId) {
   // Campos generales
   const pruebaRealizada = document.getElementById('inspPruebaRealizada').checked;
   const pruebaRealizo = document.getElementById('inspPruebaRealizo').value.trim();
-  const precioSugerido = parsePriceInput('inspPrecioFisico');
+  const precioSugerido = parseFloat(document.getElementById('inspPrecioFisico').value) || null;
   const observaciones = document.getElementById('inspObservaciones').value.trim();
 
   // Marcadores con costo (foto) + costos del checklist (interior + mecánica) = total arreglos
@@ -6674,35 +6437,6 @@ function formatNum(n) {
   return Math.round(Number(n)).toLocaleString('es-AR');
 }
 
-// Formatea un input de precio en vivo: 39000000 -> 39.000.000 (separadores AR).
-// Usado en inputs de tipo "text" con inputmode="numeric" para evitar errores de ceros.
-function formatPriceInput(input) {
-  if (!input) return;
-  const raw = (input.value || '').replace(/\D/g, '');
-  input.value = raw === '' ? '' : parseInt(raw, 10).toLocaleString('es-AR');
-}
-
-// Devuelve el valor numerico de un input de precio formateado (saca puntos/separadores).
-// Devuelve null si esta vacio. Acepta string, elemento o id.
-function parsePriceInput(strOrElOrId) {
-  let s = '';
-  if (strOrElOrId == null) return null;
-  if (typeof strOrElOrId === 'string') {
-    const el = document.getElementById(strOrElOrId);
-    s = el ? (el.value || '') : strOrElOrId;
-  } else if (strOrElOrId.value !== undefined) {
-    s = strOrElOrId.value || '';
-  }
-  const raw = s.replace(/\D/g, '');
-  return raw === '' ? null : parseInt(raw, 10);
-}
-
-// Formatea un valor numerico para precargar en un input de precio (string vacio si null/0).
-function formatPriceForInput(n) {
-  if (n === null || n === undefined || n === '' || isNaN(Number(n))) return '';
-  return Math.round(Number(n)).toLocaleString('es-AR');
-}
-
 function showLoading(text) {
   document.getElementById('loadingText').textContent = text || 'Cargando...';
   document.getElementById('loadingOverlay').classList.add('show');
@@ -6730,30 +6464,8 @@ document.getElementById('loginPass').addEventListener('keydown', e => {
 
 // ============ PERSISTENCIA DE SESIÓN ============
 // Guardamos currentUser y modo en localStorage. Al recargar la página, si hay sesión, la restauramos
-// sin pedir usuario/contraseña. Además, sincronizamos con una cookie compartida en
-// .titogonzalez.online para SSO entre todas las apps del ecosistema TGA.
+// sin pedir usuario/contraseña.
 const SESSION_KEY = 'tasadorSession';
-const SHARED_COOKIE = 'tga_session';
-const SHARED_DOMAIN = '.titogonzalez.online';
-
-function setSharedCookie(user) {
-  if (!user) return;
-  try {
-    const safe = Object.assign({}, user);
-    delete safe.clave;
-    const value = encodeURIComponent(JSON.stringify(safe));
-    const maxAge = 7 * 24 * 60 * 60;
-    document.cookie = SHARED_COOKIE + '=' + value + '; path=/; domain=' + SHARED_DOMAIN + '; max-age=' + maxAge + '; Secure; SameSite=Lax';
-  } catch(e) { console.error('setSharedCookie:', e); }
-}
-function getSharedCookie() {
-  const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + SHARED_COOKIE + '=([^;]+)'));
-  if (!m) return null;
-  try { return JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
-}
-function clearSharedCookie() {
-  document.cookie = SHARED_COOKIE + '=; path=/; domain=' + SHARED_DOMAIN + '; max-age=0; Secure; SameSite=Lax';
-}
 
 function guardarSesion() {
   if (!currentUser) return;
@@ -6762,32 +6474,18 @@ function guardarSesion() {
       user: currentUser,
       mode: currentMode
     }));
-    setSharedCookie(currentUser);
   } catch(e) { console.error('guardarSesion:', e); }
 }
 
 function limpiarSesion() {
   try { localStorage.removeItem(SESSION_KEY); } catch(e) {}
-  clearSharedCookie();
 }
 
 async function restaurarSesion() {
   try {
-    let s = null;
-
-    // 1) Prioridad: cookie compartida (SSO entre apps TGA).
-    const cookieUser = getSharedCookie();
-    if (cookieUser && cookieUser.id) {
-      s = { user: cookieUser, mode: null };
-      // Sincronizar al localStorage local así guardarSesion mantiene consistencia.
-      try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch(e) {}
-    } else {
-      // 2) Fallback: sesión local previa.
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (!raw) return false;
-      s = JSON.parse(raw);
-    }
-
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return false;
+    const s = JSON.parse(raw);
     if (!s || !s.user || !s.user.id) return false;
     currentUser = s.user;
     // Por si la sesión guardada es vieja y no trae rolesArr (retrocompat).
