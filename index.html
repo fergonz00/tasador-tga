@@ -581,9 +581,12 @@ input, select, textarea { font-family: var(--font); }
 <!-- ==================== APP ==================== -->
 <div id="appScreen" class="hidden">
   <header class="app-header">
-    <div>
-      <h1>Tasador TGA</h1>
-      <div class="user-info" id="headerUser"></div>
+    <div style="display:flex; align-items:center; gap:12px">
+      <a href="https://titogonzalez.online/" style="background:rgba(255,255,255,0.15); color:#fff; padding:8px 12px; border-radius:6px; font-size:13px; font-weight:500; text-decoration:none; white-space:nowrap">← Portal</a>
+      <div>
+        <h1>Tasador TGA</h1>
+        <div class="user-info" id="headerUser"></div>
+      </div>
     </div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
       <button id="btnAgenda" onclick="abrirAgenda()" style="background:var(--vw-blue-light); color:white; font-size:13px; padding:8px 14px">📅 Agenda</button>
