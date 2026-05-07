@@ -788,8 +788,8 @@ const PRECIOS_0KM_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQH
 const FYF = 1110000;
 const DEFAULT_COTIZ = 1350;
 
-// Marcas en pesos (×1000)
-const MARCAS_PESOS = ['CHEVROLET','CHRYSLER','CITROEN','DODGE','FAW','FERRARI','FIAT','FORD','FOTON','GAC','JAGUAR','JMC','KYC','LAND ROVER','LIFAN','LOTUS','MASERATI','McLAREN','NISSAN','PEUGEOT','PORSCHE','RENAULT','TOYOTA','VOLKSWAGEN'];
+// Marcas en USD en CCA. Todo lo demás se toma en pesos (×1000).
+const MARCAS_USD = ['BYD'];
 
 // Pick-ups (20.000 km/año)
 const PICKUPS_KEYWORDS = ['AMAROK','HILUX','RANGER','SAVEIRO','S-10','S10','MONTANA','STRADA','TORO','FRONTIER','ALASKAN'];
@@ -1932,7 +1932,7 @@ function getCotiz() {
 
 function esPesos(marca) {
   if (!marca) return false;
-  return MARCAS_PESOS.includes(String(marca).toUpperCase());
+  return !MARCAS_USD.includes(String(marca).toUpperCase());
 }
 
 function esPickup(modelo) {
