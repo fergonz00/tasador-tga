@@ -2274,6 +2274,9 @@ function renderMisTasacionesList() {
       } else if (t.no_avanza_motivo) {
         estadoLabel = 'NO DEJA USADO';
         estadoBgColor = '#FEE2E2'; estadoTxtColor = '#991B1B';
+      } else if (t.rebotada) {
+        estadoLabel = 'TE LA REBOTARON';
+        estadoBgColor = '#FEF3C7'; estadoTxtColor = '#9A3412';
       } else if (t.precio_toma_virtual) {
         estadoLabel = 'TASADO VIRTUALMENTE';
         estadoBgColor = '#DBEAFE'; estadoTxtColor = '#1E40AF';
@@ -2322,9 +2325,27 @@ function renderMisTasacionesList() {
             ${t.analisis_ia_estado === 'pendiente' ? `<div style="margin-top:10px; padding:10px; background:var(--vw-grey-1); border-radius:6px; font-size:12px; color:var(--vw-grey-4); text-align:center">Analizando fotos con IA...</div>` : ''}
             ${t.analisis_ia_resumen ? `<div style="margin-top:10px; padding:10px; background:#EFF6FF; border-radius:6px; font-size:13px; color:var(--vw-grey-4); border-left:3px solid var(--vw-blue)"><div style="font-weight:600; color:var(--vw-blue); font-size:11px; margin-bottom:4px">OBSERVACIONES</div>${t.analisis_ia_resumen}</div>` : ''}
 
+            ${t.rebotada ? `
+              <div style="margin-top:12px; padding:12px 14px; background:#FFFBEB; border-radius:8px; border:2px solid #FDBA74">
+                <div style="font-size:13px; font-weight:700; color:#9A3412; letter-spacing:0.5px">↩️ EL ADMIN TE DEVOLVIÓ ESTA TASACIÓN</div>
+                <div style="font-size:11px; color:var(--vw-grey-4); margin-top:2px">${t.rebotada_por ? 'Por ' + t.rebotada_por + ' · ' : ''}${t.rebotada_at ? new Date(t.rebotada_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : ''}</div>
+                ${t.rebotada_motivo ? `
+                  <div style="margin-top:10px; padding:10px; background:white; border-radius:6px; border-left:3px solid #9A3412">
+                    <div style="font-size:10px; font-weight:700; color:#9A3412; letter-spacing:0.5px; margin-bottom:4px">📝 MOTIVO</div>
+                    <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap">${t.rebotada_motivo}</div>
+                  </div>
+                ` : ''}
+                <div style="margin-top:10px; text-align:center">
+                  <button onclick="event.stopPropagation(); abrirCompletarRebotada('${t.id}')" style="padding:10px 18px; background:#9A3412; color:white; border:none; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer">✎ Completar info y reenviar</button>
+                </div>
+              </div>
+            ` : ''}
+
             ${renderPreciosVendedor(t)}
 
             ${(() => {
+              // Si la tasación fue rebotada, no mostramos los flujos de "agendar/no avanza" hasta que el vendedor reenvíe
+              if (t.rebotada) return '';
               // Si ya marcó "no avanza con la toma", mostramos el indicador y listo (no turno, no botones).
               if (t.no_avanza_motivo) {
                 const motivoLbl = t.no_avanza_motivo === 'compro_0km_no_dejo_usado'
@@ -3059,6 +3080,8 @@ function renderAdminCard(t) {
     estadoLabelAdm = 'USADO NO APTO'; estadoBgAdm = '#FEE2E2'; estadoTxtAdm = '#991B1B';
   } else if (t.no_avanza_motivo) {
     estadoLabelAdm = 'NO DEJA USADO'; estadoBgAdm = '#FEE2E2'; estadoTxtAdm = '#991B1B';
+  } else if (t.rebotada) {
+    estadoLabelAdm = 'REBOTADA'; estadoBgAdm = '#FEF3C7'; estadoTxtAdm = '#9A3412';
   } else if (t.precio_toma_virtual) {
     estadoLabelAdm = 'TASADO VIRTUALMENTE'; estadoBgAdm = '#DBEAFE'; estadoTxtAdm = '#1E40AF';
   } else {
@@ -3272,6 +3295,20 @@ function renderAdminCard(t) {
             </div>
           `;
         }
+        // Si la tasación está rebotada al vendedor, mostramos cartel naranja en lugar del bloque normal
+        if (t.rebotada) {
+          const fechaReb = t.rebotada_at ? new Date(t.rebotada_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : '';
+          return `
+            <div style="margin-top:10px; padding:10px 12px; background:#FEF3C7; border-radius:6px; border:1px solid #FDBA74">
+              <div style="display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-bottom:6px; flex-wrap:wrap">
+                <span style="font-size:12px; font-weight:700; color:#9A3412">↩️ REBOTADA AL VENDEDOR</span>
+                <span style="font-size:10px; color:var(--vw-grey-4)">${fechaReb}${t.rebotada_por ? ' · ' + t.rebotada_por : ''}</span>
+              </div>
+              ${t.rebotada_motivo ? `<div style="font-size:13px; color:#7C2D12; padding:8px; background:white; border-radius:4px; white-space:pre-wrap"><b>Motivo:</b> ${t.rebotada_motivo}</div>` : ''}
+              <div style="margin-top:8px; font-size:11px; color:var(--vw-grey-4); font-style:italic">Esperando que el vendedor complete la info y reenvíe.</div>
+            </div>
+          `;
+        }
         return `
           <div style="margin-top:10px; padding:10px 12px; background:#FFFBEB; border-radius:6px; border:1px solid #FDE68A">
             <div style="display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-bottom:6px; flex-wrap:wrap">
@@ -3283,7 +3320,8 @@ function renderAdminCard(t) {
               <button onclick="event.stopPropagation(); guardarPrecioVirtual('${t.id}')" style="padding:8px 14px; background:#92400E; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">${t.precio_toma_virtual ? 'Actualizar' : 'Guardar'}</button>
             </div>
             <textarea id="comentario-virtual-${t.id}" placeholder="Comentario para el vendedor (opcional si cargás precio, obligatorio si marcás NO APTO)" onclick="event.stopPropagation()" rows="2" style="width:100%; padding:8px 10px; font-size:13px; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box; resize:vertical; font-family:var(--sans)">${t.comentario_virtual_vendedor || ''}</textarea>
-            <div style="margin-top:8px; text-align:right">
+            <div style="margin-top:8px; display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap">
+              <button onclick="event.stopPropagation(); abrirRebotarVendedor('${t.id}')" style="padding:6px 12px; background:white; color:#9A3412; border:1px solid #9A3412; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">↩️ Rebotar al vendedor</button>
               <button onclick="event.stopPropagation(); marcarNoApto('${t.id}')" style="padding:6px 12px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">❌ Marcar NO APTO para toma</button>
             </div>
           </div>
@@ -3315,6 +3353,7 @@ function renderAdminCard(t) {
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
               <input type="number" id="final-${t.id}" placeholder="Precio final" value="${t.precio_toma_final || ''}" ${dis} onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid ${inputBorder}; border-radius:6px; background:${inputBg}; box-sizing:border-box">
               <button onclick="event.stopPropagation(); guardarPrecioFinal('${t.id}')" ${dis} style="padding:8px 14px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:${btnCursor}; white-space:nowrap">${t.precio_toma_final ? 'Actualizar' : 'Guardar final'}</button>
+              ${t.precio_toma_final ? `<button onclick="event.stopPropagation(); imprimirHojaFinal('${t.id}')" style="padding:8px 14px; background:white; color:#065F46; border:1px solid #065F46; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">🖨️ Imprimir hoja</button>` : ''}
             </div>
             <textarea id="comentario-${t.id}" placeholder="${hayInspeccion ? 'Comentario para el vendedor (pre-llenado por IA)' : 'Comentario para el vendedor (se habilita con inspección física)'}" ${dis} onclick="event.stopPropagation()" rows="3" style="width:100%; padding:8px 10px; font-size:12px; font-family:var(--sans); border:1px solid ${inputBorder}; border-radius:6px; resize:vertical; background:${inputBg}; box-sizing:border-box; color:var(--vw-grey-5); line-height:1.4">${comentario}</textarea>
           </div>
@@ -3591,6 +3630,157 @@ async function cambiarRotacion(tasId, valor) {
 }
 
 // ============ INSPECCIÓN FÍSICA — VISTA ADMIN ============
+// ============ IMPRIMIR HOJA FINAL ============
+// Hoja imprimible para entregar al cliente: datos del usado + observaciones físicas de Fazzini
+// + precio final del admin. Sin fotos, CCA, Kavak, Fórmula FG ni análisis IA.
+async function imprimirHojaFinal(tasId) {
+  let tas = (allTasaciones || []).find(x => x.id === tasId)
+    || (fisicoData || []).find(x => x.id === tasId)
+    || (misTasacionesData || []).find(x => x.id === tasId);
+  if (!tas) {
+    try {
+      const r = await sbFetch(`tasaciones?id=eq.${tasId}&select=*`);
+      tas = (r && r[0]) || null;
+    } catch(e) { console.error(e); }
+  }
+  if (!tas) { showToast('No se encontró la tasación'); return; }
+  if (!tas.precio_toma_final) { showToast('La tasación todavía no tiene precio final'); return; }
+
+  const af = (tas.analisis_fisico && typeof tas.analisis_fisico === 'object') ? tas.analisis_fisico : {};
+  const fechaImp = new Date().toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
+  const fechaFinal = tas.tasado_at ? new Date(tas.tasado_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
+
+  // Daños marcados sobre la silueta (mostramos descripciones, sin costos)
+  const marcadores = Array.isArray(af.marcadores) ? af.marcadores : [];
+  const damageItems = marcadores.map((m, i) => {
+    const tipoLbl = (TIPOS_DANIO.find(td => td.key === m.tipo) || {}).label || m.tipo || '—';
+    return `<li>${tipoLbl}${m.nota ? ' — ' + m.nota : ''}</li>`;
+  }).join('');
+
+  // Checklist (interior + mecánica): solo ítems con observación o estado distinto de bueno
+  const items = af.items || {};
+  const checklistRows = [];
+  INSP_GRUPOS.forEach(g => {
+    g.items.forEach(it => {
+      const v = (items[g.key] || {})[it.key] || {};
+      const estado = v.estado || 'bueno';
+      const obs = (v.obs || '').trim();
+      if (estado !== 'bueno' || obs) {
+        const estadoLbl = estado === 'malo' ? 'MALO' : estado === 'regular' ? 'Regular' : 'Bueno';
+        checklistRows.push(`<tr><td>${g.titulo} · ${it.label}</td><td>${estadoLbl}</td><td>${obs || ''}</td></tr>`);
+      }
+    });
+  });
+
+  const PINTURA_LBL = {
+    original: 'Original (100%)',
+    repintada_total: 'Repintada total',
+    repintada_parcial: 'Repintada parcial',
+    otro: 'Otro'
+  };
+  const tapizadoMap = { tela:'Tela', cuero:'Cuero', cuero_eco:'Cuero ecológico', mixto:'Mixto', vinil:'Vinilo' };
+  const accesorios = Array.isArray(af.accesorios) ? af.accesorios : [];
+  const obsGral = (af.observaciones_grales || '').trim();
+
+  const html = `<!DOCTYPE html>
+<html lang="es-AR">
+<head>
+<meta charset="UTF-8">
+<title>Hoja de tasación final — ${tas.patente || tas.cliente_nombre || 'sin patente'}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; margin: 0; padding: 24px; line-height: 1.4; }
+  h1 { font-size: 20px; margin: 0 0 4px 0; color: #001E50; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #001E50; margin: 18px 0 8px 0; border-bottom: 1px solid #001E50; padding-bottom: 4px; }
+  .meta { font-size: 11px; color: #666; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; font-size: 13px; }
+  .grid div b { display: inline-block; min-width: 110px; color: #444; font-weight: 600; }
+  .precio-final { margin-top: 16px; padding: 14px 18px; background: #ECFDF5; border: 2px solid #065F46; border-radius: 6px; text-align: center; }
+  .precio-final .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #065F46; font-weight: 700; }
+  .precio-final .valor { font-size: 28px; font-weight: 700; color: #065F46; font-family: 'Courier New', monospace; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+  th, td { border: 1px solid #ccc; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #f3f3f3; font-weight: 600; }
+  ul { margin: 4px 0 0 18px; padding: 0; font-size: 13px; }
+  li { margin-bottom: 3px; }
+  .obs { padding: 10px 12px; background: #F9F9F9; border-left: 3px solid #001E50; font-size: 13px; font-style: italic; line-height: 1.5; white-space: pre-wrap; }
+  .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 40px; }
+  .firma { border-top: 1px solid #444; padding-top: 4px; font-size: 11px; color: #666; text-align: center; }
+  .footer { margin-top: 24px; font-size: 10px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 8px; }
+  @media print { body { padding: 12mm; } @page { size: A4; margin: 0; } }
+</style>
+</head>
+<body>
+
+<h1>Tito González Automotores — Hoja de tasación final</h1>
+<div class="meta">Impreso el ${fechaImp}${fechaFinal ? ' · Tasación cerrada el ' + fechaFinal : ''}</div>
+
+<h2>Datos del cliente y unidad</h2>
+<div class="grid">
+  <div><b>Cliente:</b> ${tas.cliente_nombre || '—'}</div>
+  <div><b>Patente:</b> ${tas.patente || '—'}</div>
+  <div><b>Marca:</b> ${tas.marca || '—'}</div>
+  <div><b>Modelo:</b> ${tas.modelo || '—'}</div>
+  <div><b>Versión:</b> ${tas.version || '—'}</div>
+  <div><b>Año:</b> ${tas.anio || '—'}</div>
+  <div><b>Kilómetros:</b> ${tas.kilometros != null ? formatNum(tas.kilometros) + ' km' : '—'}</div>
+  <div><b>Color:</b> ${tas.color || '—'}</div>
+  <div><b>Radicación:</b> ${tas.provincia_radicacion || '—'}</div>
+  <div><b>Tipo tapizado:</b> ${tapizadoMap[tas.tipo_tapizado || af.tipo_tapizado] || tas.tipo_tapizado || af.tipo_tapizado || '—'}</div>
+  <div><b>Pintura:</b> ${PINTURA_LBL[tas.pintura_estado || af.pintura_estado] || '—'}</div>
+  <div><b>Vendedor:</b> ${tas.vendedor_nombre || '—'}</div>
+</div>
+
+<h2>Inspección física — Observaciones</h2>
+${obsGral ? `<div class="obs">${obsGral}</div>` : '<div class="meta" style="font-style:italic">Sin observaciones generales cargadas.</div>'}
+
+${(tas.pintura_obs || af.pintura_obs) ? `
+  <div style="margin-top:8px; font-size:12px"><b>Pintura — detalle:</b> ${tas.pintura_obs || af.pintura_obs}</div>
+` : ''}
+
+${damageItems ? `
+  <h2>Daños observados sobre la unidad</h2>
+  <ul>${damageItems}</ul>
+` : ''}
+
+${checklistRows.length > 0 ? `
+  <h2>Checklist técnico</h2>
+  <table>
+    <thead><tr><th>Ítem</th><th>Estado</th><th>Observación</th></tr></thead>
+    <tbody>${checklistRows.join('')}</tbody>
+  </table>
+` : ''}
+
+${accesorios.length > 0 ? `
+  <h2>Accesorios</h2>
+  <div style="font-size:13px">${accesorios.join(' · ')}</div>
+` : ''}
+
+<div class="precio-final">
+  <div class="lbl">Precio final de toma</div>
+  <div class="valor">$ ${formatNum(tas.precio_toma_final)}</div>
+</div>
+
+<div class="firmas">
+  <div class="firma">Firma del cliente · ${tas.cliente_nombre || ''}</div>
+  <div class="firma">Firma TGA</div>
+</div>
+
+<div class="footer">Tito González Automotores · Concesionario oficial Volkswagen · tasador.titogonzalez.online</div>
+
+<script>
+  window.addEventListener('load', () => { setTimeout(() => window.print(), 200); });
+</script>
+</body>
+</html>`;
+
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Permití pop-ups para imprimir'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
 function renderInspeccionFisicaAdmin(t) {
   const af = (t.analisis_fisico && typeof t.analisis_fisico === 'object') ? t.analisis_fisico : null;
   const precioFisico = t.precio_sugerido_fisico;
@@ -4926,6 +5116,8 @@ async function cancelarTurno(tasId) {
     if (misSec && !misSec.classList.contains('hidden')) loadMisTasaciones();
     const agendaView = document.getElementById('agendaView');
     if (agendaView && !agendaView.classList.contains('hidden')) loadAgenda();
+    const fisicoView = document.getElementById('tasadorFisicoView');
+    if (fisicoView && !fisicoView.classList.contains('hidden')) loadTasadorFisicoList();
   } catch(e) {
     hideLoading();
     console.error(e);
@@ -4996,6 +5188,261 @@ async function guardarPrecioVirtual(id) {
 }
 
 // Marca la tasación como NO APTA para toma. El comentario es la razón (obligatorio).
+// ============ REBOTAR TASACIÓN AL VENDEDOR ============
+// El admin abre un modal pidiendo motivo y al confirmar marca la tasación como rebotada.
+// El vendedor la ve en sus pendientes con cartel naranja y un botón para completar info y reenviar.
+async function abrirRebotarVendedor(tasId) {
+  const existing = document.getElementById('rebotarModal');
+  if (existing) existing.remove();
+  const modalHTML = `
+    <div id="rebotarModal" class="modal-overlay" onclick="if(event.target===this)cerrarRebotarVendedor()">
+      <div class="modal-box" style="max-width:520px">
+        <div class="modal-header">
+          <div style="flex:1">
+            <div style="font-size:16px; font-weight:700; color:#9A3412">↩️ Rebotar al vendedor</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">El vendedor recibe la tasación de vuelta para completar info faltante.</div>
+          </div>
+          <button onclick="cerrarRebotarVendedor()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0">✕</button>
+        </div>
+        <div class="modal-body">
+          <label style="font-size:12px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:6px">Motivo (qué le falta completar)</label>
+          <textarea id="rebotarMotivoInput" rows="4" placeholder="Ej: faltan fotos del baúl y kilometraje del tablero, no aparece patente." style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:14px; font-family:var(--sans); resize:vertical; box-sizing:border-box"></textarea>
+          <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">
+            <button onclick="cerrarRebotarVendedor()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+            <button onclick="confirmarRebotarVendedor('${tasId}')" style="padding:10px 16px; background:#9A3412; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Rebotar al vendedor</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => document.getElementById('rebotarMotivoInput')?.focus(), 50);
+}
+
+function cerrarRebotarVendedor() {
+  const m = document.getElementById('rebotarModal');
+  if (m) m.remove();
+  document.body.style.overflow = '';
+}
+
+async function confirmarRebotarVendedor(tasId) {
+  const motivo = (document.getElementById('rebotarMotivoInput')?.value || '').trim();
+  if (!motivo) { showToast('Escribí el motivo del rebote'); return; }
+  try {
+    showLoading('Rebotando tasación...');
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        rebotada: true,
+        rebotada_motivo: motivo,
+        rebotada_at: new Date().toISOString(),
+        rebotada_por: currentUser.nombre
+      })
+    });
+    hideLoading();
+    showToast('Tasación rebotada al vendedor');
+    cerrarRebotarVendedor();
+    loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showToast('Error al rebotar');
+  }
+}
+
+// Modal de edición liviana para que el vendedor complete info de una tasación rebotada
+// y la reenvíe al admin. No reabre el wizard completo: solo permite ajustar los campos
+// que típicamente faltan (cliente, patente, km, color, provincia, kavak, fyf) y subir fotos
+// adicionales. Marca/modelo/versión/año no se editan acá (requieren rehacer la tasación).
+let __rebotadaFotosNuevas = []; // {file, previewUrl}
+
+async function abrirCompletarRebotada(tasId) {
+  let tas = (misTasacionesData || []).find(t => t.id === tasId);
+  if (!tas) {
+    try {
+      const r = await sbFetch(`tasaciones?id=eq.${tasId}&select=*`);
+      tas = (r && r[0]) || null;
+    } catch(e) { console.error(e); }
+  }
+  if (!tas) { showToast('No se encontró la tasación'); return; }
+
+  __rebotadaFotosNuevas = [];
+
+  const existing = document.getElementById('completarRebotadaModal');
+  if (existing) existing.remove();
+
+  const fotosActualesCount = Array.isArray(tas.fotos) ? tas.fotos.length : 0;
+
+  const modalHTML = `
+    <div id="completarRebotadaModal" class="modal-overlay" onclick="if(event.target===this)cerrarCompletarRebotada()">
+      <div class="modal-box" style="max-width:620px">
+        <div class="modal-header">
+          <div style="flex:1; min-width:0">
+            <div style="font-size:16px; font-weight:700; color:#9A3412">✎ Completar y reenviar</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">${tas.marca || ''} ${tas.modelo || ''} ${tas.anio || ''}${tas.cliente_nombre ? ' · ' + tas.cliente_nombre : ''}</div>
+          </div>
+          <button onclick="cerrarCompletarRebotada()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0">✕</button>
+        </div>
+        <div class="modal-body">
+          ${tas.rebotada_motivo ? `
+            <div style="margin-bottom:14px; padding:10px 12px; background:#FFFBEB; border-radius:6px; border-left:3px solid #9A3412">
+              <div style="font-size:10px; font-weight:700; color:#9A3412; letter-spacing:0.5px; margin-bottom:4px">📝 MOTIVO DEL REBOTE</div>
+              <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap">${tas.rebotada_motivo}</div>
+            </div>
+          ` : ''}
+          <div style="font-size:11px; color:var(--vw-grey-4); margin-bottom:10px; font-style:italic">Editá lo que falte. Si necesitás corregir marca/modelo/año, hablá con el admin para empezar de nuevo.</div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+            <div>
+              <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">Cliente</label>
+              <input type="text" id="rebClienteNombre" value="${tas.cliente_nombre || ''}" style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">Patente</label>
+              <input type="text" id="rebPatente" value="${tas.patente || ''}" style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono); text-transform:uppercase; box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">Kilómetros</label>
+              <input type="number" id="rebKm" value="${tas.kilometros || ''}" style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono); box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">Color</label>
+              <input type="text" id="rebColor" value="${tas.color || ''}" style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">Provincia radicación</label>
+              <input type="text" id="rebProvincia" value="${tas.provincia_radicacion || ''}" style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">Precio Kavak</label>
+              <input type="number" id="rebKavak" value="${tas.precio_kavak || ''}" style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono); box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">0km consultado</label>
+              <input type="text" id="rebModelo0km" value="${tas.modelo_0km_consulta || ''}" style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">Precio ofrecido FyF</label>
+              <input type="number" id="rebPrecioOfrecido" value="${tas.precio_ofrecido_fyf || ''}" style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono); box-sizing:border-box">
+            </div>
+          </div>
+
+          <div style="margin-top:16px">
+            <label style="font-size:11px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:4px">Fotos adicionales (se suman a las ${fotosActualesCount} ya cargadas)</label>
+            <input type="file" id="rebFotosInput" accept="image/*" multiple onchange="onFotosRebotadaChange(event)" style="width:100%; padding:8px; border:1px dashed var(--vw-grey-2); border-radius:6px; font-size:12px; background:white; box-sizing:border-box">
+            <div id="rebFotosPreview" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px"></div>
+          </div>
+
+          <div style="margin-top:18px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">
+            <button onclick="cerrarCompletarRebotada()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+            <button onclick="reenviarTasacionRebotada('${tasId}')" style="padding:10px 18px; background:#9A3412; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Reenviar al admin</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  document.body.style.overflow = 'hidden';
+}
+
+function cerrarCompletarRebotada() {
+  const m = document.getElementById('completarRebotadaModal');
+  if (m) m.remove();
+  document.body.style.overflow = '';
+  __rebotadaFotosNuevas.forEach(f => { try { URL.revokeObjectURL(f.previewUrl); } catch(e) {} });
+  __rebotadaFotosNuevas = [];
+}
+
+function onFotosRebotadaChange(ev) {
+  const files = Array.from(ev.target.files || []);
+  files.forEach(f => {
+    if (!f.type.startsWith('image/')) return;
+    __rebotadaFotosNuevas.push({ file: f, previewUrl: URL.createObjectURL(f) });
+  });
+  renderRebotadaFotosPreview();
+  ev.target.value = '';
+}
+
+function renderRebotadaFotosPreview() {
+  const cont = document.getElementById('rebFotosPreview');
+  if (!cont) return;
+  cont.innerHTML = __rebotadaFotosNuevas.map((f, i) => `
+    <div style="position:relative; width:80px; height:80px; border-radius:6px; overflow:hidden; border:1px solid var(--vw-grey-2)">
+      <img src="${f.previewUrl}" style="width:100%; height:100%; object-fit:cover">
+      <button onclick="quitarFotoRebotada(${i})" style="position:absolute; top:2px; right:2px; padding:2px 6px; background:rgba(0,0,0,0.7); color:white; border:none; border-radius:4px; font-size:11px; cursor:pointer">✕</button>
+    </div>
+  `).join('');
+}
+
+function quitarFotoRebotada(idx) {
+  const removed = __rebotadaFotosNuevas.splice(idx, 1)[0];
+  if (removed) { try { URL.revokeObjectURL(removed.previewUrl); } catch(e) {} }
+  renderRebotadaFotosPreview();
+}
+
+async function reenviarTasacionRebotada(tasId) {
+  const clienteNombre = (document.getElementById('rebClienteNombre').value || '').trim() || null;
+  const patente = ((document.getElementById('rebPatente').value || '').trim().toUpperCase()) || null;
+  const km = parseInt(document.getElementById('rebKm').value) || null;
+  const color = (document.getElementById('rebColor').value || '').trim() || null;
+  const provincia = (document.getElementById('rebProvincia').value || '').trim() || null;
+  const kavakRaw = document.getElementById('rebKavak').value;
+  const kavak = kavakRaw === '' ? null : (parseFloat(kavakRaw) || null);
+  const modelo0km = (document.getElementById('rebModelo0km').value || '').trim() || null;
+  const ofrecidoRaw = document.getElementById('rebPrecioOfrecido').value;
+  const precioOfrecido = ofrecidoRaw === '' ? null : (parseFloat(ofrecidoRaw) || null);
+
+  try {
+    showLoading('Subiendo fotos nuevas...');
+    // Subir fotos nuevas
+    let fotosOriginales = [];
+    try {
+      const r = await sbFetch(`tasaciones?id=eq.${tasId}&select=fotos`);
+      fotosOriginales = (r && r[0] && Array.isArray(r[0].fotos)) ? r[0].fotos : [];
+    } catch(e) {}
+    const nuevasUrls = [];
+    for (let i = 0; i < __rebotadaFotosNuevas.length; i++) {
+      document.getElementById('loadingText').textContent = `Subiendo foto ${i+1} de ${__rebotadaFotosNuevas.length}...`;
+      const f = __rebotadaFotosNuevas[i].file;
+      const ext = f.name.split('.').pop();
+      const path = `${tasId}/foto_extra_${Date.now()}_${i}.${ext}`;
+      const url = await sbUpload('tasaciones-fotos', path, f);
+      nuevasUrls.push(url);
+    }
+    const fotosFinal = fotosOriginales.concat(nuevasUrls);
+
+    document.getElementById('loadingText').textContent = 'Reenviando tasación...';
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        cliente_nombre: clienteNombre,
+        patente: patente,
+        kilometros: km,
+        color: color,
+        provincia_radicacion: provincia,
+        precio_kavak: kavak,
+        modelo_0km_consulta: modelo0km,
+        precio_ofrecido_fyf: precioOfrecido,
+        fotos: fotosFinal,
+        rebotada: false,
+        rebotada_motivo: null,
+        rebotada_at: null,
+        rebotada_por: null
+      })
+    });
+    hideLoading();
+    showToast('Tasación reenviada al admin');
+    notifyWA(tasId, 'tasacion_pendiente_carga');
+    cerrarCompletarRebotada();
+    loadMisTasaciones();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showToast('Error al reenviar');
+  }
+}
+
 async function marcarNoApto(id) {
   const inputCom = document.getElementById(`comentario-virtual-${id}`);
   const razon = inputCom ? (inputCom.value || '').trim() : '';
@@ -5537,6 +5984,18 @@ function renderFisicoList() {
         </div>
       `;
     }
+    // Si la tasación está pendiente de inspección y tiene turno agendado, Fazzini puede reagendar o cancelar
+    // (cuando el cliente no se presenta o pide cambio).
+    let accionesTurno = '';
+    const esPendienteInsp = !tieneInsp(t) && !t.precio_toma_final;
+    if (esPendienteInsp && t.turno_fecha) {
+      accionesTurno = `
+        <div style="display:flex; gap:6px; flex-wrap:wrap">
+          <button onclick="event.stopPropagation(); abrirAgendarTurno('${t.id}')" style="padding:8px 12px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">📅 Reagendar</button>
+          <button onclick="event.stopPropagation(); cancelarTurno('${t.id}')" style="padding:8px 12px; background:white; color:var(--red); border:1px solid var(--red); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ Cancelar turno</button>
+        </div>
+      `;
+    }
     let turnoBadge = '';
     if (t.turno_fecha) {
       const f = isoAFecha(t.turno_fecha);
@@ -5569,8 +6028,12 @@ function renderFisicoList() {
             ${preciosLine}
             <div style="font-size:12px; color:var(--vw-grey-3); margin-top:4px">Vendedor: ${t.vendedor_nombre || '—'} · ${fecha}</div>
           </div>
-          <button onclick="abrirInspeccion('${t.id}')" style="padding:10px 16px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; white-space:nowrap">${btnLabel}</button>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">
+            ${t.precio_toma_final ? `<button onclick="event.stopPropagation(); imprimirHojaFinal('${t.id}')" style="padding:10px 14px; background:white; color:#065F46; border:1px solid #065F46; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">🖨️ Imprimir</button>` : ''}
+            <button onclick="abrirInspeccion('${t.id}')" style="padding:10px 16px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; white-space:nowrap">${btnLabel}</button>
+          </div>
         </div>
+        ${accionesTurno ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end">${accionesTurno}</div>` : ''}
         ${accionesExtra ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end">${accionesExtra}</div>` : ''}
       </div>
     `;
