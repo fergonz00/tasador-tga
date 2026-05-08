@@ -1192,9 +1192,9 @@ function selectMode(mode) {
   const btnCambiar = document.getElementById('btnCambiarModo');
   btnCambiar.classList.toggle('hidden', currentUser.rolesArr.length <= 1);
 
-  // El botón "Usuarios" solo se muestra cuando el modo activo es admin.
+  // El botón "Usuarios" solo se muestra a superadmins (fngonzalez, mlubrano) en modo admin.
   const btnUsuarios = document.getElementById('btnUsuarios');
-  btnUsuarios.classList.toggle('hidden', mode !== 'admin');
+  btnUsuarios.classList.toggle('hidden', !(mode === 'admin' && _esSuperadmin()));
 
   // Notificaciones: solo visible para superadmins (fngonzalez, mlubrano) en modo admin.
   const btnNotif = document.getElementById('btnNotif');
@@ -4478,6 +4478,7 @@ function _esSuperadmin() {
 
 async function abrirUsuarios() {
   if (currentMode !== 'admin') return;
+  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden gestionar usuarios'); return; }
   usuariosVistaAnterior = ALL_VIEWS.find(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');
@@ -4570,20 +4571,21 @@ function validarClaveUsuario(clave) {
 }
 
 function abrirNuevoUsuario() {
+  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden crear usuarios'); return; }
   _mostrarUsuarioModal('nuevo', null);
 }
 
 function abrirEditarUsuario(id) {
+  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden editar usuarios'); return; }
   const u = usuariosData.find(x => String(x.id) === String(id));
   if (!u) return;
-  if (_esAdmin(u) && !_esSuperadmin()) { showToast('No se pueden editar usuarios admin'); return; }
   _mostrarUsuarioModal('editar', u);
 }
 
 function abrirResetClave(id) {
+  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden resetear claves'); return; }
   const u = usuariosData.find(x => String(x.id) === String(id));
   if (!u) return;
-  if (_esAdmin(u) && !_esSuperadmin()) { showToast('No se pueden resetear claves de admin'); return; }
   _mostrarUsuarioModal('reset', u);
 }
 
@@ -4798,9 +4800,9 @@ async function guardarUsuarioModal(modo, id) {
 }
 
 async function toggleActivoUsuario(id, nuevoEstado) {
+  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden activar/desactivar usuarios'); return; }
   const u = usuariosData.find(x => String(x.id) === String(id));
   if (!u) return;
-  if (_esAdmin(u) && !_esSuperadmin()) { showToast('No se puede cambiar un admin'); return; }
   const accion = nuevoEstado ? 'activar' : 'desactivar';
   if (!confirm(`¿Seguro que querés ${accion} al usuario "${u.usuario}"?`)) return;
   try {
