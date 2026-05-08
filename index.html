@@ -5242,6 +5242,7 @@ async function confirmarRebotarVendedor(tasId) {
     });
     hideLoading();
     showToast('Tasación rebotada al vendedor');
+    notificarRebotadaVendedor(tasId, motivo);
     cerrarRebotarVendedor();
     loadAdminTasaciones(adminFiltroEstado || 'pendientes');
   } catch(e) {
@@ -5783,6 +5784,23 @@ async function notificarPrecioVirtualVendedor(tasId, precio, comentario) {
     await enviarWhatsAppA(t.vendedor_id, msg);
   } catch(e) {
     console.log('Error notificando precio virtual:', e);
+  }
+}
+
+// WA al vendedor cuando el admin rebota la tasación pidiendo más info.
+// Usa CallMeBot porque todavía no hay template aprobado en Meta para este evento.
+async function notificarRebotadaVendedor(tasId, motivo) {
+  try {
+    const tasData = await sbFetch(`tasaciones?id=eq.${tasId}`);
+    if (!tasData || tasData.length === 0) return;
+    const t = tasData[0];
+    if (!t.vendedor_id) return;
+    const datosVeh = `${t.marca || ''} ${t.modelo || ''} ${t.anio || ''}\n${t.version || ''}`;
+    const cliente = t.cliente_nombre ? `\nCliente: ${t.cliente_nombre}` : '';
+    const msg = `↩️ *TASACIÓN REBOTADA*\n\n${datosVeh}${cliente}\n\nFalta info para tasar. Entrá al tasador y completá los datos para reenviar.\n\n📝 *Motivo:* ${motivo}`;
+    await enviarWhatsAppA(t.vendedor_id, msg);
+  } catch(e) {
+    console.log('Error notificando rebote:', e);
   }
 }
 

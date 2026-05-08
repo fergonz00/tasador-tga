@@ -261,6 +261,43 @@ SELECT cron.schedule(
 
 **Implementación:** IIFE inline en `renderAdminCard`, justo después de la línea compacta de datos y antes del bloque `datos_corregidos_at`. Sin schema nuevo (usa `usado_vw_comprado_tga` y `usado_vw_lugar_compra` que ya existían).
 
+### Cambio 9 — Rebote al vendedor + hoja imprimible + reagendar/cancelar desde Fazzini (✅ COMPLETO 08/05/2026)
+
+Tres mejoras de UX implementadas en un único commit (`71839a3`).
+
+**9.A — Rebote al vendedor (admin):**
+- Botón **"↩️ Rebotar al vendedor"** en la card admin de pendientes (al lado de "Marcar NO APTO"), dentro del bloque "PRECIO VIRTUAL DE TOMA" cuando todavía no hay precio virtual cargado y la tasación no está rebotada ni marcada como NO APTO.
+- Abre modal con textarea pidiendo motivo (obligatorio). Al confirmar hace PATCH con `rebotada=true`, `rebotada_motivo`, `rebotada_at`, `rebotada_por = currentUser.nombre`.
+- En la card admin la tasación queda con badge naranja **"REBOTADA"** y un cartel "Esperando que el vendedor complete la info y reenvíe" en lugar de los inputs de precio virtual.
+- En la vista del vendedor (Mis tasaciones → Pendientes) la tasación aparece con cartel naranja grande con el motivo y un botón **"✎ Completar info y reenviar"**.
+- Ese botón abre un **modal liviano de edición** (no reabre el wizard de 10 pasos) con campos editables: cliente, patente, km, color, provincia, kavak, modelo 0km consultado, precio ofrecido FyF, + input file para fotos adicionales (se concatenan con las existentes, no las reemplazan).
+- Al reenviar: PATCH con los datos editados + nuevas URLs de fotos, reset de los 4 campos `rebotada_*` a null/false, y dispara `notifyWA(id, 'tasacion_pendiente_carga')` (template Meta existente) para avisar al admin.
+- **WA al vendedor en el momento del rebote**: como todavía no hay template Meta `tasacion_rebotada`, se usa **CallMeBot** vía `notificarRebotadaVendedor(tasId, motivo)` — alineado con el patrón ya usado para `notificarNoAptoVendedor`. Cuando se cree el template Meta, migrar al evento centralizado `notifyWA`.
+- **Schema Supabase (correr esto antes de usar la feature):**
+  ```sql
+  ALTER TABLE tasaciones ADD COLUMN rebotada BOOLEAN DEFAULT false;
+  ALTER TABLE tasaciones ADD COLUMN rebotada_motivo TEXT;
+  ALTER TABLE tasaciones ADD COLUMN rebotada_at TIMESTAMP WITH TIME ZONE;
+  ALTER TABLE tasaciones ADD COLUMN rebotada_por TEXT;
+  ```
+- **Funciones clave en `index.html`:** `abrirRebotarVendedor`, `cerrarRebotarVendedor`, `confirmarRebotarVendedor` (admin); `abrirCompletarRebotada`, `cerrarCompletarRebotada`, `onFotosRebotadaChange`, `renderRebotadaFotosPreview`, `quitarFotoRebotada`, `reenviarTasacionRebotada` (vendedor); `notificarRebotadaVendedor` (CallMeBot).
+- **Limitación conocida**: el modal liviano del vendedor no permite editar marca/modelo/versión/año porque cambiarlos requeriría rehacer cálculos (CCA, FG, ajuste km). Si el vendedor cargó mal alguno de esos, hay que borrar y rehacer la tasación.
+
+**9.B — Hoja imprimible (admin + Fazzini):**
+- Botón **"🖨️ Imprimir hoja"** disponible cuando `precio_toma_final` está cargado.
+  - En admin: dentro del recuadro verde "PRECIO FINAL DE TOMA", al lado de "Actualizar".
+  - En Fazzini: en la card de la tasación (pestaña "Final"), al lado del botón "Ver detalle".
+- Función `imprimirHojaFinal(tasId)`: arma un HTML print-friendly (A4, `@media print`) y lo abre en `window.open` que dispara `window.print()` al cargar.
+- **Contenido de la hoja:** datos del cliente y unidad (marca, modelo, versión, año, KM, color, patente, provincia, tapizado, pintura, vendedor) + observaciones generales del tasador físico + daños observados sobre la silueta (sin costos) + checklist técnico de interior y mecánica (solo ítems con observación o estado distinto de bueno) + accesorios + **precio final destacado en verde**.
+- **Lo que NO incluye** (decisión consciente para que sea hoja "limpia" de entrega al cliente): fotos del usado, precios CCA, Kavak, Fórmula FG, análisis IA.
+- Bucket `tasaciones-fotos` no se toca; la hoja es texto puro.
+
+**9.C — Reagendar / Cancelar turno desde la vista de Fazzini:**
+- En la card de Fazzini (pestaña "Pendientes"), cuando la tasación está pendiente de inspección y tiene turno agendado, aparecen botones **"📅 Reagendar"** y **"❌ Cancelar turno"** al pie de la card.
+- Reusan funciones existentes: `abrirAgendarTurno(tasId)` y `cancelarTurno(tasId)`. Sin schema nuevo.
+- `cancelarTurno` ahora también refresca `loadTasadorFisicoList()` cuando la vista de Fazzini está activa.
+- Caso de uso: cliente no se presentó al turno → Fazzini mismo lo cancela o reagenda sin tener que ir a la agenda.
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
