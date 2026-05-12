@@ -2371,7 +2371,10 @@ function renderMisTasacionesList() {
                 return `
                   <div style="margin-top:12px; padding:10px 12px; background:#EFF6FF; border-radius:6px; border-left:3px solid var(--vw-blue); display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
                     <div style="font-size:13px"><span style="color:var(--vw-blue); font-weight:700">📅 Turno inspección:</span> ${formatFechaTurnoLargo(f)} ${t.turno_hora || ''}</div>
-                    <button onclick="event.stopPropagation(); abrirAgendarTurno('${t.id}')" style="padding:5px 10px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:4px; font-weight:600; font-size:11px; cursor:pointer">Cambiar</button>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap">
+                      <button onclick="event.stopPropagation(); abrirAgendarTurno('${t.id}')" style="padding:5px 10px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:4px; font-weight:600; font-size:11px; cursor:pointer">Cambiar</button>
+                      <button onclick="event.stopPropagation(); abrirCancelarVisita('${t.id}')" style="padding:5px 10px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:4px; font-weight:600; font-size:11px; cursor:pointer">❌ Cancelar visita</button>
+                    </div>
                   </div>
                   <div style="margin-top:8px; text-align:center">
                     <button onclick="event.stopPropagation(); abrirNoAvanzaModal('${t.id}')" style="padding:6px 12px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">🚫 No avanza con la toma</button>
@@ -2382,6 +2385,16 @@ function renderMisTasacionesList() {
                 return `
                   <div style="margin-top:12px; padding:8px 12px; background:var(--vw-grey-1); border-radius:6px; font-size:12px; color:var(--vw-grey-4); text-align:center; font-style:italic">
                     🕓 Esperando precio virtual del admin para poder agendar inspección
+                  </div>
+                `;
+              }
+              // Caso: visita cancelada (no hay turno, hay motivo de cancelación). Mostramos cartel + botones para reagendar/no avanza.
+              if (t.turno_cancelado_motivo) {
+                return `
+                  ${_renderVisitaCanceladaCartel(t)}
+                  <div style="margin-top:10px; text-align:center; display:flex; gap:8px; justify-content:center; flex-wrap:wrap">
+                    <button onclick="event.stopPropagation(); abrirAgendarTurno('${t.id}')" style="padding:8px 16px; background:var(--vw-blue); color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer">📅 Reagendar inspección</button>
+                    <button onclick="event.stopPropagation(); abrirNoAvanzaModal('${t.id}')" style="padding:8px 16px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer">🚫 No avanza con la toma</button>
                   </div>
                 `;
               }
@@ -4350,7 +4363,12 @@ async function confirmarTurno(tasId, fechaISO, hora) {
         turno_fecha: fechaISO,
         turno_hora: hora,
         turno_creado_por: currentUser.nombre,
-        turno_creado_at: new Date().toISOString()
+        turno_creado_at: new Date().toISOString(),
+        // Al reagendar se limpia cualquier cancelación previa
+        turno_cancelado_motivo: null,
+        turno_cancelado_detalle: null,
+        turno_cancelado_at: null,
+        turno_cancelado_por: null
       })
     });
     hideLoading();
@@ -4958,7 +4976,7 @@ async function loadAgenda() {
   const list = document.getElementById('agendaList');
   list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Cargando...</div>';
   try {
-    const data = await sbFetch('tasaciones?turno_fecha=not.is.null&order=turno_fecha.asc,turno_hora.asc&select=id,marca,modelo,anio,version,patente,cliente_nombre,vendedor_id,vendedor_nombre,turno_fecha,turno_hora,turno_creado_por,estado_fisico');
+    const data = await sbFetch('tasaciones?turno_fecha=not.is.null&order=turno_fecha.asc,turno_hora.asc&select=id,marca,modelo,anio,version,patente,cliente_nombre,vendedor_id,vendedor_nombre,turno_fecha,turno_hora,turno_creado_por,estado_fisico,precio_sugerido_fisico,precio_toma_final');
     agendaData = data;
     renderAgenda();
   } catch(e) {
@@ -4986,8 +5004,13 @@ function renderAgenda() {
   else if (fFecha === 'semana') data = data.filter(t => t.turno_fecha >= hoyISO && t.turno_fecha <= semanaISO);
   else if (fFecha === 'quincena') data = data.filter(t => t.turno_fecha >= hoyISO && t.turno_fecha <= quincenaISO);
 
-  if (fEstado === 'pendientes') data = data.filter(t => t.estado_fisico !== 'tasada_fisico');
-  else if (fEstado === 'inspeccionadas') data = data.filter(t => t.estado_fisico === 'tasada_fisico');
+  // Inspeccionada = Fazzini ya cargó precio sugerido O el admin ya cerró precio final.
+  // Antes filtrábamos por estado_fisico === 'tasada_fisico', pero ese valor no se setea
+  // en ningún lado (Fazzini graba 'pendiente_revision'), así que las inspeccionadas
+  // quedaban como pendientes para siempre. Ahora usamos el mismo criterio que Fazzini.
+  const _inspAgenda = (t) => !!(t.precio_sugerido_fisico || t.precio_toma_final);
+  if (fEstado === 'pendientes') data = data.filter(t => !_inspAgenda(t));
+  else if (fEstado === 'inspeccionadas') data = data.filter(t => _inspAgenda(t));
 
   if (q) {
     data = data.filter(t => {
@@ -5024,7 +5047,7 @@ function renderAgenda() {
           <span style="font-weight:400; color:var(--vw-grey-4); text-transform:none">· ${turnos.length} turno${turnos.length === 1 ? '' : 's'}</span>
         </h3>
         ${turnos.map(t => {
-          const inspeccionada = t.estado_fisico === 'tasada_fisico';
+          const inspeccionada = _inspAgenda(t);
           const esMio = esVendedor && currentUser && t.vendedor_id === currentUser.id;
           // Puede editar: admin siempre; vendedor solo si es suyo. Bloqueado si ya fue inspeccionada.
           const puedeEditar = !inspeccionada && (esAdmin || esMio);
@@ -5127,8 +5150,123 @@ async function cancelarTurno(tasId) {
   }
 }
 
+// Modal "Cancelar visita / revisión" con motivo (vendedor y Fazzini comparten flujo)
+const CANCEL_VISITA_MOTIVOS = [
+  { key: 'no_se_presento', label: 'Cliente no se presentó' },
+  { key: 'reprogramara', label: 'Cliente va a reprogramar' },
+  { key: 'desistio', label: 'Cliente desistió' },
+  { key: 'otro', label: 'Otro' }
+];
+
+function abrirCancelarVisita(tasId) {
+  const existing = document.getElementById('cancelVisitaModal');
+  if (existing) existing.remove();
+  const radiosHTML = CANCEL_VISITA_MOTIVOS.map(m => `
+    <label style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--vw-grey-1); border-radius:6px; margin-bottom:6px; cursor:pointer">
+      <input type="radio" name="cancelVisitaMotivo" value="${m.key}" onchange="document.getElementById('cancelVisitaDetalleWrap').style.display = this.value === 'otro' ? 'block' : 'none'">
+      <span style="font-size:13px">${m.label}</span>
+    </label>
+  `).join('');
+  const modal = document.createElement('div');
+  modal.id = 'cancelVisitaModal';
+  modal.className = 'modal-overlay';
+  modal.onclick = (e) => { if (e.target === modal) cerrarCancelarVisita(); };
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:480px">
+      <div class="modal-header">
+        <div style="font-size:16px; font-weight:700; color:#991B1B">❌ Cancelar visita</div>
+        <button onclick="cerrarCancelarVisita()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:13px; color:var(--vw-grey-4); margin-bottom:12px">¿Por qué se cancela?</div>
+        ${radiosHTML}
+        <div id="cancelVisitaDetalleWrap" style="display:none; margin-top:10px">
+          <textarea id="cancelVisitaDetalle" rows="3" placeholder="Contá el motivo (opcional pero útil)" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-family:var(--sans); font-size:13px; resize:vertical; box-sizing:border-box"></textarea>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px">
+          <button onclick="cerrarCancelarVisita()" style="padding:9px 16px; background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:6px; font-weight:600; font-size:13px; cursor:pointer">Volver</button>
+          <button onclick="confirmarCancelarVisita('${tasId}')" style="padding:9px 16px; background:#991B1B; color:white; border:none; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer">Cancelar visita</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+function cerrarCancelarVisita() {
+  const m = document.getElementById('cancelVisitaModal');
+  if (m) m.remove();
+}
+
+async function confirmarCancelarVisita(tasId) {
+  const sel = document.querySelector('input[name="cancelVisitaMotivo"]:checked');
+  if (!sel) { showToast('Elegí un motivo'); return; }
+  const motivo = sel.value;
+  const detalleEl = document.getElementById('cancelVisitaDetalle');
+  const detalle = (detalleEl && detalleEl.value.trim()) || null;
+
+  // Leemos el estado anterior para el WA
+  let turnoAnterior = null;
+  try {
+    const r = await sbFetch(`tasaciones?id=eq.${tasId}&select=*`);
+    turnoAnterior = (r && r[0]) || null;
+  } catch(e) {}
+
+  try {
+    showLoading('Cancelando visita...');
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        turno_fecha: null,
+        turno_hora: null,
+        turno_cancelado_motivo: motivo,
+        turno_cancelado_detalle: detalle,
+        turno_cancelado_at: new Date().toISOString(),
+        turno_cancelado_por: currentUser.nombre
+      })
+    });
+    hideLoading();
+    cerrarCancelarVisita();
+    showToast('Visita cancelada');
+
+    // WA a Fazzini con el motivo
+    const motivoLbl = (CANCEL_VISITA_MOTIVOS.find(m => m.key === motivo) || {}).label || motivo;
+    notificarTurnoATasadorFisico('cancelado', turnoAnterior, null, motivoLbl + (detalle ? ' — ' + detalle : ''));
+
+    // Refresh de las vistas que estén abiertas
+    const misSec = document.getElementById('misTasacionesSection');
+    if (misSec && !misSec.classList.contains('hidden')) loadMisTasaciones();
+    const adminView = document.getElementById('adminView');
+    if (adminView && !adminView.classList.contains('hidden')) loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+    const agendaView = document.getElementById('agendaView');
+    if (agendaView && !agendaView.classList.contains('hidden')) loadAgenda();
+    const fisicoView = document.getElementById('tasadorFisicoView');
+    if (fisicoView && !fisicoView.classList.contains('hidden')) loadTasadorFisicoList();
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showToast('Error al cancelar la visita');
+  }
+}
+
+function _renderVisitaCanceladaCartel(t) {
+  if (!t.turno_cancelado_motivo) return '';
+  const lbl = (CANCEL_VISITA_MOTIVOS.find(m => m.key === t.turno_cancelado_motivo) || {}).label || t.turno_cancelado_motivo;
+  const fecha = t.turno_cancelado_at ? new Date(t.turno_cancelado_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
+  const por = t.turno_cancelado_por ? ' · por ' + t.turno_cancelado_por : '';
+  const detalle = t.turno_cancelado_detalle ? `<div style="font-size:12px; color:var(--vw-grey-5); margin-top:4px; font-style:italic">"${t.turno_cancelado_detalle}"</div>` : '';
+  return `
+    <div style="margin-top:10px; padding:10px 12px; background:#FEF2F2; border-radius:6px; border-left:3px solid #991B1B">
+      <div style="font-size:12px; font-weight:700; color:#991B1B; letter-spacing:0.5px">❌ VISITA CANCELADA</div>
+      <div style="font-size:13px; color:#7F1D1D; margin-top:4px">${lbl}</div>
+      ${detalle}
+      <div style="font-size:11px; color:var(--vw-grey-4); margin-top:4px">${fecha}${por}</div>
+    </div>
+  `;
+}
+
 // WA al tasador físico cada vez que hay un cambio (nuevo turno, modificación o cancelación)
-async function notificarTurnoATasadorFisico(tipo, turnoAnterior, turnoNuevo) {
+async function notificarTurnoATasadorFisico(tipo, turnoAnterior, turnoNuevo, motivoExtra) {
   try {
     const t = turnoNuevo || turnoAnterior;
     if (!t) return;
@@ -5147,7 +5285,8 @@ async function notificarTurnoATasadorFisico(tipo, turnoAnterior, turnoNuevo) {
       msg = `🔄 *Turno modificado*\n\nEra: ${antes}\nAhora: ${ahora}\n${datosVeh}${patente}${cliente}${vendedor}`;
     } else if (tipo === 'cancelado') {
       const cuando = (turnoAnterior && turnoAnterior.turno_fecha) ? fmt(turnoAnterior.turno_fecha, turnoAnterior.turno_hora) : '—';
-      msg = `❌ *Turno cancelado*\n\nEra: ${cuando}\n${datosVeh}${patente}${cliente}${vendedor}`;
+      const motivoLine = motivoExtra ? `\nMotivo: ${motivoExtra}` : '';
+      msg = `❌ *Turno cancelado*\n\nEra: ${cuando}${motivoLine}\n${datosVeh}${patente}${cliente}${vendedor}`;
     }
     if (msg) enviarWhatsAppARol('tasador_fisico', msg);
   } catch(e) {
@@ -5926,8 +6065,10 @@ function renderFisicoList() {
   //   final           → admin ya puso precio final
   //   todas           → todo
   const tieneInsp = (t) => !!(t.analisis_fisico && typeof t.analisis_fisico === 'object' && t.precio_sugerido_fisico);
+  // Una unidad está "viva" si no la marcaron como no avanza, no apto, ni la cancelaron como visita
+  const _vivaParaFazzini = (t) => !t.no_avanza_motivo && !t.virtual_no_apto && !t.turno_cancelado_motivo;
   if (fisicoFiltroEstadoVal === 'pendientes') {
-    data = data.filter(t => !tieneInsp(t));
+    data = data.filter(t => !tieneInsp(t) && _vivaParaFazzini(t));
   } else if (fisicoFiltroEstadoVal === 'inspeccionadas') {
     data = data.filter(t => tieneInsp(t) && !t.precio_toma_final);
   } else if (fisicoFiltroEstadoVal === 'final') {
@@ -6004,7 +6145,7 @@ function renderFisicoList() {
         </div>
       `;
     }
-    // Si la tasación está pendiente de inspección y tiene turno agendado, Fazzini puede reagendar o cancelar
+    // Si la tasación está pendiente de inspección y tiene turno agendado, Fazzini puede reagendar o cancelar revisión
     // (cuando el cliente no se presenta o pide cambio).
     let accionesTurno = '';
     const esPendienteInsp = !tieneInsp(t) && !t.precio_toma_final;
@@ -6012,7 +6153,7 @@ function renderFisicoList() {
       accionesTurno = `
         <div style="display:flex; gap:6px; flex-wrap:wrap">
           <button onclick="event.stopPropagation(); abrirAgendarTurno('${t.id}')" style="padding:8px 12px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">📅 Reagendar</button>
-          <button onclick="event.stopPropagation(); cancelarTurno('${t.id}')" style="padding:8px 12px; background:white; color:var(--red); border:1px solid var(--red); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ Cancelar turno</button>
+          <button onclick="event.stopPropagation(); abrirCancelarVisita('${t.id}')" style="padding:8px 12px; background:white; color:var(--red); border:1px solid var(--red); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ Cancelar revisión</button>
         </div>
       `;
     }

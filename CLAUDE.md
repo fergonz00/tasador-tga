@@ -298,6 +298,31 @@ Tres mejoras de UX implementadas en un único commit (`71839a3`).
 - `cancelarTurno` ahora también refresca `loadTasadorFisicoList()` cuando la vista de Fazzini está activa.
 - Caso de uso: cliente no se presentó al turno → Fazzini mismo lo cancela o reagenda sin tener que ir a la agenda.
 
+### Cambio 10 — Fix Agenda + Cancelar visita con motivo (✅ COMPLETO 12/05/2026)
+
+**10.A — Fix filtro Agenda:**
+- Bug: la solapa Agenda filtraba "pendientes/inspeccionadas" por `estado_fisico === 'tasada_fisico'`, pero ese valor **nunca se setea** en el código (Fazzini graba `'pendiente_revision'` al cargar la inspección). Resultado: las consultas inspeccionadas seguían apareciendo como pendientes en la agenda eternamente.
+- Arreglo: el filtro ahora usa `precio_sugerido_fisico || precio_toma_final` para determinar si está inspeccionada (mismo criterio que `renderFisicoList`). Se agregaron `analisis_fisico, precio_sugerido_fisico, precio_toma_final` al SELECT de `loadAgenda()`.
+
+**10.B — Cancelar visita con motivo (vendedor + Fazzini):**
+- **Schema Supabase (correr antes de usar la feature):**
+  ```sql
+  ALTER TABLE tasaciones ADD COLUMN turno_cancelado_motivo TEXT;
+  ALTER TABLE tasaciones ADD COLUMN turno_cancelado_detalle TEXT;
+  ALTER TABLE tasaciones ADD COLUMN turno_cancelado_at TIMESTAMP WITH TIME ZONE;
+  ALTER TABLE tasaciones ADD COLUMN turno_cancelado_por TEXT;
+  ```
+- Motivo: las consultas se acumulaban en la vista de Fazzini porque solo había "No avanza con la toma" (que es decisión final post-precio), no había una forma natural de cancelar la visita cuando el cliente no se presenta o pide reagendar más adelante.
+- Nuevo modal `abrirCancelarVisita(tasId)` con motivos radio: `no_se_presento`, `reprogramara`, `desistio`, `otro` (con textarea libre).
+- **Vendedor (Mis tasaciones)**:
+  - Cuando hay turno: botón **"❌ Cancelar visita"** al lado de "Cambiar".
+  - Cuando NO hay turno pero hay `turno_cancelado_motivo` + virtual cargado + no marcado como "no avanza"/no apto: cartel rojo "❌ VISITA CANCELADA — motivo" + botones "📅 Reagendar inspección" y "🚫 No avanza con la toma".
+- **Fazzini (Inspección → Pendientes)**: el viejo botón "❌ Cancelar turno" (cambio 9C, era un `confirm` seco) ahora es **"❌ Cancelar revisión"** y abre el mismo modal con motivo.
+- **Filtro Fazzini Pendientes**: ahora excluye también `no_avanza_motivo`, `virtual_no_apto` y `turno_cancelado_motivo` (helper `_vivaParaFazzini`). Esto resuelve el caso de presenciales con "no avanza" que antes quedaban acumulados.
+- **WA**: usa CallMeBot existente vía `notificarTurnoATasadorFisico('cancelado', ...)`. Se le agregó parámetro `motivoExtra` para incluir el motivo en el mensaje. Cuando se cree el template Meta `turno_cancelado` (pendiente del cambio 5), migrar.
+- **Reseteo al reagendar**: `confirmarTurno` ahora limpia los 4 campos `turno_cancelado_*` al PATCH, así una unidad reagendada vuelve a estado limpio.
+- **Funciones clave en `index.html`**: `abrirCancelarVisita`, `cerrarCancelarVisita`, `confirmarCancelarVisita`, `_renderVisitaCanceladaCartel`, constante `CANCEL_VISITA_MOTIVOS`.
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
