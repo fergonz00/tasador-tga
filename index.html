@@ -2518,26 +2518,21 @@ function renderCierreOperacionVendedor(t) {
   `;
 }
 
-// PATCH de venta_cerrada + usado_tomado al hacer click en una de las 3 opciones
+// PATCH de venta_cerrada + usado_tomado al hacer click en una de las 3 opciones.
+// Si la operación cierra CON usado tomado, exige nº interno (lo pide en modal si falta).
 async function marcarCierre(tasId, cerrada, dejoUsado) {
-  try {
-    showLoading('Guardando...');
-    await sbFetch(`tasaciones?id=eq.${tasId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        venta_cerrada: cerrada,
-        usado_tomado: cerrada ? dejoUsado : false,
-        venta_cerrada_at: new Date().toISOString()
-      })
-    });
-    hideLoading();
-    showToast('¡Gracias! Quedó registrado.');
-    loadMisTasaciones();
-  } catch(e) {
-    hideLoading();
-    console.error(e);
-    showToast('Error al guardar');
+  if (cerrada && dejoUsado) {
+    const tas = (misTasacionesData || []).find(t => t.id === tasId)
+      || (allTasaciones || []).find(t => t.id === tasId);
+    const nroExistente = tas && tas.numero_interno;
+    if (!nroExistente) {
+      pedirNumeroInternoModal(tasId, async (nro) => {
+        await _ejecutarCierre(tasId, true, true, nro, 'vendedor');
+      });
+      return;
+    }
   }
+  await _ejecutarCierre(tasId, cerrada, dejoUsado, null, 'vendedor');
 }
 
 // Helper compartido: ¿esta tasación matchea el query de búsqueda?
@@ -2884,26 +2879,97 @@ async function marcarVendido(tasId) {
   }
 }
 
-// Fazzini también puede marcar el cierre de la operación (como el vendedor).
+// Fazzini / admin también pueden marcar el cierre. Si cerrada+conUsado y falta nº interno, lo pide.
 async function marcarCierreComoTasador(tasId, cerrada, dejoUsado) {
+  if (cerrada && dejoUsado) {
+    const tas = (allTasaciones || []).find(t => t.id === tasId)
+      || (fisicoData || []).find(t => t.id === tasId)
+      || (misTasacionesData || []).find(t => t.id === tasId);
+    const nroExistente = tas && tas.numero_interno;
+    if (!nroExistente) {
+      pedirNumeroInternoModal(tasId, async (nro) => {
+        await _ejecutarCierre(tasId, true, true, nro, 'staff');
+      });
+      return;
+    }
+  }
+  await _ejecutarCierre(tasId, cerrada, dejoUsado, null, 'staff');
+}
+
+// PATCH compartido del cierre. Si viene nroInterno, lo incluye en el payload.
+async function _ejecutarCierre(tasId, cerrada, dejoUsado, nroInterno, origen) {
   try {
     showLoading('Guardando...');
+    const payload = {
+      venta_cerrada: cerrada,
+      usado_tomado: cerrada ? dejoUsado : false,
+      venta_cerrada_at: new Date().toISOString()
+    };
+    if (nroInterno) payload.numero_interno = String(nroInterno).trim();
     await sbFetch(`tasaciones?id=eq.${tasId}`, {
       method: 'PATCH',
-      body: JSON.stringify({
-        venta_cerrada: cerrada,
-        usado_tomado: cerrada ? dejoUsado : false,
-        venta_cerrada_at: new Date().toISOString()
-      })
+      body: JSON.stringify(payload)
     });
     hideLoading();
-    showToast('Guardado');
-    if (currentMode === 'tasador_fisico') await loadTasadorFisicoList();
-    else if (currentMode === 'admin') await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+    showToast(origen === 'vendedor' ? '¡Gracias! Quedó registrado.' : 'Guardado');
+    if (origen === 'vendedor') {
+      loadMisTasaciones();
+    } else {
+      if (currentMode === 'tasador_fisico') await loadTasadorFisicoList();
+      else if (currentMode === 'admin') await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+    }
   } catch(e) {
     hideLoading();
     console.error(e);
     showToast('Error al guardar');
+  }
+}
+
+// Modal para pedir el Nº interno cuando se cierra "con usado" y todavía no está cargado.
+function pedirNumeroInternoModal(tasId, onConfirm) {
+  const existing = document.getElementById('nroInternoModal');
+  if (existing) existing.remove();
+  const modalHTML = `
+    <div id="nroInternoModal" class="modal-overlay" onclick="if(event.target===this)cerrarNumeroInternoModal()">
+      <div class="modal-box" style="max-width:460px">
+        <div class="modal-header">
+          <div style="flex:1">
+            <div style="font-size:16px; font-weight:700; color:#065F46">🔢 Nº interno del usado</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">Cargá el número interno que se le asignó al usado en el sistema. Aparece en la hoja imprimible para rendir a administración.</div>
+          </div>
+          <button onclick="cerrarNumeroInternoModal()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0">✕</button>
+        </div>
+        <div class="modal-body">
+          <label style="font-size:12px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:6px">Nº interno *</label>
+          <input type="text" id="nroInternoInput" placeholder="Ej: 12345" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:16px; font-family:var(--mono); font-weight:700; box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarNumeroInternoModal();}">
+          <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">
+            <button onclick="cerrarNumeroInternoModal()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+            <button onclick="confirmarNumeroInternoModal()" style="padding:10px 16px; background:#065F46; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Confirmar cierre</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  document.body.style.overflow = 'hidden';
+  window.__pendingCierre = { tasId, onConfirm };
+  setTimeout(() => document.getElementById('nroInternoInput')?.focus(), 50);
+}
+
+function cerrarNumeroInternoModal() {
+  const m = document.getElementById('nroInternoModal');
+  if (m) m.remove();
+  document.body.style.overflow = '';
+  window.__pendingCierre = null;
+}
+
+async function confirmarNumeroInternoModal() {
+  const nro = (document.getElementById('nroInternoInput')?.value || '').trim();
+  if (!nro) { showToast('Cargá el Nº interno'); return; }
+  const pending = window.__pendingCierre;
+  cerrarNumeroInternoModal();
+  if (pending && typeof pending.onConfirm === 'function') {
+    await pending.onConfirm(nro);
   }
 }
 
@@ -3670,7 +3736,8 @@ async function imprimirHojaFinal(tasId) {
     return `<li>${tipoLbl}${m.nota ? ' — ' + m.nota : ''}</li>`;
   }).join('');
 
-  // Checklist (interior + mecánica): solo ítems con observación o estado distinto de bueno
+  // Checklist completo (interior + mecánica): TODOS los ítems con su estado.
+  // La hoja sirve para auditar la inspección, así que se ve cada ítem aunque esté en "Bueno".
   const items = af.items || {};
   const checklistRows = [];
   INSP_GRUPOS.forEach(g => {
@@ -3678,10 +3745,9 @@ async function imprimirHojaFinal(tasId) {
       const v = (items[g.key] || {})[it.key] || {};
       const estado = v.estado || 'bueno';
       const obs = (v.obs || '').trim();
-      if (estado !== 'bueno' || obs) {
-        const estadoLbl = estado === 'malo' ? 'MALO' : estado === 'regular' ? 'Regular' : 'Bueno';
-        checklistRows.push(`<tr><td>${g.titulo} · ${it.label}</td><td>${estadoLbl}</td><td>${obs || ''}</td></tr>`);
-      }
+      const estadoLbl = estado === 'malo' ? 'MALO' : estado === 'regular' ? 'Regular' : 'Bueno';
+      const estadoColor = estado === 'malo' ? '#991B1B' : estado === 'regular' ? '#9A3412' : '#065F46';
+      checklistRows.push(`<tr><td>${g.titulo} · ${it.label}</td><td style="color:${estadoColor}; font-weight:700">${estadoLbl}</td><td>${obs || '—'}</td></tr>`);
     });
   });
 
@@ -3694,6 +3760,10 @@ async function imprimirHojaFinal(tasId) {
   const tapizadoMap = { tela:'Tela', cuero:'Cuero', cuero_eco:'Cuero ecológico', mixto:'Mixto', vinil:'Vinilo' };
   const accesorios = Array.isArray(af.accesorios) ? af.accesorios : [];
   const obsGral = (af.observaciones_grales || '').trim();
+  const tipoVehLbl = tas.tipo_vehiculo === 'camioneta' ? 'Camioneta' : (tas.tipo_vehiculo === 'auto' ? 'Auto' : '—');
+  const nroInterno = tas.numero_interno || '—';
+  const pd = af.prueba_dinamica || {};
+  const pruebaTxt = pd.realizada ? ('Sí' + (pd.realizo ? ' · por ' + pd.realizo : '')) : 'No realizada';
 
   const html = `<!DOCTYPE html>
 <html lang="es-AR">
@@ -3728,6 +3798,17 @@ async function imprimirHojaFinal(tasId) {
 <h1>Tito González Automotores — Hoja de tasación final</h1>
 <div class="meta">Impreso el ${fechaImp}${fechaFinal ? ' · Tasación cerrada el ' + fechaFinal : ''}</div>
 
+<div style="margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:10px">
+  <div style="padding:10px 14px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:6px">
+    <div style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#475569; font-weight:700">Nº interno del sistema</div>
+    <div style="font-family:'Courier New', monospace; font-weight:700; font-size:18px; color:#0F172A; margin-top:2px">${nroInterno}</div>
+  </div>
+  <div style="padding:10px 14px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:6px">
+    <div style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#475569; font-weight:700">Tipo de vehículo</div>
+    <div style="font-weight:700; font-size:18px; color:#0F172A; margin-top:2px">${tipoVehLbl}</div>
+  </div>
+</div>
+
 <h2>Datos del cliente y unidad</h2>
 <div class="grid">
   <div><b>Cliente:</b> ${tas.cliente_nombre || '—'}</div>
@@ -3741,7 +3822,9 @@ async function imprimirHojaFinal(tasId) {
   <div><b>Radicación:</b> ${tas.provincia_radicacion || '—'}</div>
   <div><b>Tipo tapizado:</b> ${tapizadoMap[tas.tipo_tapizado || af.tipo_tapizado] || tas.tipo_tapizado || af.tipo_tapizado || '—'}</div>
   <div><b>Pintura:</b> ${PINTURA_LBL[tas.pintura_estado || af.pintura_estado] || '—'}</div>
+  <div><b>Prueba dinámica:</b> ${pruebaTxt}</div>
   <div><b>Vendedor:</b> ${tas.vendedor_nombre || '—'}</div>
+  ${tas.tasado_fisico_por ? `<div><b>Tasador físico:</b> ${tas.tasado_fisico_por}</div>` : ''}
 </div>
 
 <h2>Inspección física — Observaciones</h2>
@@ -3751,18 +3834,16 @@ ${(tas.pintura_obs || af.pintura_obs) ? `
   <div style="margin-top:8px; font-size:12px"><b>Pintura — detalle:</b> ${tas.pintura_obs || af.pintura_obs}</div>
 ` : ''}
 
-${damageItems ? `
-  <h2>Daños observados sobre la unidad</h2>
-  <ul>${damageItems}</ul>
-` : ''}
+<h2>Daños observados sobre la unidad</h2>
+${damageItems ? `<ul>${damageItems}</ul>` : '<div class="meta" style="font-style:italic">Sin daños marcados.</div>'}
 
+<h2>Checklist técnico</h2>
 ${checklistRows.length > 0 ? `
-  <h2>Checklist técnico</h2>
   <table>
     <thead><tr><th>Ítem</th><th>Estado</th><th>Observación</th></tr></thead>
     <tbody>${checklistRows.join('')}</tbody>
   </table>
-` : ''}
+` : '<div class="meta" style="font-style:italic">Sin checklist cargado.</div>'}
 
 ${accesorios.length > 0 ? `
   <h2>Accesorios</h2>
@@ -6358,10 +6439,13 @@ function renderInspeccionSoloLectura(tas, prev) {
   `;
 
   // Datos generales (pintura, tapizado, prueba, accesorios, observaciones)
+  const tipoVehLbl = tas.tipo_vehiculo === 'camioneta' ? 'Camioneta' : (tas.tipo_vehiculo === 'auto' ? 'Auto' : null);
   const datosHTML = `
     <div style="margin-top:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow)">
       <h3 style="margin:0 0 8px 0; font-size:15px; color:var(--vw-blue)">Datos generales</h3>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; font-size:13px">
+        ${tipoVehLbl ? `<div><div style="font-size:11px; color:var(--vw-grey-4); font-weight:600; text-transform:uppercase">Tipo de vehículo</div><div style="margin-top:2px">${tipoVehLbl}</div></div>` : ''}
+        ${tas.numero_interno ? `<div><div style="font-size:11px; color:var(--vw-grey-4); font-weight:600; text-transform:uppercase">Nº interno</div><div style="margin-top:2px; font-family:var(--mono); font-weight:700">${tas.numero_interno}</div></div>` : ''}
         ${pinturaEstado ? `<div><div style="font-size:11px; color:var(--vw-grey-4); font-weight:600; text-transform:uppercase">Pintura</div><div style="margin-top:2px">${PINTURA_LBL[pinturaEstado] || pinturaEstado}${pinturaObs ? ' — ' + pinturaObs : ''}</div></div>` : ''}
         ${tapizado ? `<div><div style="font-size:11px; color:var(--vw-grey-4); font-weight:600; text-transform:uppercase">Tapizado</div><div style="margin-top:2px">${tapizadoLbl}</div></div>` : ''}
         <div><div style="font-size:11px; color:var(--vw-grey-4); font-weight:600; text-transform:uppercase">Prueba dinámica</div><div style="margin-top:2px">${pd.realizada ? '✓ Realizada' + (pd.realizo ? ' por ' + pd.realizo : '') : '— No realizada'}</div></div>
@@ -6509,10 +6593,26 @@ function renderInspeccionFormulario(tas, prev) {
   const precioFisico = tas.precio_toma_fisico || tas.precio_sugerido_fisico || '';
   const pinturaEstadoPrev = tas.pintura_estado || (prev.pintura_estado || '');
   const pinturaObsPrev = tas.pintura_obs || (prev.pintura_obs || '');
+  // Pre-carga: si la tasación ya tiene tipo_vehiculo lo respeta; si no, lo infiere por esPickup.
+  const tipoVehPrev = tas.tipo_vehiculo || (esPickup(tas.modelo) ? 'camioneta' : 'auto');
+  const numeroInternoPrev = tas.numero_interno || '';
 
   const camposGrales = `
     <div style="margin-top:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow)">
       <h3 style="margin:0 0 12px 0; font-size:15px; color:var(--vw-blue)">Datos generales</h3>
+
+      <div style="margin-bottom:14px">
+        <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px">Tipo de vehículo</label>
+        <select id="inspTipoVehiculo" style="width:100%; padding:8px; font-size:13px">
+          <option value="auto" ${tipoVehPrev==='auto'?'selected':''}>Auto</option>
+          <option value="camioneta" ${tipoVehPrev==='camioneta'?'selected':''}>Camioneta</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px">Nº interno del sistema <span style="font-weight:400; color:var(--vw-grey-4); font-size:11px">(opcional acá — si lo sabés, anotalo)</span></label>
+        <input type="text" id="inspNumeroInterno" placeholder="Ej: 12345" value="${numeroInternoPrev}" style="width:100%; padding:8px; font-size:13px; font-family:var(--mono)">
+      </div>
 
       <div style="margin-bottom:14px">
         <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px">Tipo de tapizado</label>
@@ -6892,6 +6992,8 @@ async function guardarInspeccion(tasId) {
   const pruebaRealizo = document.getElementById('inspPruebaRealizo').value.trim();
   const precioSugerido = parseFloat(document.getElementById('inspPrecioFisico').value) || null;
   const observaciones = document.getElementById('inspObservaciones').value.trim();
+  const tipoVehiculo = document.getElementById('inspTipoVehiculo')?.value || null;
+  const numeroInterno = (document.getElementById('inspNumeroInterno')?.value || '').trim() || null;
 
   // Marcadores con costo (foto) + costos del checklist (interior + mecánica) = total arreglos
   const marcadores = (window.__fisicoMarcadores || []).slice();
@@ -6949,6 +7051,8 @@ async function guardarInspeccion(tasId) {
     tipo_tapizado: tipoTapizado || null,
     pintura_estado: pinturaEstado,
     pintura_obs: pinturaObs || null,
+    tipo_vehiculo: tipoVehiculo,
+    numero_interno: numeroInterno,
     precio_sugerido_fisico: precioSugerido,
     estado_fisico: 'pendiente_revision',
     tasado_fisico_por: currentUser.nombre,
