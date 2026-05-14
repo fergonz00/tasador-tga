@@ -3803,9 +3803,12 @@ async function imprimirHojaFinal(tasId) {
   .footer { margin-top: 8px; font-size: 8.5px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 4px; }
   @page { size: A4; margin: 6mm; }
   @media print { body { padding: 0; } body > *:last-child { margin-bottom: 0 !important; padding-bottom: 0 !important; } }
+  /* printWrap: ancho exacto A4 menos margenes. Lo escalamos por JS si el contenido se pasa de alto. */
+  #printWrap { width: 198mm; transform-origin: top left; }
 </style>
 </head>
 <body>
+<div id="printWrap">
 
 <h1>Tito González Automotores — Hoja de tasación final</h1>
 <div class="meta">Impreso el ${fechaImp}${fechaFinal ? ' · Tasación cerrada el ' + fechaFinal : ''}</div>
@@ -3887,13 +3890,34 @@ ${accesorios.length > 0 ? `
 
 <div class="footer">Tito González Automotores · Concesionario oficial Volkswagen · tasador.titogonzalez.online</div>
 
+</div>
 <script>
-  // Esperamos a que TODAS las imagenes (silueta) terminen de cargar antes de imprimir.
+  // Escala dinamica: si el contenido se pasa de una hoja A4, achicamos todo con transform: scale
+  // para que SIEMPRE entre en una sola pagina, tenga poca o mucha data.
+  function fitToOnePage() {
+    const wrap = document.getElementById('printWrap');
+    if (!wrap) return;
+    // Area util de A4 con margen 6mm: 297-12 = 285mm de alto, a 96 DPI ~ 1077px
+    const PX_PER_MM = 96 / 25.4;
+    const MAX_H = 285 * PX_PER_MM;
+    const h = wrap.scrollHeight;
+    if (h > MAX_H) {
+      const scale = MAX_H / h;
+      wrap.style.transform = 'scale(' + scale + ')';
+      // Compensamos el ancho para que despues del scale ocupe los 198mm completos
+      wrap.style.width = (198 / scale) + 'mm';
+      // Ajustamos el alto del body para que el navegador no genere una hoja 2 fantasma
+      document.body.style.height = (h * scale) + 'px';
+      document.body.style.overflow = 'hidden';
+    }
+  }
+  // Esperamos a que TODAS las imagenes (silueta) terminen de cargar, despues ajustamos e imprimimos.
   window.addEventListener('load', () => {
+    const trigger = () => { fitToOnePage(); setTimeout(() => window.print(), 150); };
     const imgs = Array.from(document.images);
-    if (imgs.length === 0) { setTimeout(() => window.print(), 150); return; }
+    if (imgs.length === 0) { trigger(); return; }
     let pend = imgs.length;
-    const done = () => { if (--pend <= 0) setTimeout(() => window.print(), 150); };
+    const done = () => { if (--pend <= 0) trigger(); };
     imgs.forEach(im => {
       if (im.complete) done();
       else { im.addEventListener('load', done); im.addEventListener('error', done); }
