@@ -3772,25 +3772,27 @@ async function imprimirHojaFinal(tasId) {
 <title>Hoja de tasación final — ${tas.patente || tas.cliente_nombre || 'sin patente'}</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; margin: 0; padding: 24px; line-height: 1.4; }
-  h1 { font-size: 20px; margin: 0 0 4px 0; color: #001E50; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #001E50; margin: 18px 0 8px 0; border-bottom: 1px solid #001E50; padding-bottom: 4px; }
-  .meta { font-size: 11px; color: #666; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; font-size: 13px; }
-  .grid div b { display: inline-block; min-width: 110px; color: #444; font-weight: 600; }
-  .precio-final { margin-top: 16px; padding: 14px 18px; background: #ECFDF5; border: 2px solid #065F46; border-radius: 6px; text-align: center; }
-  .precio-final .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #065F46; font-weight: 700; }
-  .precio-final .valor { font-size: 28px; font-weight: 700; color: #065F46; font-family: 'Courier New', monospace; margin-top: 4px; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
-  th, td { border: 1px solid #ccc; padding: 5px 8px; text-align: left; vertical-align: top; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; padding: 16px; line-height: 1.35; }
+  h1 { font-size: 18px; margin: 0 0 3px 0; color: #001E50; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #001E50; margin: 12px 0 6px 0; border-bottom: 1px solid #001E50; padding-bottom: 3px; }
+  .meta { font-size: 10px; color: #666; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 16px; font-size: 12px; }
+  .grid div b { display: inline-block; min-width: 100px; color: #444; font-weight: 600; }
+  .precio-final { margin-top: 12px; padding: 10px 14px; background: #ECFDF5; border: 2px solid #065F46; border-radius: 6px; text-align: center; page-break-inside: avoid; }
+  .precio-final .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #065F46; font-weight: 700; }
+  .precio-final .valor { font-size: 24px; font-weight: 700; color: #065F46; font-family: 'Courier New', monospace; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 4px; }
+  th, td { border: 1px solid #ccc; padding: 3px 6px; text-align: left; vertical-align: top; }
   th { background: #f3f3f3; font-weight: 600; }
-  ul { margin: 4px 0 0 18px; padding: 0; font-size: 13px; }
-  li { margin-bottom: 3px; }
-  .obs { padding: 10px 12px; background: #F9F9F9; border-left: 3px solid #001E50; font-size: 13px; font-style: italic; line-height: 1.5; white-space: pre-wrap; }
-  .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 40px; }
-  .firma { border-top: 1px solid #444; padding-top: 4px; font-size: 11px; color: #666; text-align: center; }
-  .footer { margin-top: 24px; font-size: 10px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 8px; }
-  @media print { body { padding: 12mm; } @page { size: A4; margin: 0; } }
+  ul { margin: 3px 0 0 18px; padding: 0; font-size: 12px; }
+  li { margin-bottom: 2px; }
+  .obs { padding: 8px 10px; background: #F9F9F9; border-left: 3px solid #001E50; font-size: 12px; font-style: italic; line-height: 1.4; white-space: pre-wrap; }
+  .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 22px; page-break-inside: avoid; }
+  .firma { border-top: 1px solid #444; padding-top: 3px; font-size: 10px; color: #666; text-align: center; }
+  .footer { margin-top: 10px; font-size: 9px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 5px; }
+  @page { size: A4; margin: 10mm; }
+  @media print { body { padding: 0; } body > *:last-child { margin-bottom: 0 !important; padding-bottom: 0 !important; } }
 </style>
 </head>
 <body>
