@@ -3736,19 +3736,19 @@ async function imprimirHojaFinal(tasId) {
     return `<li>${tipoLbl}${m.nota ? ' — ' + m.nota : ''}</li>`;
   }).join('');
 
-  // Checklist completo (interior + mecánica): TODOS los ítems con su estado.
-  // La hoja sirve para auditar la inspección, así que se ve cada ítem aunque esté en "Bueno".
+  // Checklist completo (interior + mecánica): TODOS los ítems con su estado, separados por grupo
+  // para poder renderizar en 2 columnas (ahorra altura en la hoja).
   const items = af.items || {};
-  const checklistRows = [];
-  INSP_GRUPOS.forEach(g => {
-    g.items.forEach(it => {
+  const checklistGrupos = INSP_GRUPOS.map(g => {
+    const rows = g.items.map(it => {
       const v = (items[g.key] || {})[it.key] || {};
       const estado = v.estado || 'bueno';
       const obs = (v.obs || '').trim();
       const estadoLbl = estado === 'malo' ? 'MALO' : estado === 'regular' ? 'Regular' : 'Bueno';
       const estadoColor = estado === 'malo' ? '#991B1B' : estado === 'regular' ? '#9A3412' : '#065F46';
-      checklistRows.push(`<tr><td>${g.titulo} · ${it.label}</td><td style="color:${estadoColor}; font-weight:700">${estadoLbl}</td><td>${obs || '—'}</td></tr>`);
-    });
+      return `<tr><td>${it.label}</td><td style="color:${estadoColor}; font-weight:700; white-space:nowrap">${estadoLbl}</td><td>${obs || '—'}</td></tr>`;
+    }).join('');
+    return { titulo: g.titulo, rows };
   });
 
   const PINTURA_LBL = {
@@ -3783,25 +3783,25 @@ async function imprimirHojaFinal(tasId) {
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body { font-family: 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; padding: 16px; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  h1 { font-size: 18px; margin: 0 0 3px 0; color: #001E50; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #001E50; margin: 12px 0 6px 0; border-bottom: 1px solid #001E50; padding-bottom: 3px; }
-  .meta { font-size: 10px; color: #666; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 16px; font-size: 12px; }
-  .grid div b { display: inline-block; min-width: 100px; color: #444; font-weight: 600; }
-  .precio-final { margin-top: 12px; padding: 10px 14px; background: #ECFDF5; border: 2px solid #065F46; border-radius: 6px; text-align: center; page-break-inside: avoid; }
-  .precio-final .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #065F46; font-weight: 700; }
-  .precio-final .valor { font-size: 24px; font-weight: 700; color: #065F46; font-family: 'Courier New', monospace; margin-top: 2px; }
-  table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 4px; }
-  th, td { border: 1px solid #ccc; padding: 3px 6px; text-align: left; vertical-align: top; }
-  th { background: #f3f3f3; font-weight: 600; }
-  ul { margin: 3px 0 0 18px; padding: 0; font-size: 12px; }
-  li { margin-bottom: 2px; }
-  .obs { padding: 8px 10px; background: #F9F9F9; border-left: 3px solid #001E50; font-size: 12px; font-style: italic; line-height: 1.4; white-space: pre-wrap; }
-  .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 22px; page-break-inside: avoid; }
-  .firma { border-top: 1px solid #444; padding-top: 3px; font-size: 10px; color: #666; text-align: center; }
-  .footer { margin-top: 10px; font-size: 9px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 5px; }
-  @page { size: A4; margin: 10mm; }
+  body { font-family: 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; padding: 10px; line-height: 1.3; font-size: 11px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  h1 { font-size: 16px; margin: 0 0 2px 0; color: #001E50; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #001E50; margin: 8px 0 4px 0; border-bottom: 1px solid #001E50; padding-bottom: 2px; }
+  .meta { font-size: 9.5px; color: #666; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; font-size: 11px; }
+  .grid div b { display: inline-block; min-width: 90px; color: #444; font-weight: 600; }
+  .precio-final { margin-top: 10px; padding: 8px 12px; background: #ECFDF5; border: 2px solid #065F46; border-radius: 5px; text-align: center; page-break-inside: avoid; }
+  .precio-final .lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: #065F46; font-weight: 700; }
+  .precio-final .valor { font-size: 22px; font-weight: 700; color: #065F46; font-family: 'Courier New', monospace; margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 2px; }
+  th, td { border: 1px solid #ccc; padding: 2px 5px; text-align: left; vertical-align: top; }
+  th { background: #f3f3f3; font-weight: 600; font-size: 9.5px; }
+  ul, ol { margin: 2px 0 0 16px; padding: 0; font-size: 11px; }
+  li { margin-bottom: 1px; }
+  .obs { padding: 6px 8px; background: #F9F9F9; border-left: 3px solid #001E50; font-size: 11px; font-style: italic; line-height: 1.35; white-space: pre-wrap; }
+  .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px; page-break-inside: avoid; }
+  .firma { border-top: 1px solid #444; padding-top: 2px; font-size: 9.5px; color: #666; text-align: center; }
+  .footer { margin-top: 8px; font-size: 8.5px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 4px; }
+  @page { size: A4; margin: 6mm; }
   @media print { body { padding: 0; } body > *:last-child { margin-bottom: 0 !important; padding-bottom: 0 !important; } }
 </style>
 </head>
@@ -3810,14 +3810,14 @@ async function imprimirHojaFinal(tasId) {
 <h1>Tito González Automotores — Hoja de tasación final</h1>
 <div class="meta">Impreso el ${fechaImp}${fechaFinal ? ' · Tasación cerrada el ' + fechaFinal : ''}</div>
 
-<div style="margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:10px">
-  <div style="padding:10px 14px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:6px">
-    <div style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#475569; font-weight:700">Nº interno del sistema</div>
-    <div style="font-family:'Courier New', monospace; font-weight:700; font-size:18px; color:#0F172A; margin-top:2px">${nroInterno}</div>
+<div style="margin-top:8px; display:grid; grid-template-columns:1fr 1fr; gap:8px">
+  <div style="padding:6px 10px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:4px">
+    <div style="font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#475569; font-weight:700">Nº interno del sistema</div>
+    <div style="font-family:'Courier New', monospace; font-weight:700; font-size:15px; color:#0F172A; margin-top:1px">${nroInterno}</div>
   </div>
-  <div style="padding:10px 14px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:6px">
-    <div style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#475569; font-weight:700">Tipo de vehículo</div>
-    <div style="font-weight:700; font-size:18px; color:#0F172A; margin-top:2px">${tipoVehLbl}</div>
+  <div style="padding:6px 10px; background:#F1F5F9; border:1px solid #CBD5E1; border-radius:4px">
+    <div style="font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#475569; font-weight:700">Tipo de vehículo</div>
+    <div style="font-weight:700; font-size:15px; color:#0F172A; margin-top:1px">${tipoVehLbl}</div>
   </div>
 </div>
 
@@ -3848,22 +3848,27 @@ ${(tas.pintura_obs || af.pintura_obs) ? `
 
 <h2>Daños observados sobre la unidad</h2>
 ${marcadores.length > 0 ? `
-  <div style="display:grid; grid-template-columns: 58% 1fr; gap:12px; align-items:start">
+  <div style="display:grid; grid-template-columns: 50% 1fr; gap:10px; align-items:start">
     <div style="position:relative; display:block; width:100%; border:1px solid #ccc; border-radius:4px; overflow:hidden">
       <img src="${carImgUrl}" style="display:block; width:100%; height:auto">
       ${marcadoresOverlayHTML}
     </div>
-    <ol style="margin:0; padding-left:22px; font-size:11px; line-height:1.5">${danosListNum}</ol>
+    <ol style="margin:0; padding-left:18px; font-size:10.5px; line-height:1.4">${danosListNum}</ol>
   </div>
 ` : '<div class="meta" style="font-style:italic">Sin daños marcados.</div>'}
 
 <h2>Checklist técnico</h2>
-${checklistRows.length > 0 ? `
-  <table>
-    <thead><tr><th>Ítem</th><th>Estado</th><th>Observación</th></tr></thead>
-    <tbody>${checklistRows.join('')}</tbody>
-  </table>
-` : '<div class="meta" style="font-style:italic">Sin checklist cargado.</div>'}
+<div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px">
+  ${checklistGrupos.map(g => `
+    <div>
+      <div style="font-size:11px; font-weight:700; color:#001E50; text-transform:uppercase; margin-bottom:3px">${g.titulo}</div>
+      <table>
+        <thead><tr><th style="width:42%">Ítem</th><th style="width:18%">Estado</th><th>Obs.</th></tr></thead>
+        <tbody>${g.rows}</tbody>
+      </table>
+    </div>
+  `).join('')}
+</div>
 
 ${accesorios.length > 0 ? `
   <h2>Accesorios</h2>
