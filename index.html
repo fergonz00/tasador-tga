@@ -3764,6 +3764,16 @@ async function imprimirHojaFinal(tasId) {
   const nroInterno = tas.numero_interno || '—';
   const pd = af.prueba_dinamica || {};
   const pruebaTxt = pd.realizada ? ('Sí' + (pd.realizo ? ' · por ' + pd.realizo : '')) : 'No realizada';
+  // URL absoluta de la silueta — relativo no resuelve en una ventana abierta vía window.open('').
+  const carImgUrl = new URL('assets/car-vistas.png', window.location.href).href;
+  // Marcadores numerados sobre la silueta (mismo orden que la lista de daños).
+  const marcadoresOverlayHTML = marcadores.map((m, idx) => `
+    <div style="position:absolute; left:${m.x}%; top:${m.y}%; transform:translate(-50%,-50%); width:18px; height:18px; background:#F97316; color:white; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; border:1.5px solid white; box-shadow:0 1px 2px rgba(0,0,0,0.4)">${idx+1}</div>
+  `).join('');
+  const danosListNum = marcadores.map((m, idx) => {
+    const tipoLbl = (TIPOS_DANIO.find(td => td.key === m.tipo) || {}).label || m.tipo || '—';
+    return `<li><b>${tipoLbl}</b>${m.nota ? ' — ' + m.nota : ''}</li>`;
+  }).join('');
 
   const html = `<!DOCTYPE html>
 <html lang="es-AR">
@@ -3773,7 +3783,7 @@ async function imprimirHojaFinal(tasId) {
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body { font-family: 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; padding: 16px; line-height: 1.35; }
+  body { font-family: 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; padding: 16px; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   h1 { font-size: 18px; margin: 0 0 3px 0; color: #001E50; }
   h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #001E50; margin: 12px 0 6px 0; border-bottom: 1px solid #001E50; padding-bottom: 3px; }
   .meta { font-size: 10px; color: #666; }
@@ -3837,7 +3847,15 @@ ${(tas.pintura_obs || af.pintura_obs) ? `
 ` : ''}
 
 <h2>Daños observados sobre la unidad</h2>
-${damageItems ? `<ul>${damageItems}</ul>` : '<div class="meta" style="font-style:italic">Sin daños marcados.</div>'}
+${marcadores.length > 0 ? `
+  <div style="display:grid; grid-template-columns: 58% 1fr; gap:12px; align-items:start">
+    <div style="position:relative; display:block; width:100%; border:1px solid #ccc; border-radius:4px; overflow:hidden">
+      <img src="${carImgUrl}" style="display:block; width:100%; height:auto">
+      ${marcadoresOverlayHTML}
+    </div>
+    <ol style="margin:0; padding-left:22px; font-size:11px; line-height:1.5">${danosListNum}</ol>
+  </div>
+` : '<div class="meta" style="font-style:italic">Sin daños marcados.</div>'}
 
 <h2>Checklist técnico</h2>
 ${checklistRows.length > 0 ? `
@@ -3865,7 +3883,17 @@ ${accesorios.length > 0 ? `
 <div class="footer">Tito González Automotores · Concesionario oficial Volkswagen · tasador.titogonzalez.online</div>
 
 <script>
-  window.addEventListener('load', () => { setTimeout(() => window.print(), 200); });
+  // Esperamos a que TODAS las imagenes (silueta) terminen de cargar antes de imprimir.
+  window.addEventListener('load', () => {
+    const imgs = Array.from(document.images);
+    if (imgs.length === 0) { setTimeout(() => window.print(), 150); return; }
+    let pend = imgs.length;
+    const done = () => { if (--pend <= 0) setTimeout(() => window.print(), 150); };
+    imgs.forEach(im => {
+      if (im.complete) done();
+      else { im.addEventListener('load', done); im.addEventListener('error', done); }
+    });
+  });
 <\/script>
 <\/body>
 </html>`;
