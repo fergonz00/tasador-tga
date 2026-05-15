@@ -4278,8 +4278,14 @@ async function enviarWhatsAppARol(rol, mensaje) {
 
 // Guarda el precio VIRTUAL (estimación previa). Notifica al vendedor por WA como referencial.
 // ============ TURNOS DE INSPECCIÓN FÍSICA ============
-const TURNO_DIAS_HABILES = [1, 2, 4, 5]; // lunes(1), martes(2), jueves(4), viernes(5)
-const TURNO_HORAS = ['10:00', '11:00', '14:00', '15:00', '16:00'];
+// L-M-J-V con horario partido (corte de almuerzo 12-14). Sábado reducido 11-15 continuo.
+const TURNO_DIAS_HABILES = [1, 2, 4, 5, 6]; // lunes(1), martes(2), jueves(4), viernes(5), sábado(6)
+const TURNO_HORAS_LUNVIE  = ['10:00', '11:00', '14:00', '15:00', '16:00'];
+const TURNO_HORAS_SABADO  = ['11:00', '12:00', '13:00', '14:00', '15:00'];
+
+function getTurnoHoras(d) {
+  return d.getDay() === 6 ? TURNO_HORAS_SABADO : TURNO_HORAS_LUNVIE;
+}
 
 function esDiaHabilTurno(d) {
   return TURNO_DIAS_HABILES.includes(d.getDay());
@@ -4427,11 +4433,12 @@ async function abrirAgendarTurno(tasId) {
   const diasHTML = dias.map(d => {
     const iso = fechaToISO(d);
     const horasOcupadas = ocupados[iso] || [];
+    const horasDelDia = getTurnoHoras(d);
     return `
       <div style="margin-bottom:14px">
         <div style="font-size:13px; font-weight:700; color:var(--vw-blue); margin-bottom:6px">${formatFechaTurnoLargo(d)}</div>
         <div style="display:flex; flex-wrap:wrap; gap:6px">
-          ${TURNO_HORAS.map(h => {
+          ${horasDelDia.map(h => {
             const yoLoTengo = (iso === turnoActualISO && h === turnoActualHora);
             const ocupado = horasOcupadas.includes(h) && !yoLoTengo;
             const estilo = yoLoTengo
@@ -4470,7 +4477,7 @@ async function abrirAgendarTurno(tasId) {
         </div>
         <div class="modal-body">
           ${turnoActualHTML}
-          <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:12px">Días hábiles: lun, mar, jue, vie. Horarios cada 1h: mañana 10–12 y tarde 14–17.</div>
+          <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:12px">Lun · mar · jue · vie: 10–12 y 14–17. Sábado: 11–16 (horario reducido).</div>
           ${diasHTML}
         </div>
       </div>
