@@ -2782,6 +2782,11 @@ function renderAdminCardEsperando(t) {
         <button onclick="event.stopPropagation(); guardarPrecioFinal('${t.id}')" style="padding:8px 14px; background:#065F46; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">${t.precio_toma_final ? 'Actualizar' : 'Guardar final'}</button>
       </div>
       <textarea id="comentario-${t.id}" placeholder="Comentario para el vendedor (pre-llenado por IA)" onclick="event.stopPropagation()" rows="3" style="width:100%; padding:8px 10px; font-size:12px; font-family:var(--sans); border:1px solid #A7F3D0; border-radius:6px; resize:vertical; background:white; box-sizing:border-box; color:var(--vw-grey-5); line-height:1.4">${comentario}</textarea>
+      ${!t.precio_toma_final ? `
+        <div style="margin-top:8px; display:flex; justify-content:flex-end">
+          <button onclick="event.stopPropagation(); abrirNoAptoModal('${t.id}')" style="padding:6px 12px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">❌ Marcar NO APTO para toma</button>
+        </div>
+      ` : ''}
     </div>
   `;
 
@@ -5479,6 +5484,75 @@ async function guardarPrecioVirtual(id) {
 // ============ REBOTAR TASACIÓN AL VENDEDOR ============
 // El admin abre un modal pidiendo motivo y al confirmar marca la tasación como rebotada.
 // El vendedor la ve en sus pendientes con cartel naranja y un botón para completar info y reenviar.
+// Modal para marcar una tasación como NO APTO para toma con motivo.
+// Usado desde el card de "Esperando confirmación" (la card simplificada no tiene
+// la textarea inline que usa Pendientes — abrimos modal para que el admin escriba
+// el motivo). Mismo efecto que marcarNoApto(): PATCH virtual_no_apto + notifyWA.
+async function abrirNoAptoModal(tasId) {
+  const existing = document.getElementById('noAptoModal');
+  if (existing) existing.remove();
+  const modalHTML = `
+    <div id="noAptoModal" class="modal-overlay" onclick="if(event.target===this)cerrarNoAptoModal()">
+      <div class="modal-box" style="max-width:520px">
+        <div class="modal-header">
+          <div style="flex:1">
+            <div style="font-size:16px; font-weight:700; color:#991B1B">❌ Marcar NO APTO para toma</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">El vendedor recibe el rechazo por WhatsApp con tu motivo. No se puede deshacer desde acá.</div>
+          </div>
+          <button onclick="cerrarNoAptoModal()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0">✕</button>
+        </div>
+        <div class="modal-body">
+          <label style="font-size:12px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:6px">Motivo del rechazo</label>
+          <textarea id="noAptoMotivoInput" rows="4" placeholder="Ej: usado con choque mayor en estructural, no avanzamos. / KM muy elevado para el modelo / Etc." style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:14px; font-family:var(--sans); resize:vertical; box-sizing:border-box"></textarea>
+          <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">
+            <button onclick="cerrarNoAptoModal()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+            <button onclick="confirmarNoApto('${tasId}')" style="padding:10px 16px; background:#991B1B; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Confirmar NO APTO</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => document.getElementById('noAptoMotivoInput')?.focus(), 50);
+}
+
+function cerrarNoAptoModal() {
+  const m = document.getElementById('noAptoModal');
+  if (m) m.remove();
+  document.body.style.overflow = '';
+}
+
+async function confirmarNoApto(tasId) {
+  const motivo = (document.getElementById('noAptoMotivoInput')?.value || '').trim();
+  if (motivo.length < 10) { showToast('Escribí el motivo (al menos 10 caracteres)'); return; }
+  try {
+    showLoading('Marcando NO APTO...');
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        virtual_no_apto: true,
+        virtual_no_apto_at: new Date().toISOString(),
+        virtual_no_apto_por: currentUser.nombre,
+        comentario_virtual_vendedor: motivo,
+        precio_toma_virtual: null,
+        precio_toma_virtual_at: null,
+        precio_toma_virtual_por: null,
+        updated_at: new Date().toISOString()
+      })
+    });
+    hideLoading();
+    showToast('Marcado como NO APTO');
+    notifyWA(tasId, 'usado_no_apto');
+    cerrarNoAptoModal();
+    loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  } catch(e) {
+    hideLoading();
+    console.error(e);
+    showToast('Error al marcar NO APTO');
+  }
+}
+
 async function abrirRebotarVendedor(tasId) {
   const existing = document.getElementById('rebotarModal');
   if (existing) existing.remove();
