@@ -15,7 +15,25 @@
       "Bash(curl *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "WebFetch(domain:www.callmebot.com)",
+      "WebSearch",
+      "Read(//c/Users/fschneidewind/Desktop/**)",
+      "Read(//c/Users/fschneidewind/OneDrive/**)",
+      "Read(//tmp/**)",
+      "Bash(awk -F'\",\"' 'NR>1 {gsub\\(/\"/,\"\",$1\\); print $1}' /tmp/cca.csv)",
+      "Bash(awk -F',' 'NR>1 && $1!=\"\" {gsub\\(/\"/,\"\",$1\\); print $1}' /tmp/p0km.csv)",
+      "Bash(awk -F'\",\"' 'NR>1 {marca=$1; modelo=$2; gsub\\(/\"/,\"\",marca\\); gsub\\(/\"/,\"\",modelo\\); if \\(modelo==\"\"\\) print marca}' /tmp/cca.csv)",
+      "Bash(awk -F'\",\"' 'NR>1 {marca=$1; modelo=$2; gsub\\(/\"/,\"\",marca\\); gsub\\(/\"/,\"\",modelo\\); if \\(marca==\"PEUGEOT\"\\) print modelo}' /tmp/cca.csv)",
+      "Bash(awk -F'\",\"' 'NR>1 {marca=$1; modelo=$2; gsub\\(/\"/,\"\",marca\\); gsub\\(/\"/,\"\",modelo\\); if \\(marca==\"PEUGEOT\" && modelo==\"\"\\) print NR\": \"$0}' /tmp/cca.csv)",
+      "Bash(pip show *)",
+      "Bash(pdftotext -layout \"/c/proyectos/tasador-tga/cca 04-26.pdf\" /tmp/cca.txt)",
+      "Bash(awk 'NR>=5104 && /^[A-Z][A-Z ]+[A-Z]$/ && NR>5104 {print NR\": \"$0; exit} NR>=5104' /tmp/cca.txt)",
+      "Bash(awk -F'\",\"' 'NR>1 {marca=$1; modelo=$2; gsub\\(/\"/,\"\",marca\\); gsub\\(/\"/,\"\",modelo\\); if \\(marca==\"PEUGEOT\" && modelo!=\"\"\\) print NR\": \"$0}' /tmp/cca.csv)",
+      "Bash(awk -F'\",\"' 'NR>1 {marca=$1; gsub\\(/\"/,\"\",marca\\); if \\(marca==\"PEUGEOT\"\\) print NR\" | MODELO=[\"$2\"]\"}' /tmp/cca.csv)",
+      "Bash(awk -F'MODELO=' 'BEGIN{prev=\"\"}{cur=$2; if \\(cur!=prev\\) print $0; prev=cur}')",
+      "Bash(awk *)",
+      "Bash(pip install *)"
     ]
   }
 }

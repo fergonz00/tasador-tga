@@ -639,6 +639,8 @@ input, select, textarea { font-family: var(--font); }
         <button class="active" onclick="showFisicoTab('pendientes', this)">Pendientes</button>
         <button onclick="showFisicoTab('inspeccionadas', this)">Inspeccionadas (esperando admin)</button>
         <button onclick="showFisicoTab('final', this)">Tasación final</button>
+        <button onclick="showFisicoTab('usado_tomado', this)">Usado tomado</button>
+        <button onclick="showFisicoTab('usado_no_apto', this)">Usado no apto</button>
         <button onclick="showFisicoTab('todas', this)">Todas</button>
       </div>
       <div style="padding: 12px 16px 0 16px;">
@@ -6277,23 +6279,33 @@ function renderFisicoList() {
   const list = document.getElementById('fisicoList');
   let data = fisicoData || [];
 
-  // Fazzini ve: (a) las que pasaron por virtual + turno agendado, O (b) las presenciales (vienen sin virtual).
-  data = data.filter(t => (t.precio_toma_virtual && t.turno_fecha && t.turno_hora) || t.es_presencial === true);
-
   // Filtro por estado:
-  //   pendientes      → sin inspección hecha (no hay analisis_fisico)
-  //   inspeccionadas  → ya inspeccionó y mandó al admin, esperando precio final
-  //   final           → admin ya puso precio final
-  //   todas           → todo
+  //   pendientes      → con turno + precio virtual, sin inspección hecha
+  //   inspeccionadas  → con turno, Fazzini ya mandó al admin, esperando precio final
+  //   final           → admin ya puso precio final (con turno previo)
+  //   todas           → todo lo del workflow Fazzini (con turno o presencial)
+  //   usado_tomado    → operación cerrada con usado tomado (universo amplio)
+  //   usado_no_apto   → admin marcó NO APTO (puede haber sido antes o después del turno)
   const tieneInsp = (t) => !!(t.analisis_fisico && typeof t.analisis_fisico === 'object' && t.precio_sugerido_fisico);
-  // Una unidad está "viva" si no la marcaron como no avanza, no apto, ni la cancelaron como visita
   const _vivaParaFazzini = (t) => !t.no_avanza_motivo && !t.virtual_no_apto && !t.turno_cancelado_motivo;
-  if (fisicoFiltroEstadoVal === 'pendientes') {
-    data = data.filter(t => !tieneInsp(t) && _vivaParaFazzini(t));
-  } else if (fisicoFiltroEstadoVal === 'inspeccionadas') {
-    data = data.filter(t => tieneInsp(t) && !t.precio_toma_final);
-  } else if (fisicoFiltroEstadoVal === 'final') {
-    data = data.filter(t => t.precio_toma_final);
+
+  if (fisicoFiltroEstadoVal === 'usado_tomado') {
+    // No aplicamos el filtro base — un usado_tomado siempre pasó por inspección
+    // pero queremos mostrar todos los casos cerrados con usado tomado.
+    data = data.filter(t => t.precio_toma_final && t.usado_tomado === true);
+  } else if (fisicoFiltroEstadoVal === 'usado_no_apto') {
+    // No aplicamos el filtro base — el admin puede rechazar antes o después del turno.
+    data = data.filter(t => !!t.virtual_no_apto);
+  } else {
+    // Filtros del workflow Fazzini: solo unidades con turno o presenciales.
+    data = data.filter(t => (t.precio_toma_virtual && t.turno_fecha && t.turno_hora) || t.es_presencial === true);
+    if (fisicoFiltroEstadoVal === 'pendientes') {
+      data = data.filter(t => !tieneInsp(t) && _vivaParaFazzini(t));
+    } else if (fisicoFiltroEstadoVal === 'inspeccionadas') {
+      data = data.filter(t => tieneInsp(t) && !t.precio_toma_final);
+    } else if (fisicoFiltroEstadoVal === 'final') {
+      data = data.filter(t => t.precio_toma_final);
+    }
   }
 
   // Filtro de texto (patente o nombre del cliente)
@@ -6321,6 +6333,10 @@ function renderFisicoList() {
       msg = 'Todavía no hay tasaciones cerradas con precio final';
     } else if (fisicoFiltroEstadoVal === 'pendientes') {
       msg = 'No hay unidades pendientes de inspección.<br><span style="font-size:12px; color:var(--vw-grey-4)">Solo aparecen las que tienen <strong>precio virtual cargado</strong> y <strong>turno agendado</strong>.</span>';
+    } else if (fisicoFiltroEstadoVal === 'usado_tomado') {
+      msg = 'Todavía no hay operaciones cerradas con usado tomado';
+    } else if (fisicoFiltroEstadoVal === 'usado_no_apto') {
+      msg = 'Por ahora no hay tasaciones marcadas como NO APTAS para toma';
     } else {
       msg = 'Sin tasaciones con turno y precio virtual cargados';
     }
@@ -6333,6 +6349,8 @@ function renderFisicoList() {
     pendientes: '🛠️ Unidades con turno y precio virtual cargado por el admin. Tenés que inspeccionarlas físicamente cuando llegue el cliente.',
     inspeccionadas: '⏳ Ya las inspeccionaste y mandaste tu precio sugerido. El admin tiene que confirmar el precio final — todavía no las tomó.',
     final: '✅ El admin ya cerró el precio final luego de tu inspección. Si el vendedor no marcó todavía si se tomó el usado, podés marcarlo vos.',
+    usado_tomado: '🟢 Tasaciones donde el usado efectivamente se tomó como parte de pago. Operación cerrada con usado.',
+    usado_no_apto: '❌ Tasaciones que el admin evaluó como NO APTAS para toma. El motivo está dentro de cada tarjeta.',
     todas: 'Todas las unidades con turno y precio virtual.'
   };
   const subtituloFisHTML = `<div style="margin:0 0 12px 0; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosFis[fisicoFiltroEstadoVal] || ''}</div>`;
