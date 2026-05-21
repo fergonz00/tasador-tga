@@ -6359,7 +6359,12 @@ function renderFisicoList() {
     const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
     const patenteLbl = t.patente ? `<span style="display:inline-block;padding:3px 10px;background:var(--vw-grey-1);border-radius:4px;font-family:var(--mono);font-size:12px;font-weight:700">${t.patente}</span>` : '<span style="font-size:12px;color:var(--vw-grey-3)">sin patente</span>';
     let estadoFisicoBadge, btnLabel, btnBg;
-    if (t.precio_toma_final) {
+    if (t.virtual_no_apto) {
+      // Caso cerrado por el admin: no hay nada que inspeccionar, solo se muestra el detalle.
+      estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#FEE2E2;color:#991B1B;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">❌ USADO NO APTO</span>';
+      btnLabel = 'Ver detalle';
+      btnBg = '#991B1B';
+    } else if (t.precio_toma_final) {
       estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#D1FAE5;color:#065F46;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">TASADO FINAL POR EL ADMIN</span>';
       btnLabel = 'Ver detalle';
       btnBg = '#065F46';
@@ -6387,7 +6392,7 @@ function renderFisicoList() {
     // Si la tasación está pendiente de inspección y tiene turno agendado, Fazzini puede reagendar o cancelar revisión
     // (cuando el cliente no se presenta o pide cambio).
     let accionesTurno = '';
-    const esPendienteInsp = !tieneInsp(t) && !t.precio_toma_final;
+    const esPendienteInsp = !tieneInsp(t) && !t.precio_toma_final && !t.virtual_no_apto;
     if (esPendienteInsp && t.turno_fecha) {
       accionesTurno = `
         <div style="display:flex; gap:6px; flex-wrap:wrap">
