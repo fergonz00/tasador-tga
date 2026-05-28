@@ -807,7 +807,7 @@ let fotos = []; // array of File objects
 let fotoPreviews = []; // array of data URLs
 let allTasaciones = [];
 let currentStep = 0;
-const TOTAL_STEPS = 13; // cliente, marca, año, modelo, version, 0kmEquiv, km, patente+provincia, color+kavak, [si VW: ¿compró en TGA?], 0km consulta, precio ofrecido, fotos
+const TOTAL_STEPS = 14; // cliente, marca, [si VW: ¿compró en TGA?], año, modelo, version, 0kmEquiv, km, patente+provincia, color+kavak, 0km consulta, precio ofrecido, fotos, comentario opcional del vendedor
 const PROVINCIAS_AR = [
   'CABA', 'Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba', 'Corrientes',
   'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones',
@@ -1352,7 +1352,7 @@ function renderWizard() {
   document.getElementById('progressBar').innerHTML = dots;
 
   const container = document.getElementById('wizardContainer');
-  const steps = [renderStepCliente, renderStep0, renderStepVwCompra, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7, renderStep8, renderStep9, renderStep10];
+  const steps = [renderStepCliente, renderStep0, renderStepVwCompra, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7, renderStep8, renderStep9, renderStep10, renderStep11];
   container.innerHTML = '';
   const div = document.createElement('div');
   div.className = 'wizard-step active';
@@ -1756,9 +1756,58 @@ function renderStep10() { // Fotos
     </div>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
-      <button class="btn-submit" onclick="submitTasacion()">Enviar tasación</button>
+      <button class="btn-next" id="btnNext" onclick="nextStep()">Siguiente</button>
     </div>
   `;
+}
+
+function renderStep11() { // Comentario opcional del vendedor (GNC, modelo no exacto, etc.)
+  const yaTiene = wizardData.comentarioVendedorSiNo;
+  const txt = wizardData.comentarioVendedor || '';
+  const selSi = yaTiene === true ? 'checked' : '';
+  const selNo = yaTiene === false ? 'checked' : '';
+  const showTxt = yaTiene === true ? '' : 'display:none';
+  return `
+    <style>
+      .com-opt { display:flex; align-items:center; gap:12px; padding:14px 18px; border:2px solid var(--vw-grey-2); border-radius:10px; cursor:pointer; font-weight:600; transition:all .15s; background:#fff; }
+      .com-opt input { position:absolute; opacity:0; pointer-events:none; }
+      .com-opt .tick { width:24px; height:24px; border-radius:50%; border:2px solid var(--vw-grey-3); display:inline-flex; align-items:center; justify-content:center; font-size:14px; color:transparent; font-weight:bold; flex-shrink:0; }
+      .com-opt:hover { border-color:var(--vw-blue); }
+      .com-opt:has(input:checked) { border-color:var(--vw-blue); background:#EFF6FF; color:var(--vw-blue); }
+      .com-opt:has(input:checked) .tick { background:var(--vw-blue); border-color:var(--vw-blue); color:#fff; }
+    </style>
+    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    <h2>Observaciones</h2>
+    <label>¿Algún comentario adicional sobre el usado?</label>
+    <div style="margin-top:6px; font-size:12px; color:var(--vw-grey-4)">Por ejemplo: tiene GNC, el modelo no coincide exactamente con el listado, motor modificado, alguna particularidad que el tasador deba saber, etc.</div>
+    <div style="display:flex; gap:12px; margin-top:14px">
+      <label class="com-opt" style="flex:1">
+        <input type="radio" name="wComentarioSiNo" value="si" ${selSi} onchange="onComentarioSiNoChange()">
+        <span class="tick">✓</span>
+        <span>Sí</span>
+      </label>
+      <label class="com-opt" style="flex:1">
+        <input type="radio" name="wComentarioSiNo" value="no" ${selNo} onchange="onComentarioSiNoChange()">
+        <span class="tick">✓</span>
+        <span>No</span>
+      </label>
+    </div>
+    <div id="wComentarioWrap" style="margin-top:16px; ${showTxt}">
+      <label>Escribí el comentario</label>
+      <textarea id="wComentarioVendedor" rows="4" placeholder="Ej: Tiene equipo de GNC homologado vigente. / El modelo exacto es la variante 'TSI MY24' que no aparece en la lista." oninput="validateStep()" style="resize:vertical; min-height:80px; width:100%; padding:10px 12px; font-family:inherit; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:8px; box-sizing:border-box">${txt}</textarea>
+    </div>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-submit" id="btnNext" disabled onclick="submitTasacion()">Enviar tasación</button>
+    </div>
+  `;
+}
+
+function onComentarioSiNoChange() {
+  const val = (document.querySelector('input[name="wComentarioSiNo"]:checked') || {}).value;
+  const wrap = document.getElementById('wComentarioWrap');
+  if (wrap) wrap.style.display = (val === 'si') ? '' : 'none';
+  validateStep();
 }
 
 // Wizard data storage
@@ -1823,6 +1872,21 @@ function saveCurrentStep() {
       break;
     case 10: wizardData.modelo0km = val('wModelo0km'); break;
     case 11: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
+    case 13: {
+      // Comentario opcional del vendedor (SI/NO + textarea)
+      const sel = (document.querySelector('input[name="wComentarioSiNo"]:checked') || {}).value;
+      if (sel === 'si') {
+        wizardData.comentarioVendedorSiNo = true;
+        wizardData.comentarioVendedor = val('wComentarioVendedor') || '';
+      } else if (sel === 'no') {
+        wizardData.comentarioVendedorSiNo = false;
+        wizardData.comentarioVendedor = '';
+      } else {
+        wizardData.comentarioVendedorSiNo = null;
+        wizardData.comentarioVendedor = '';
+      }
+      break;
+    }
   }
 }
 
@@ -1875,6 +1939,15 @@ function validateStep() {
     case 9: valid = !!val('wColor') && !!val('wKavak') && parseInt(val('wKavak')) > 0; break;
     case 10: valid = !!val('wModelo0km'); break;
     case 11: valid = !!val('wPrecioOfrecido') && parseInt(val('wPrecioOfrecido')) > 0; break;
+    case 12: valid = true; break; // fotos: opcionales, siempre puede pasar de pantalla
+    case 13: {
+      // Comentario opcional del vendedor: si NO → válido; si SI → requiere texto
+      const sel = (document.querySelector('input[name="wComentarioSiNo"]:checked') || {}).value;
+      if (sel === 'no') { valid = true; break; }
+      if (sel === 'si') { valid = (val('wComentarioVendedor') || '').length >= 5; break; }
+      valid = false;
+      break;
+    }
   }
   btn.disabled = !valid;
 }
@@ -2093,6 +2166,7 @@ async function submitTasacion() {
       precio_ofrecido_fyf: precioOfrecido,
       usado_vw_comprado_tga: (marca.toUpperCase() === 'VOLKSWAGEN') ? (wizardData.vwCompradoTGA ?? null) : null,
       usado_vw_lugar_compra: (marca.toUpperCase() === 'VOLKSWAGEN' && wizardData.vwCompradoTGA === false) ? (wizardData.vwLugarCompra || null) : null,
+      vendedor_comentario: (wizardData.comentarioVendedorSiNo === true && (wizardData.comentarioVendedor || '').trim()) ? wizardData.comentarioVendedor.trim() : null,
       es_presencial: wizardData.es_presencial === true,
       fotos: fotoUrls,
       estado: 'pendiente'
@@ -2320,6 +2394,7 @@ function renderMisTasacionesList() {
             ${t.patente ? `<div class="info-row"><span class="label">Patente</span><span class="value" style="font-family:var(--mono);font-weight:600">${t.patente}</span></div>` : ''}
             ${t.provincia_radicacion ? `<div class="info-row"><span class="label">Radicado en</span><span class="value">${t.provincia_radicacion}</span></div>` : ''}
             ${(t.marca || '').toUpperCase() === 'VOLKSWAGEN' && t.usado_vw_comprado_tga !== null && t.usado_vw_comprado_tga !== undefined ? `<div class="info-row"><span class="label">Comprado en TGA</span><span class="value">${t.usado_vw_comprado_tga ? 'Sí' : 'No'}${t.usado_vw_lugar_compra ? ` — ${t.usado_vw_lugar_compra}` : ''}</span></div>` : ''}
+            ${t.vendedor_comentario ? `<div style="margin-top:8px; padding:8px 10px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px; font-size:12px; color:#92400E"><div style="font-weight:700; font-size:10px; letter-spacing:0.5px; margin-bottom:3px">📝 TU COMENTARIO</div><div style="color:var(--vw-grey-5); line-height:1.4; white-space:pre-wrap">${t.vendedor_comentario}</div></div>` : ''}
             <div class="info-row"><span class="label">Fecha</span><span class="value">${fecha}</span></div>
             ${t.modelo_0km_consulta ? `<div class="info-row"><span class="label">0km consultado</span><span class="value">${t.modelo_0km_consulta}</span></div>` : ''}
             ${t.precio_ofrecido_fyf ? `<div class="info-row"><span class="label">Precio ofrecido FyF</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_ofrecido_fyf)}</span></div>` : ''}
@@ -3251,6 +3326,13 @@ function renderAdminCard(t) {
         `;
       })()}
 
+      ${t.vendedor_comentario ? `
+        <div style="margin-top:12px; padding:12px 14px; background:#FFFBEB; border:2px solid #FDE68A; border-radius:8px">
+          <div style="font-size:10px; font-weight:700; color:#92400E; letter-spacing:0.5px; margin-bottom:6px">📝 OBSERVACIONES DEL VENDEDOR</div>
+          <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap">${t.vendedor_comentario}</div>
+        </div>
+      ` : ''}
+
       ${t.datos_corregidos_at ? `
         <div style="margin-top:8px; padding:6px 10px; background:#FEF3C7; border-radius:6px; font-size:11px; color:#92400E; display:inline-block">
           ⚠ Datos del vehículo corregidos por <strong>${t.datos_corregidos_por || 'el tasador'}</strong> el ${new Date(t.datos_corregidos_at).toLocaleDateString('es-AR')}
@@ -3848,6 +3930,11 @@ async function imprimirHojaFinal(tasId) {
   <div><b>Vendedor:</b> ${tas.vendedor_nombre || '—'}</div>
   ${tas.tasado_fisico_por ? `<div><b>Tasador físico:</b> ${tas.tasado_fisico_por}</div>` : ''}
 </div>
+
+${tas.vendedor_comentario ? `
+<h2>Observaciones del vendedor</h2>
+<div class="obs" style="white-space:pre-wrap">${tas.vendedor_comentario}</div>
+` : ''}
 
 <h2>Inspección física — Observaciones</h2>
 ${obsGral ? `<div class="obs">${obsGral}</div>` : '<div class="meta" style="font-style:italic">Sin observaciones generales cargadas.</div>'}
