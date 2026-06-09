@@ -1574,7 +1574,8 @@ function renderStep5() { // Kilómetros
     <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
     <h2>Kilómetros</h2>
     <label>Kilómetros actuales del vehículo</label>
-    <input type="number" id="wKm" placeholder="Ej: 45000" oninput="validateStep()" min="0">
+    <input type="number" id="wKm" placeholder="Ej: 45000" oninput="validateStep()" min="0" max="250000">
+    <div id="wKmError" style="display:none; color:var(--red); font-size:13px; margin-top:6px; font-weight:600">⚠️ El kilometraje máximo permitido es 250.000 km.</div>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
       <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
@@ -1927,7 +1928,14 @@ function validateStep() {
       valid = true;
       break;
     }
-    case 7: valid = !!val('wKm') && parseInt(val('wKm')) >= 0; break;
+    case 7: {
+      const kmVal = parseInt(val('wKm'));
+      const excedeKm = !isNaN(kmVal) && kmVal > 250000;
+      const errKm = document.getElementById('wKmError');
+      if (errKm) errKm.style.display = excedeKm ? 'block' : 'none';
+      valid = !!val('wKm') && kmVal >= 0 && !excedeKm;
+      break;
+    }
     case 8: {
       const pat = val('wPatente').toUpperCase();
       const prov = val('wProvincia');
