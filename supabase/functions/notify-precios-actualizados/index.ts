@@ -47,9 +47,30 @@ Deno.serve(async (req: Request) => {
   const usuario = String(body?.usuario || "").trim() || null;
   const forzar = body?.forzar === true; // saltea cooldown (para pruebas)
   const sincrono = body?.sync === true; // espera el resultado (para pruebas)
+  // Prueba dirigida: manda SOLO a este número (E.164 sin +), sin tocar el padrón
+  // ni el cooldown. Sirve para validar el template antes de avisar a todos.
+  const solo = String(body?.solo || "").trim() || null;
+
+  // Debug: lista los templates de la WABA (nombre/idioma/estado) para diagnosticar.
+  if (body?.listar === true) {
+    const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
+    try {
+      const res = await fetch(
+        `${META_API_URL}/${WABA_ID}/message_templates?fields=name,language,status,category&limit=200`,
+        { headers: { Authorization: `Bearer ${WA_TOKEN}` } },
+      );
+      const j = await res.json();
+      const items = (j?.data ?? []).map((t: any) => ({
+        name: t.name, language: t.language, status: t.status, category: t.category,
+      }));
+      return json({ templates: items, error: j?.error });
+    } catch (e) {
+      return json({ error: String(e) }, 500);
+    }
+  }
 
   const env = { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN };
-  const trabajo = procesar(env, usuario, forzar);
+  const trabajo = procesar(env, usuario, forzar, solo);
 
   // Fire-and-forget: respondemos enseguida para no colgar el botón "Guardar".
   // El envío a los 16 destinatarios sigue en segundo plano (EdgeRuntime.waitUntil).
@@ -70,8 +91,15 @@ type Env = {
   WA_TOKEN: string;
 };
 
-async function procesar(env: Env, usuario: string | null, forzar: boolean) {
+async function procesar(env: Env, usuario: string | null, forzar: boolean, solo: string | null = null) {
   const { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN } = env;
+
+  // Modo prueba dirigida: un único destinatario, sin cooldown ni registro.
+  if (solo) {
+    const telE164 = solo.replace(/^\+/, "").replace(/\s|-/g, "");
+    const res = await enviarTemplate(WA_PHONE_ID, WA_TOKEN, telE164, "equipo");
+    return { prueba: true, destino: telE164, ...res };
+  }
 
   // ── Cooldown: ¿avisamos hace poco? ────────────────────────────────────────
   if (!forzar && COOLDOWN_MIN > 0) {
@@ -132,38 +160,9 @@ async function procesar(env: Env, usuario: string | null, forzar: boolean) {
 
   for (const dest of destinatarios) {
     const primerNombre = (dest.nombre.split(/\s+/)[0] || dest.nombre || "").trim() || "equipo";
-    const payload = {
-      messaging_product: "whatsapp",
-      to: dest.telefono_wa,
-      type: "template",
-      template: {
-        name: TEMPLATE_NAME,
-        language: { code: META_LANGUAGE },
-        components: [{
-          type: "body",
-          parameters: [{ type: "text", text: primerNombre }],
-        }],
-      },
-    };
-
-    try {
-      const metaRes = await fetch(`${META_API_URL}/${WA_PHONE_ID}/messages`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${WA_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      const metaJson = await metaRes.json();
-      if (metaRes.ok && metaJson.messages && metaJson.messages[0]) {
-        enviados.push({ destinatario: dest.nombre, meta_id: metaJson.messages[0].id });
-      } else {
-        errores.push({ destinatario: dest.nombre, error: metaJson.error || metaJson });
-      }
-    } catch (e) {
-      errores.push({ destinatario: dest.nombre, error: String(e) });
-    }
+    const r = await enviarTemplate(WA_PHONE_ID, WA_TOKEN, dest.telefono_wa, primerNombre);
+    if (r.ok) enviados.push({ destinatario: dest.nombre, meta_id: r.meta_id });
+    else errores.push({ destinatario: dest.nombre, error: r.error });
   }
 
   // ── Registrar el aviso (para el cooldown) ─────────────────────────────────
@@ -179,6 +178,41 @@ async function procesar(env: Env, usuario: string | null, forzar: boolean) {
   }
 
   return { enviados: enviados.length, errores, detalle_enviados: enviados };
+}
+
+async function enviarTemplate(
+  phoneId: string,
+  token: string,
+  telE164: string,
+  primerNombre: string,
+): Promise<{ ok: boolean; meta_id?: string; error?: any }> {
+  const payload = {
+    messaging_product: "whatsapp",
+    to: telE164,
+    type: "template",
+    template: {
+      name: TEMPLATE_NAME,
+      language: { code: META_LANGUAGE },
+      components: [{
+        type: "body",
+        parameters: [{ type: "text", text: primerNombre }],
+      }],
+    },
+  };
+  try {
+    const metaRes = await fetch(`${META_API_URL}/${phoneId}/messages`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const metaJson = await metaRes.json();
+    if (metaRes.ok && metaJson.messages && metaJson.messages[0]) {
+      return { ok: true, meta_id: metaJson.messages[0].id };
+    }
+    return { ok: false, error: metaJson.error || metaJson };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }
 
 function json(obj: any, status = 200) {
