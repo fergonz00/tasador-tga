@@ -334,9 +334,16 @@ Circuito correcto (probado con abril y julio 2026):
 cd scripts
 python parse_cca_pdf.py "../Autos.pdf" cca_julio_parsed.csv   # PDF → CSV por coordenadas
 python build_cca_sheet.py cca_julio_parsed.csv cca_julio_2026.xlsx
+python subir_cca.py cca_julio_2026.xlsx cca_precios_julio_2026   # sube solo, sin File→Import
 ```
 
-Después, en el Sheet (`1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko`, gid `904791552`): **File → Import → Upload → Replace current sheet**. Tiene que ser **.xlsx** — pegar CSV/TSV rompe las celdas con coma (`5P 1,4 GENERATION`) y convierte `111,660` en `111.7`.
+`subir_cca.py` postea al Apps Script del **simulador VWFS** (`simulador-presupuestos-vwfs`, action `cargarCCA` en `live/cargaCCA.js`), que es el que ya tiene autorización de escritura sobre esa planilla — así no hace falta autorizar un proyecto nuevo ni que Fer importe a mano. URL y token en `C:\proyectos\.secrets\simulador-vwfs.env` (deployment **@35**, separado del **@34** que consume portal-precios: no redeployar el @34).
+
+El script de Apps Script **reemplaza el contenido de la pestaña, nunca la recrea** — el tasador la lee por `gid` (`904791552`), así que si cambiara la pestaña se rompería. Renombrarla sí es seguro (el gid no cambia), y tiene que seguir empezando con `cca_precios_` porque `_getHojaCCA()` del simulador busca por ese prefijo. Antes de pisar deja un backup `backup_cca_<mes>` (conserva los últimos 3; el prefijo es distinto a propósito para que `_getHojaCCA()` no lo agarre).
+
+**Gotcha gviz (costó encontrarlo):** la URL del CCA lleva **`&headers=1`**. Sin eso, gviz tipa la columna `0Km` como numérica y **descarta su encabezado** (queda `""`), así que `row['0Km']` nunca resuelve. Los encabezados de año zafan sólo porque `"2025"` se parsea como número.
+
+Si hay que cargar a mano, tiene que ser **.xlsx** vía File → Import → Replace current sheet — pegar CSV/TSV rompe las celdas con coma (`5P 1,4 GENERATION`) y convierte `111,660` en `111.7`.
 
 - `parse_cca_pdf.py` deduce todo del PDF: eje de años por coordenada, fuente del modelo (cambia entre ediciones), marca por hueco de columna. No hay nada hardcodeado por marca.
 - `build_cca_sheet.py` sí tiene hardcodeadas las **reglas de moneda**, que salen de las anotaciones en color del PDF (`FERRARI EN US$`, `HB20 0KM EN PESOS`, etc.). **Cada mes, revisar que esas anotaciones no hayan cambiado**: el script las lista si corrés el bloque de anotaciones. Al 07/2026: 100% en US$ = FERRARI, JAGUAR, LOTUS, MASERATI, McLAREN, PORSCHE; el resto en pesos con el 0 Km en US$ salvo excepciones (HB20, Jeep menos Commander/Compass/Renegade, Sprinter, Ram Dakota/Rampage, y en Honda/Toyota solo algunos modelos).
@@ -361,9 +368,8 @@ Después, en el Sheet (`1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko`, gid `9047
 
 ## Pendientes al retomar
 
-1. **Importar `scripts/cca_julio_2026.xlsx`** al Sheet del CCA (File → Import → Replace current sheet). Hasta que no se importe, la app sigue con los precios de abril y con el formato viejo (sin columnas de moneda), que el código soporta por fallback.
-2. **Edge cases sin template Meta** (heredado del cambio 5): decidir si crear templates `usado_no_apto` y `turno_cancelado` o dejar sin notificación WA. Mientras tanto sigue usando CallMeBot para esos casos puntuales.
-3. **Eventual**: si el sweeper detecta tasaciones que se reintentan muchas veces sin éxito, mirar `notificaciones_log` para entender la causa (Meta error, número inválido, etc).
+1. **Edge cases sin template Meta** (heredado del cambio 5): decidir si crear templates `usado_no_apto` y `turno_cancelado` o dejar sin notificación WA. Mientras tanto sigue usando CallMeBot para esos casos puntuales.
+2. **Eventual**: si el sweeper detecta tasaciones que se reintentan muchas veces sin éxito, mirar `notificaciones_log` para entender la causa (Meta error, número inválido, etc).
 
 ## Convenciones y restricciones
 
