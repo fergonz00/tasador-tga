@@ -790,8 +790,14 @@ const PRECIOS_0KM_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQH
 const FYF = 1110000;
 const DEFAULT_COTIZ = 1350;
 
-// Marcas en USD en CCA. Todo lo demás se toma en pesos (×1000).
-const MARCAS_USD = ['BYD'];
+// Moneda de cada fila del CCA: viene de la columna `moneda` de la planilla
+// (la genera scripts/build_cca_sheet.py leyendo las anotaciones del PDF).
+// MARCAS_USD queda solo como fallback por si la planilla no trae la columna.
+// OJO: BYD NO va acá — en CCA lo único en US$ de BYD es la columna 0 Km;
+// los años usados están en miles de pesos como el resto.
+const MARCAS_USD = ['PORSCHE','FERRARI','JAGUAR','LOTUS','MASERATI','MCLAREN'];
+// CCA no publica columna 2026: un usado 2026 se toma contra la columna 0 Km.
+const ANIO_0KM = 2026;
 
 // Pick-ups (20.000 km/año)
 const PICKUPS_KEYWORDS = ['AMAROK','HILUX','RANGER','SAVEIRO','S-10','S10','MONTANA','STRADA','TORO','FRONTIER','ALASKAN'];
@@ -1413,7 +1419,7 @@ function renderStep1() { // Año
 function renderStep2() { // Modelo
   const marca = getWizardVal('marca');
   const anio = getWizardVal('anio');
-  const anioCol = anio === '0' ? '0Km' : anio;
+  const anioCol = ccaAnioCol(anio);
   const yUser = parseInt(anio);
   const filtered = ccaData.filter(r => {
     if (r.marca !== marca) return false;
@@ -1449,7 +1455,7 @@ function renderStep3() { // Versión CCA
   const marca = getWizardVal('marca');
   const anio = getWizardVal('anio');
   const modelo = getWizardVal('modelo');
-  const anioCol = anio === '0' ? '0Km' : anio;
+  const anioCol = ccaAnioCol(anio);
   const yUser = parseInt(anio);
   const filtered = ccaData.filter(r => {
     if (r.marca !== marca || r.modelo !== modelo) return false;
@@ -2018,6 +2024,13 @@ function esPesos(marca) {
   return !MARCAS_USD.includes(String(marca).toUpperCase());
 }
 
+// Columna del CCA para un año. CCA publica 0 Km + 2025..2012 (no hay 2026),
+// así que un usado 2026 se busca contra la columna 0 Km.
+function ccaAnioCol(anio) {
+  const a = parseInt(anio, 10);
+  return (a === 0 || a >= ANIO_0KM) ? '0Km' : String(a);
+}
+
 function esPickup(modelo) {
   if (!modelo) return false;
   const m = String(modelo).toUpperCase();
@@ -2025,7 +2038,7 @@ function esPickup(modelo) {
 }
 
 function calcPrecioCCA(marca, modelo, version, anio) {
-  const anioCol = anio === 0 ? '0Km' : String(anio);
+  const anioCol = ccaAnioCol(anio);
   const row = ccaData.find(r => r.marca === marca && r.modelo === modelo && r.version === version);
   if (!row) return null;
   let raw = (row[anioCol] || '').trim();
@@ -2034,7 +2047,18 @@ function calcPrecioCCA(marca, modelo, version, anio) {
   // Google gviz uses dot as decimal separator
   const val = parseFloat(raw.replace(/,/g, '.'));
   if (!val || isNaN(val)) return null;
-  console.log(`CCA precio ${marca} ${modelo} ${version} año ${anio}: raw="${raw}" parsed=${val}`);
+  // La moneda la trae la planilla por fila: `moneda` para los años usados y
+  // `moneda_0km` para la columna 0 Km (en CCA pueden diferir — ej. BYD tiene
+  // el 0km en US$ y los usados en pesos). En ese formato TODA celda viene en
+  // MILES de su moneda.
+  const monedaCol = (anioCol === '0Km' ? row.moneda_0km : row.moneda);
+  if (monedaCol) {
+    const moneda = String(monedaCol).trim().toUpperCase() === 'USD' ? 'USD' : 'ARS';
+    console.log(`CCA ${marca} ${modelo} ${version} año ${anio} (col ${anioCol}): raw="${raw}" → ${moneda} ${val * 1000}`);
+    return { precio: val * 1000, moneda };
+  }
+  // Fallback formato viejo (planilla sin columna de moneda): USD en unidades.
+  console.log(`CCA precio ${marca} ${modelo} ${version} año ${anio}: raw="${raw}" parsed=${val} (formato viejo)`);
   if (esPesos(marca)) {
     return { precio: val * 1000, moneda: 'ARS' };
   } else {

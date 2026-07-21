@@ -62,7 +62,8 @@ Tabs: Pendientes / Tasadas / Todas. Ve:
 
 ## Lógica de tasación (ya implementada, no tocar sin aviso)
 
-- `calcPrecioCCA`: busca marca+modelo+versión+año en hoja CCA. Detecta moneda por lista MARCAS_PESOS (marcas en pesos × 1000; resto en USD × cotización)
+- `calcPrecioCCA`: busca marca+modelo+versión+año en hoja CCA. **La moneda la trae la planilla por fila** (columna `moneda` para los años usados, `moneda_0km` para la columna 0 Km — en CCA pueden diferir: BYD tiene el 0km en US$ y los usados en pesos). En ese formato **toda celda viene en MILES de su moneda** → `precio = valor × 1000`. `MARCAS_USD` quedó solo como fallback para planillas viejas sin esas columnas. Ver "Carga mensual del CCA" abajo.
+- `ccaAnioCol(anio)`: CCA publica 0 Km + 2025..2012, **no hay columna 2026** → un usado 2026 se busca contra la columna `0Km` (constante `ANIO_0KM`)
 - `calcAjusteKm`: año base 2026, km esperados 15.000/año (20.000 para pickups con keywords AMAROK/HILUX/RANGER), aplica tabla de % según ratio real/esperado (+12% a −18%)
 - `calcFormulaFG(marca, modelo, version, anio)`: `precio_0km / 1.05 / 1.09^años`. Funciona para cualquier marca. Si es VW, usa `vwData`; si no, usa `precios0kmData` (pesifica USD con `getCotiz()`). Reemplazó a la vieja `calcFormulaVW`.
 - Precio toma CCA: ajustado × 0.86 (−14%)
@@ -323,6 +324,24 @@ Tres mejoras de UX implementadas en un único commit (`71839a3`).
 - **Reseteo al reagendar**: `confirmarTurno` ahora limpia los 4 campos `turno_cancelado_*` al PATCH, así una unidad reagendada vuelve a estado limpio.
 - **Funciones clave en `index.html`**: `abrirCancelarVisita`, `cerrarCancelarVisita`, `confirmarCancelarVisita`, `_renderVisitaCanceladaCartel`, constante `CANCEL_VISITA_MOTIVOS`.
 
+## Carga mensual del CCA (⚠️ leer antes de tocar la planilla)
+
+**El PDF de CCA viene ROTADO 90°**: cada vehículo es una *columna* y los años corren en vertical. Por eso `pdftotext -layout` desalinea todo — así se cargó abril 2026 y quedó con 496 filas (8,8%) con precios corridos de año y 605 modelos mal asignados. **Nunca más parsear el PDF con `pdftotext`.**
+
+Circuito correcto (probado con abril y julio 2026):
+
+```bash
+cd scripts
+python parse_cca_pdf.py "../Autos.pdf" cca_julio_parsed.csv   # PDF → CSV por coordenadas
+python build_cca_sheet.py cca_julio_parsed.csv cca_julio_2026.xlsx
+```
+
+Después, en el Sheet (`1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko`, gid `904791552`): **File → Import → Upload → Replace current sheet**. Tiene que ser **.xlsx** — pegar CSV/TSV rompe las celdas con coma (`5P 1,4 GENERATION`) y convierte `111,660` en `111.7`.
+
+- `parse_cca_pdf.py` deduce todo del PDF: eje de años por coordenada, fuente del modelo (cambia entre ediciones), marca por hueco de columna. No hay nada hardcodeado por marca.
+- `build_cca_sheet.py` sí tiene hardcodeadas las **reglas de moneda**, que salen de las anotaciones en color del PDF (`FERRARI EN US$`, `HB20 0KM EN PESOS`, etc.). **Cada mes, revisar que esas anotaciones no hayan cambiado**: el script las lista si corrés el bloque de anotaciones. Al 07/2026: 100% en US$ = FERRARI, JAGUAR, LOTUS, MASERATI, McLAREN, PORSCHE; el resto en pesos con el 0 Km en US$ salvo excepciones (HB20, Jeep menos Commander/Compass/Renegade, Sprinter, Ram Dakota/Rampage, y en Honda/Toyota solo algunos modelos).
+- La hoja tiene que quedar con encabezados exactos: `marca, modelo, version, moneda, moneda_0km, 0Km, 2025…2012`.
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
@@ -338,11 +357,11 @@ Tres mejoras de UX implementadas en un único commit (`71839a3`).
 
 - Servidor local corriendo en `http://localhost:8765/` (iniciado con `python -m http.server 8765` desde la raíz del proyecto). Si se cerró la terminal, hay que reiniciarlo.
 - Producción se sirve desde GitHub Pages en `tasador.titogonzalez.online`. Tras un push a `main` puede haber **caché del browser**: si los cambios no aparecen, hacer **Ctrl+Shift+R** (hard reload) o probar en ventana incógnita antes de pensar que el cambio falló.
-- Tema abierto histórico (16/04/2026): en el CCA para un Ford Bronco Sport 2021 apareció el precio del año 2023 cuando Fer cargó 2024. Sospecha: la columna "2024" en la planilla CCA tiene la data vieja del 2023 (data issue, no bug). A verificar en la planilla de Google Sheets de CCA.
+- ~~Tema abierto histórico (16/04/2026): Ford Bronco Sport, precio del año equivocado.~~ **CERRADO 21/07/2026**: se auditaron las 6 filas de BRONCO SPORT contra el PDF de abril y coinciden exacto — no había data vieja en la columna 2024. Lo que sí existía era un corrimiento de años en **otras 496 filas** de la planilla (ver "Carga mensual del CCA").
 
 ## Pendientes al retomar
 
-1. **Verificar tema CCA 2024** (heredado): abrir la planilla CCA, columna 2024, ver si para Ford Bronco Sport BIG BEND la data está desactualizada.
+1. **Importar `scripts/cca_julio_2026.xlsx`** al Sheet del CCA (File → Import → Replace current sheet). Hasta que no se importe, la app sigue con los precios de abril y con el formato viejo (sin columnas de moneda), que el código soporta por fallback.
 2. **Edge cases sin template Meta** (heredado del cambio 5): decidir si crear templates `usado_no_apto` y `turno_cancelado` o dejar sin notificación WA. Mientras tanto sigue usando CallMeBot para esos casos puntuales.
 3. **Eventual**: si el sweeper detecta tasaciones que se reintentan muchas veces sin éxito, mirar `notificaciones_log` para entender la causa (Meta error, número inválido, etc).
 

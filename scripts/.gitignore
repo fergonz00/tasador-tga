@@ -1,0 +1,6 @@
+# Intermedios y salidas de la carga mensual del CCA (se regeneran desde el PDF)
+*.csv
+*.tsv
+*.xlsx
+*.txt
+!SESION_*.md
