@@ -324,6 +324,62 @@ Tres mejoras de UX implementadas en un único commit (`71839a3`).
 - **Reseteo al reagendar**: `confirmarTurno` ahora limpia los 4 campos `turno_cancelado_*` al PATCH, así una unidad reagendada vuelve a estado limpio.
 - **Funciones clave en `index.html`**: `abrirCancelarVisita`, `cerrarCancelarVisita`, `confirmarCancelarVisita`, `_renderVisitaCanceladaCartel`, constante `CANCEL_VISITA_MOTIVOS`.
 
+### Cambio 11 — Recordatorios de consultas SIN RESPONDER (✅ COMPLETO 28/07/2026)
+
+**Qué hace:** si una consulta entra y a los **60 minutos** sigue sin contestar, llega otro WhatsApp. Y otro cada 60 min, hasta un **tope de 5 avisos**. Corre 24/7 (sin horario comercial). Cubre **los dos módulos** que comparten este proyecto Supabase: `tasaciones` (tasador) y `consultas_0km` (consulta0km.titogonzalez.online).
+
+**Cómo sabe que ya se contestó — no hay flag nuevo, es derivado.** En cuanto la fila deja de matchear el filtro, no llega nada más. No hay que marcar nada a mano:
+- **Tasador**: `estado='pendiente'` AND `es_presencial IS NOT TRUE` AND `precio_toma_virtual IS NULL` AND `precio_toma_final IS NULL` AND `virtual_no_apto IS NOT TRUE` AND `rebotada IS NOT TRUE` AND `no_avanza_motivo IS NULL`. O sea: cargar el precio virtual, marcar NO APTO, rebotar al vendedor o "no avanza" **cortan** los recordatorios.
+- **Consulta 0km**: `estado='pendiente'`. Aceptar / rechazar / contraofertar corta.
+- Las **presenciales quedan afuera** a propósito: dependen de un turno con Fazzini, no de que el admin cargue un precio (mismo criterio que `notify-pending-sweep`).
+
+**Edge Function `notify-sin-responder`** (`supabase/functions/notify-sin-responder/index.ts`) — barre las dos tablas, agrupa, dispara y sella. **pg_cron cada 10 min, jobid 5.** Aceptar `?dry=1` para ver qué mandaría **sin mandar nada** (usar siempre eso para probar).
+
+**Destinatarios: los mismos del aviso original, sin config duplicada.** El map `CONFIG_EVENTO` de cada Edge Function hace que el evento de recordatorio lea la config del evento original (`tasacion_sin_responder` → `tasacion_pendiente_carga`; `consulta_0km_sin_responder` → `consulta_0km_nueva`). Si mañana agregás a alguien en el panel 🔔 Notificaciones, el recordatorio lo hereda solo.
+
+**⚠️ Templates de Meta: falta crear los propios.** Hoy los recordatorios **reusan el template del aviso original** y meten el aviso adentro de la variable `{{1}}`, que es la que arranca el cuerpo:
+`⏰ SIN RESPONDER hace 2 h (aviso 3) — Juan Pérez`.
+Funciona y se entiende, pero el resto del cuerpo sigue diciendo "consulta nueva". Cuando existan los templates dedicados en la WABA `1183788370595856`, cambiar `EVENT_TO_TEMPLATE` en las dos Edge Functions y redeployar. **No hace falta tocar nada más.**
+
+**Config editable por SQL — tabla `recordatorios_config`** (una fila por fuente: `tasador` y `consulta_0km`):
+
+| campo | default | qué hace |
+|---|---|---|
+| `activo` | true | apagar los recordatorios de esa fuente |
+| `intervalo_min` | 60 | cada cuánto insiste |
+| `max_recordatorios` | 5 | tope de avisos por consulta |
+| `desde` | fecha de instalación | **sólo entran las creadas después de esta marca**. Evita que al activar la feature se dispare el backlog histórico. Si se resetea hacia atrás, cuidado. |
+
+**Schema (ya corrido en `wjfgl`):**
+```sql
+ALTER TABLE tasaciones    ADD COLUMN IF NOT EXISTS recordatorios_enviados INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasaciones    ADD COLUMN IF NOT EXISTS ultimo_recordatorio_at TIMESTAMPTZ;
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS recordatorios_enviados INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE consultas_0km ADD COLUMN IF NOT EXISTS ultimo_recordatorio_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS recordatorios_config (
+  fuente TEXT PRIMARY KEY, activo BOOLEAN NOT NULL DEFAULT true,
+  intervalo_min INTEGER NOT NULL DEFAULT 60, max_recordatorios INTEGER NOT NULL DEFAULT 5,
+  desde TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+INSERT INTO recordatorios_config (fuente) VALUES ('tasador'), ('consulta_0km') ON CONFLICT DO NOTHING;
+```
+
+**pg_cron:**
+```sql
+SELECT cron.schedule('notify-sin-responder', '*/10 * * * *',
+  $$ SELECT net.http_post(
+    url := 'https://wjfglsafgaltusmbnccl.supabase.co/functions/v1/notify-sin-responder',
+    headers := jsonb_build_object('Content-Type', 'application/json'),
+    body := '{}'::jsonb); $$);
+```
+
+**Detalles de implementación:**
+- El contador sólo se incrementa si la llamada devolvió **HTTP 200**. Si falla la red o Meta, se reintenta en la corrida siguiente sin gastar un aviso.
+- `LIMITE_POR_CORRIDA = 40` por fuente: red de contención si algo se descontrola.
+- **Consulta 0km agrupa por submit**: como el wizard guarda N consultas separadas cuando el vendedor pide N modelos, el sweeper junta las del mismo vendedor creadas con menos de 30 s de diferencia y manda **UN** recordatorio que las nombra a todas (`Polo Track + Nivus Comfortline`), sellando las N. Sin esto, 3 modelos × 5 avisos = 15 WhatsApps.
+- `notify-whatsapp-consulta` tiene **verify_jwt = ON** (al revés que las del tasador). `invocarNotify` prueba con `SUPABASE_ANON_KEY` y, sólo ante 401/403, reintenta con la service key. **No deployar esa función con `--no-verify-jwt`.**
+
+**Verificado end-to-end el 28/07/2026** con filas de prueba aisladas (`vendedor_nombre='PRUEBA Claude'`, `intervalo_min=0`): los 2 WhatsApps llegaron, el agrupado juntó las 2 consultas en uno, los contadores se sellaron y el tope de 5 frenó el barrido. Datos de prueba borrados y config restaurada.
+
 ## Carga mensual del CCA (⚠️ leer antes de tocar la planilla)
 
 **El PDF de CCA viene ROTADO 90°**: cada vehículo es una *columna* y los años corren en vertical. Por eso `pdftotext -layout` desalinea todo — así se cargó abril 2026 y quedó con 496 filas (8,8%) con precios corridos de año y 605 modelos mal asignados. **Nunca más parsear el PDF con `pdftotext`.**

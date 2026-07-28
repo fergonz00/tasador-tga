@@ -24,7 +24,24 @@ const EVENTOS_VALIDOS = new Set([
   "tasacion_fisica_completada",
   "tasacion_final_definida",
   "usado_no_apto",
+  "tasacion_sin_responder",
 ]);
+
+// Eventos que heredan la configuración de destinatarios de OTRO evento.
+// El recordatorio de "sin responder" tiene que llegarle exactamente a la misma
+// gente que el aviso original, sin tener que mantener dos configs en paralelo.
+const CONFIG_EVENTO: Record<string, string> = {
+  "tasacion_sin_responder": "tasacion_pendiente_carga",
+};
+
+// Mapeo evento -> nombre del template aprobado en Meta. Sólo hace falta cuando
+// el nombre del template difiere del nombre interno del evento.
+// `tasacion_sin_responder` todavía no tiene template propio: reusa el de la
+// tasación nueva y marca el recordatorio dentro de la variable {{1}}.
+// Cuando exista el template dedicado, cambiar esta línea y redeployar.
+const EVENT_TO_TEMPLATE: Record<string, string> = {
+  "tasacion_sin_responder": "tasacion_pendiente_carga",
+};
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
@@ -50,14 +67,16 @@ Deno.serve(async (req: Request) => {
   let cfgArr: any[], tasArr: any[];
   try {
     [cfgArr, tasArr] = await Promise.all([
-      sb(SUPABASE_URL, SERVICE_KEY, `notificaciones_config?evento=eq.${evento}&select=*`),
+      sb(SUPABASE_URL, SERVICE_KEY, `notificaciones_config?evento=eq.${CONFIG_EVENTO[evento] ?? evento}&select=*`),
       sb(SUPABASE_URL, SERVICE_KEY, `tasaciones?id=eq.${tasacion_id}&select=*`),
     ]);
   } catch (e) {
     return json({ error: "Error leyendo Supabase", detalle: String(e) }, 500);
   }
 
-  if (!Array.isArray(cfgArr) || cfgArr.length === 0) return json({ error: `Sin config para evento ${evento}` }, 404);
+  if (!Array.isArray(cfgArr) || cfgArr.length === 0) {
+    return json({ error: `Sin config para evento ${CONFIG_EVENTO[evento] ?? evento}` }, 404);
+  }
   if (!Array.isArray(tasArr) || tasArr.length === 0) return json({ error: "Tasación no encontrada" }, 404);
 
   const cfg = cfgArr[0];
@@ -106,7 +125,7 @@ Deno.serve(async (req: Request) => {
       to: telE164,
       type: "template",
       template: {
-        name: evento,
+        name: EVENT_TO_TEMPLATE[evento] ?? evento,
         language: { code: META_LANGUAGE },
         components,
       },
@@ -223,6 +242,22 @@ function fmtPrecio(n: any, moneda: string = "ARS"): string {
 function unidad(t: any): string {
   return [t.marca, t.modelo, t.version].filter((x) => !!x).join(" ").trim() || "—";
 }
+// Prefijo visible de los recordatorios. Constante para poder buscarlo/filtrarlo.
+const PREFIJO_RECORDATORIO = "⏰";
+
+// "1 h" / "3 h" / "1 día 2 h" — antigüedad legible desde un timestamp ISO.
+function antiguedad(iso?: string): string {
+  if (!iso) return "un rato";
+  const ms = Date.now() - Date.parse(iso);
+  if (!isFinite(ms) || ms < 0) return "un rato";
+  const horas = Math.floor(ms / 3600000);
+  if (horas < 1) return "menos de 1 h";
+  if (horas < 24) return `${horas} h`;
+  const dias = Math.floor(horas / 24);
+  const resto = horas % 24;
+  return resto ? `${dias} d ${resto} h` : `${dias} d`;
+}
+
 function fechaHora(iso?: string, hora?: string): string {
   if (!iso) return "—";
   const d = new Date(iso + "T12:00:00");
@@ -247,6 +282,15 @@ async function buildVariables(
     // {{1}} = vendedor real de la tasacion (no el destinatario)
     const vendedor = tas.vendedor_nombre || "—";
     return (_u: any) => [vendedor, uni, cli];
+  }
+  if (evento === "tasacion_sin_responder") {
+    // Recordatorio: reusa el template de `tasacion_pendiente_carga` (mismas 3
+    // variables) y mete el aviso de "sigue sin responder" adelante del vendedor,
+    // que es la variable que arranca el cuerpo del mensaje.
+    const vendedor = tas.vendedor_nombre || "—";
+    const marca = `${PREFIJO_RECORDATORIO} SIN RESPONDER hace ${antiguedad(tas.created_at)}` +
+      ` (aviso ${Number(tas.recordatorios_enviados || 0) + 1})`;
+    return (_u: any) => [`${marca} — ${vendedor}`, uni, cli];
   }
   if (evento === "usado_no_apto") {
     // {{1}} = vendedor, {{2}} = unidad, {{3}} = cliente
