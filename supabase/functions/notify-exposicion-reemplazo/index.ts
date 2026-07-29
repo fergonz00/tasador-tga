@@ -15,6 +15,17 @@ const JUAN_MARQUEVICH = {
 
 const USERNAMES_DESTINATARIOS = ["fngonzalez", "dlopez"];
 
+// Ventana temporal: mientras Fer esta de viaje (29/07/2026 -> 08/08/2026 inclusive)
+// los avisos le llegan tambien al padre. Vence solo: pasada esa fecha vuelve a la
+// lista de arriba sin necesidad de redeployar. 2026-08-09T03:00Z = 09/08 00:00 ART.
+const VENTANA_EXTRA_HASTA = Date.parse("2026-08-09T03:00:00Z");
+const VENTANA_EXTRA_USUARIOS = ["fgonzalez"];
+function destinatariosVigentes(): string[] {
+  return Date.now() < VENTANA_EXTRA_HASTA
+    ? [...USERNAMES_DESTINATARIOS, ...VENTANA_EXTRA_USUARIOS]
+    : USERNAMES_DESTINATARIOS;
+}
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -51,7 +62,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // Destinatarios desde tasador_usuarios
-  const usernamesCsv = USERNAMES_DESTINATARIOS.map((u) => `"${u}"`).join(",");
+  const usernamesCsv = destinatariosVigentes().map((u) => `"${u}"`).join(",");
   let users: any[] = [];
   try {
     users = await sb(
