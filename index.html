@@ -2941,16 +2941,19 @@ function renderAdminCardEsperando(t) {
   `;
 }
 
-// ============ BORRADO DE TASACIONES (solo fngonzalez) ============
+// ============ BORRADO DE TASACIONES (solo los dueños) ============
+// Los tres dueños: Fer, el padre y Catalina. Misma lista que SUPERADMINS_USUARIOS
+// (declarada mas abajo, por eso se repite aca en vez de referenciarla).
+const DUENIOS_USUARIOS = ['fngonzalez', 'fgonzalez', 'cgonzalez'];
 let _selMultipleActivo = false;
 let _selMultipleIds = new Set();
 
 function _puedeBorrar() {
-  return !!(currentUser && currentUser.usuario === 'fngonzalez');
+  return !!(currentUser && DUENIOS_USUARIOS.includes(currentUser.usuario));
 }
 
-// Acceso al flujo Stock/Vendido: fngonzalez + jfazzini (el tasador físico).
-const STOCK_USUARIOS = ['fngonzalez', 'jfazzini'];
+// Acceso al flujo Stock/Vendido: los dueños + jfazzini (el tasador físico).
+const STOCK_USUARIOS = [...DUENIOS_USUARIOS, 'jfazzini'];
 function _puedeGestionarStock() {
   return !!(currentUser && STOCK_USUARIOS.includes(currentUser.usuario));
 }
@@ -4700,9 +4703,9 @@ function cerrarAgenda() {
 
 // ============ ADMIN — USUARIOS ============
 // Superadmins: pueden editar/crear/tocar admins, dar rol admin, y acceder al panel de Notificaciones.
-const SUPERADMINS_USUARIOS = ['fngonzalez', 'mlubrano'];
-// Lista mas restrictiva: solo fngonzalez puede "entrar como" otro usuario sin clave.
-const IMPERSONATE_USERS = ['fngonzalez'];
+const SUPERADMINS_USUARIOS = [...DUENIOS_USUARIOS, 'mlubrano'];
+// Lista mas restrictiva: solo los duenios pueden "entrar como" otro usuario sin clave.
+const IMPERSONATE_USERS = DUENIOS_USUARIOS;
 function _puedeImpersonar() {
   return !!(currentUser && IMPERSONATE_USERS.includes(currentUser.usuario));
 }
@@ -4772,7 +4775,7 @@ function _esSuperadmin() {
 
 async function abrirUsuarios() {
   if (currentMode !== 'admin') return;
-  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden gestionar usuarios'); return; }
+  if (!_esSuperadmin()) { showToast('No autorizado a gestionar usuarios'); return; }
   usuariosVistaAnterior = ALL_VIEWS.find(id => {
     const el = document.getElementById(id);
     return el && !el.classList.contains('hidden');
@@ -4865,19 +4868,19 @@ function validarClaveUsuario(clave) {
 }
 
 function abrirNuevoUsuario() {
-  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden crear usuarios'); return; }
+  if (!_esSuperadmin()) { showToast('No autorizado a crear usuarios'); return; }
   _mostrarUsuarioModal('nuevo', null);
 }
 
 function abrirEditarUsuario(id) {
-  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden editar usuarios'); return; }
+  if (!_esSuperadmin()) { showToast('No autorizado a editar usuarios'); return; }
   const u = usuariosData.find(x => String(x.id) === String(id));
   if (!u) return;
   _mostrarUsuarioModal('editar', u);
 }
 
 function abrirResetClave(id) {
-  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden resetear claves'); return; }
+  if (!_esSuperadmin()) { showToast('No autorizado a resetear claves'); return; }
   const u = usuariosData.find(x => String(x.id) === String(id));
   if (!u) return;
   _mostrarUsuarioModal('reset', u);
@@ -5094,7 +5097,7 @@ async function guardarUsuarioModal(modo, id) {
 }
 
 async function toggleActivoUsuario(id, nuevoEstado) {
-  if (!_esSuperadmin()) { showToast('Solo fngonzalez y mlubrano pueden activar/desactivar usuarios'); return; }
+  if (!_esSuperadmin()) { showToast('No autorizado a activar/desactivar usuarios'); return; }
   const u = usuariosData.find(x => String(x.id) === String(id));
   if (!u) return;
   const accion = nuevoEstado ? 'activar' : 'desactivar';
