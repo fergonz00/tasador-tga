@@ -36,6 +36,7 @@
 //   ?solo=549113...        -> manda solo a ese numero (prueba del template)
 //   ?forzar=1              -> ignora el limite de 1 aviso por dia y el horario
 //   ?dias=90               -> agranda la ventana de lectura
+//   ?desde=2026-08-18      -> corre el corte de arranque (default PVFECHA_DESDE)
 //   ?listar=1              -> lista los templates de la WABA (diagnostico)
 //   ?crear_template=1      -> da de alta el template en Meta (una sola vez)
 //   {"cerrar":[detcashid]} -> cierra alertas a mano (deja de recordar)
@@ -69,9 +70,10 @@ const FIJOS_DEFAULT = "dlopez,mgerez,fngonzalez";
 // pegarle al vendedor mientras todavia esta tipeando la forma de pago.
 const GRACIA_MIN = Number(Deno.env.get("PVFECHA_GRACIA_MIN") ?? "20");
 
-// Corte de arranque: los renglones cargados ANTES de esta fecha se registran
-// como `historica` (quedan para consulta) pero NO generan aviso. Evita el
-// aluvion de avisos por errores viejos el dia que se enciende el control.
+// Corte de arranque: el control corre sobre las PREVENTAS HECHAS A PARTIR de
+// esta fecha (Fer, 18/08/2026: "lo viejo ya esta"). Lo de PVs anteriores se
+// registra como `historica` (queda para consulta) pero NO genera aviso —
+// tampoco si a una PV vieja le agregan hoy un renglon nuevo.
 const DESDE = (Deno.env.get("PVFECHA_DESDE") ?? "2026-08-18").slice(0, 10);
 
 const CORS_HEADERS = {
@@ -136,6 +138,7 @@ Deno.serve(async (req: Request) => {
       dry: flag("dry"),
       forzar: flag("forzar"),
       dias: Number(par("dias") ?? VENTANA_DIAS) || VENTANA_DIAS,
+      desde: String(par("desde") ?? DESDE).slice(0, 10),
     }));
   } catch (e) {
     console.error("notify-pv-fecha-no-habil:", e);
@@ -163,7 +166,7 @@ type Alerta = {
 
 // ── Nucleo ──────────────────────────────────────────────────────────────────
 
-async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: number }) {
+async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: number; desde: string }) {
   const ahora = new Date();
   const hoyAR = fechaAR(ahora);
   const horaAR = ahora.getUTCHours() - 3 < 0 ? ahora.getUTCHours() + 21 : ahora.getUTCHours() - 3;
@@ -196,6 +199,9 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: n
     const pv = pvs.get(r.referencia);
     if (pv?.anulada) continue; // PV anulada: no molestamos a nadie
     const { texto } = esNoHabil(r.vencimiento!, feriados);
+    // El corte va por la fecha de la PV; si la PV no se pudo resolver, cae a la
+    // fecha de carga del renglon.
+    const fechaCorte = (pv?.fecha ?? r.fecha).slice(0, 10);
     nuevas.push({
       detcashid: r.detcashid,
       referencia: r.referencia,
@@ -206,8 +212,8 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: n
       vendedorid: pv?.vendedorid ?? null,
       vendedor_nombre: pv?.vendedor ?? null,
       fecha_pv: (pv?.fecha ?? r.fecha)?.slice(0, 10) ?? null,
-      // Anterior al arranque del control: se guarda de registro, no se avisa.
-      estado: r.fecha.slice(0, 10) < DESDE ? "historica" : "abierta",
+      // PV anterior al arranque del control: se guarda de registro, no se avisa.
+      estado: fechaCorte < opts.desde ? "historica" : "abierta",
       detectado_at: new Date().toISOString(),
     });
   }
@@ -304,9 +310,10 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: n
   }
 
   return {
-    ok: true, hoy: hoyAR, hora_ar: horaAR, dry: opts.dry,
+    ok: true, hoy: hoyAR, hora_ar: horaAR, dry: opts.dry, desde: opts.desde,
     renglones_leidos: renglones.length, no_habiles: malos.length,
-    alertas_nuevas: nuevas.length, cerradas: cerradas.length, detalle_cerradas: cerradas,
+    alertas_nuevas: nuevas.length, historicas: nuevas.filter((n) => n.estado === "historica").length,
+    cerradas: cerradas.length, detalle_cerradas: cerradas,
     pendientes: pendientes.length, pvs_avisadas: porPv.size,
     enviados, errores,
   };

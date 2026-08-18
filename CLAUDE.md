@@ -426,7 +426,7 @@ Alerta por WhatsApp cuando un vendedor carga en una PV una **fecha de pago que c
 
 **Modos de prueba** (query string o body): `?dry=1` (no manda ni escribe, devuelve qué haría) · `?solo=<E164>` (manda el ejemplo a un número) · `?forzar=1` (ignora horario y el tope de 1 aviso/día) · `?dias=120` (agranda la ventana) · `?listar=1` (templates de la WABA) · `{"cerrar":[detcashid]}` (baja alertas a mano).
 
-**Arranque:** `PVFECHA_DESDE` (default `2026-08-18`) — todo lo cargado antes queda como `historica` y **no dispara avisos**. Al encenderlo se registraron 42 casos de los 120 días previos (22 sábados, 3 domingos, 17 feriados): Naddeo 13, J. Castro 11, Loisi 9, Buena 5, Fazzini 3, Alonso 1.
+**Arranque:** `PVFECHA_DESDE` (default `2026-08-18`) — el control corre **sobre las PVs hechas a partir de esa fecha** (decisión de Fer: "lo viejo ya está"). El corte mira `preventas.fecha`, **no** cuándo se cargó el renglón: si a una PV vieja le agregan hoy un renglón con fecha mala, tampoco avisa. Lo anterior queda como `historica` (registro, sin aviso): 42 casos de los 120 días previos (22 sábados, 3 domingos, 17 feriados) — Naddeo 13, J. Castro 11, Loisi 9, Buena 5, Fazzini 3, Alonso 1. Se puede correr el corte sin redeploy con `?desde=YYYY-MM-DD`.
 
 ## Gotchas y decisiones del proyecto
 
