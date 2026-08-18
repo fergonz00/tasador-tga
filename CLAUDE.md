@@ -439,6 +439,8 @@ El de vencidos mira `detcash.saldo`: `0` = cobrado, `> 0` = falta. Avisa tambié
 
 A las **9 de la mañana** le llega un WhatsApp al vendedor con los datos para llamar al cliente que retiró el día anterior. Pedido por Fer el 18/08/2026.
 
+**Programar la entrega no es entregar:** `fechaprogramada`/`horaprogramada` se cargan al pactar el turno; `entregada = true` y `fechasalida` recién cuando la entregan **por sistema**. El aviso usa siempre las segundas (verificado 18/08: 0 unidades entregadas sin `fechasalida`, 0 con `fechasalida` sin `entregada`, y 7 turnos vencidos sin entregar que correctamente no avisan).
+
 **De dónde sale el dato** (réplica Oversoft): `unidades` con `entregada = true` → `fechasalida` (día del retiro), `horaprogramada` (hora del turno), `patente`, `modelo`, `responsable` (quien firmó) y `preventa`. De ahí se cruza a `preventas` (por `numero`) para el vendedor y el CUIT, a `clientes` (por `codigo` = ese CUIT) para teléfonos y mail, y a `modelos` para traducir el código VW (`AGDC8A MY26` → "VW Amarok Highline V6 AT 4X4 G2 MY26").
 
 **Destinatario: solo el vendedor** (decisión de Fer — no va copia a gerencia). Sale de `pv_vendedores_map`. Las ventas de **"T.G." (vendedorid 22) las sigue Patricia Guajardo** (`patriciag`, tel cargado el 18/08), que además es el **respaldo** (`RETIRO_FALLBACK`) cuando el vendedor no tiene WhatsApp: así ningún cliente queda sin llamado.
