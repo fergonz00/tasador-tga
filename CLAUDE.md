@@ -405,26 +405,33 @@ Si hay que cargar a mano, tiene que ser **.xlsx** vía File → Import → Repla
 - `build_cca_sheet.py` sí tiene hardcodeadas las **reglas de moneda**, que salen de las anotaciones en color del PDF (`FERRARI EN US$`, `HB20 0KM EN PESOS`, etc.). **Cada mes, revisar que esas anotaciones no hayan cambiado**: el script las lista si corrés el bloque de anotaciones. Al 07/2026: 100% en US$ = FERRARI, JAGUAR, LOTUS, MASERATI, McLAREN, PORSCHE; el resto en pesos con el 0 Km en US$ salvo excepciones (HB20, Jeep menos Commander/Compass/Renegade, Sprinter, Ram Dakota/Rampage, y en Honda/Toyota solo algunos modelos).
 - La hoja tiene que quedar con encabezados exactos: `marca, modelo, version, moneda, moneda_0km, 0Km, 2025…2012`.
 
-## Control de fechas de pago no bancarias en las PVs (`notify-pv-fecha-no-habil`)
+## Control de fechas de pago de las PVs (`notify-pv-fecha-no-habil`)
 
-Alerta por WhatsApp cuando un vendedor carga en una PV una **fecha de pago que cae sábado, domingo o feriado** (los bancos no acreditan). Pedido por Fer el 18/08/2026.
+Dos controles sobre la forma de pago que el vendedor carga en la PV, los dos avisando por WhatsApp a los mismos destinatarios. Pedidos por Fer el 18/08/2026.
+
+| tipo | qué detecta | cuándo avisa |
+|---|---|---|
+| `fecha_no_habil` | la fecha de pago cae **sábado, domingo o feriado** | a los ~15 min de cargada (20 min de gracia) |
+| `vencido_impago` | pasó la fecha prometida y el pago **no figura cobrado** (o quedó saldo) | a los **3 días hábiles** del vencimiento (`PVFECHA_GRACIA_HABILES`) |
+
+El de vencidos mira `detcash.saldo`: `0` = cobrado, `> 0` = falta. Avisa también los **cobros parciales**, diciendo cuánto falta de cuánto. **No usa el corte `PVFECHA_DESDE`** — una deuda vencida sigue viva sea de la PV que sea (decisión de Fer). Se cierra sola cuando entra la plata o cuando reprograman la fecha a futuro.
 
 **De dónde sale el dato:** réplica Oversoft → `detcash` con `origen = 'VTOKM'` y `referencia = 'PV xxxxx/n'`. Cada fila es un renglón de la forma de pago que el vendedor carga a la izquierda de la PV: `motivo` = concepto (SEÑA, CANCOKM, FIN0KMBBVA, REFUESEÑA, FIN0KMNAC…), `importe`, **`vencimiento` = la fecha de pago que se controla**, `fecha` = cuándo se cargó. Los conceptos vienen con la **Ñ rota** (doble UTF-8: `SEÃ‘A`) — `nombreMotivo()` normaliza antes de mapear.
 
 **Tablas nuevas en wjfgl:**
 - `feriados_ar` — feriados nacionales. Cargados 2026 y 2027 (35 filas) desde `https://api.argentinadatos.com/v1/feriados/<año>` (gratis, sin key, **exige User-Agent**). Incluye los "puente turístico no laborable". Para sumar un asueto bancario que no es feriado nacional (Día del Bancario, etc.): `insert` a mano con `origen='manual'`. **Cada diciembre hay que cargar el año siguiente.**
-- `pv_fechas_alertas` — una fila por renglón detectado (PK `detcashid`). Estados: `abierta` · `corregida` · `anulada` (PV anulada) · `historica` (anterior al arranque, no avisa) · `cerrada_manual`.
+- `pv_fechas_alertas` — una fila por renglón y control (**PK compuesta `(detcashid, tipo)`**: el mismo renglón puede tener las dos alertas). Estados: `abierta` · `corregida` · `anulada` (PV anulada) · `historica` (PV anterior al arranque, no avisa) · `cerrada_manual`.
 - `pv_vendedores_map` — `vendedorid` de Oversoft → `usuario` de `tasador_usuarios`. Mapeo N:1 (Castro y Loisi tienen un vendedorid extra "- Autoahorro"). **Vendedor nuevo = agregar acá o no le llega el aviso a él** (sí a los fijos).
 
 **Destinatarios:** el vendedor de la PV + los fijos del env `PVFECHA_FIJOS` (default `dlopez,mgerez,fngonzalez` = Daniel López, Mónica Gerez, Fernando N. González). Teléfonos de `tasador_usuarios.telefono_wa`, respeta `notificaciones_wa`.
 
-**Cadencia:** pg_cron **jobid 9**, `*/10 12-23 * * *` (cada 10 min, 9 a 20 hora AR). Un mensaje **por PV** (agrupa todos sus renglones malos), no por renglón. Si no se corrige, **1 recordatorio por día hábil** hasta `PVFECHA_MAX_AVISOS` (10). Domingos y feriados no molesta; los sábados sí (el salón trabaja). Gracia de 20 min desde la carga para no pegarle al vendedor mientras tipea.
+**Cadencia:** pg_cron **jobid 9**, `*/10 12-23 * * *` (cada 10 min, 9 a 20 hora AR). Un mensaje **por PV y por tipo** (agrupa todos los renglones de esa PV), no por renglón. Si no se corrige, **1 recordatorio por día hábil** hasta `PVFECHA_MAX_AVISOS` (10). Domingos y feriados no molesta; los sábados sí (el salón trabaja). Gracia de 20 min desde la carga para no pegarle al vendedor mientras tipea.
 
 **Cierre automático:** cada corrida re-lee los renglones y cierra la alerta si la fecha se corrigió, si la PV se anuló, si apareció el contra-asiento negativo o si el renglón fue reemplazado por otro del mismo concepto con fecha hábil. `detcash` **sí** refleja ediciones posteriores (verificado: 147/147 filas de mayo con `saldo ≠ importe`), a diferencia de `clientes`.
 
-**Template Meta:** `pv_fecha_no_habil` (es_AR, UTILITY, 4 vars: nombre · nº de PV · detalle · vendedor) en la WABA "Tito Gonzalez | Tasador" (`1183788370595856`), la misma de `precios_actualizados`. Se creó **desde la propia función** (`?crear_template=1`), porque el token de Meta solo vive como secret de Supabase.
+**Templates Meta:** `pv_fecha_no_habil` y `pv_pago_vencido` (los dos es_AR, UTILITY, 4 vars: nombre · nº de PV · detalle · vendedor) en la WABA "Tito Gonzalez | Tasador" (`1183788370595856`), la misma de `precios_actualizados`. Se crean **desde la propia función** (`?crear_template=1`, que saltea los que ya existen), porque el token de Meta solo vive como secret de Supabase. **Mientras Meta los tiene en PENDING el envío falla y `avisos` no se sella** — cuando aprueba, la corrida siguiente los manda solos.
 
-**Modos de prueba** (query string o body): `?dry=1` (no manda ni escribe, devuelve qué haría) · `?solo=<E164>` (manda el ejemplo a un número) · `?forzar=1` (ignora horario y el tope de 1 aviso/día) · `?dias=120` (agranda la ventana) · `?listar=1` (templates de la WABA) · `{"cerrar":[detcashid]}` (baja alertas a mano).
+**Modos de prueba** (query string o body): `?dry=1` (no manda ni escribe, devuelve qué haría) · `?solo=<E164>` (manda un ejemplo de cada template a un número) · `?tipo=vencido_impago` (corre un solo control) · `?forzar=1` (ignora horario y el tope de 1 aviso/día) · `?dias=120` (agranda la ventana) · `?listar=1` (templates de la WABA) · `{"cerrar":[detcashid]}` (baja alertas a mano).
 
 **Arranque:** `PVFECHA_DESDE` (default `2026-08-18`) — el control corre **sobre las PVs hechas a partir de esa fecha** (decisión de Fer: "lo viejo ya está"). El corte mira `preventas.fecha`, **no** cuándo se cargó el renglón: si a una PV vieja le agregan hoy un renglón con fecha mala, tampoco avisa. Lo anterior queda como `historica` (registro, sin aviso): 42 casos de los 120 días previos (22 sábados, 3 domingos, 17 feriados) — Naddeo 13, J. Castro 11, Loisi 9, Buena 5, Fazzini 3, Alonso 1. Se puede correr el corte sin redeploy con `?desde=YYYY-MM-DD`.
 
