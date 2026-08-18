@@ -17,7 +17,7 @@
 //   - wjfgl `portal_usados`: se saltean las ocultas y las marcadas vendido (no
 //     tiene sentido pedir fotos de algo que no se va a publicar).
 //   - wjfgl `tasaciones` (por patente): km real y color cuando Oversoft no los
-//     trae, y cuantas fotos provisorias del vendedor se estan mostrando.
+//     trae, y cuantas fotos de la tasacion se estan mostrando mientras tanto.
 //
 // A quien le llega: `fngonzalez` (Fer) y `jfazzini` (Jorge Fazzini), via
 // tasador_usuarios (respeta activo / notificaciones_wa). Se puede cambiar sin
@@ -270,7 +270,7 @@ function descDetalle(u: OvsUsado, t?: TasRow) {
   partes.push(km > 0 ? `${km.toLocaleString("es-AR")} km` : "km sin cargar");
   const fv = Array.isArray(t?.fotos) ? t!.fotos.filter(Boolean).length : 0;
   partes.push(fv > 0
-    ? `hoy se ven ${fv} fotos provisorias del vendedor`
+    ? `hoy se ven ${fv} fotos de la tasación`
     : "no hay ninguna foto para mostrar");
   if (u.enreparacion === true) partes.push("esta en preparacion en el taller");
   return partes.join(" - ");
@@ -371,7 +371,7 @@ async function pruebaDirigida(env: Env, tel: string) {
   const r = await enviarTemplate(env, tel, [
     "Fer",
     "PRUEBA - VOLKSWAGEN CROSSFOX 1.6 MSI 16V 2016 (AA374IG)",
-    "Gris - 118.000 km - hoy se ven 8 fotos provisorias del vendedor",
+    "Gris - 118.000 km - hoy se ven 8 fotos de la tasación",
     "ingresó el miércoles 05/08, hace 13 días",
   ]);
   return { prueba: true, destino: tel, ...r };
@@ -408,7 +408,7 @@ async function crearTemplate(env: Env) {
             body_text: [[
               "Fer",
               "VOLKSWAGEN CROSSFOX 1.6 MSI 16V 2016 (AA374IG)",
-              "Gris - 118.000 km - hoy se ven 8 fotos provisorias del vendedor",
+              "Gris - 118.000 km - hoy se ven 8 fotos de la tasación",
               "ingresó el miércoles 05/08, hace 13 días",
             ]],
           },
