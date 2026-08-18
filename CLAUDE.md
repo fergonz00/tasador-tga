@@ -455,6 +455,24 @@ A las **9 de la mañana** le llega un WhatsApp al vendedor con los datos para ll
 
 **Arranque:** `RETIRO_DESDE` (default `2026-08-18`) — no avisa retiros anteriores. Modos de prueba: `?dry=1` · `?solo=<E164>` · `?forzar=1` (saltea el corte de domingo/feriado) · `?dias=20&desde=2026-08-01`.
 
+## Pedido de fotos cuando un usado entra físico (`notify-usado-fisico`)
+
+A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fer (`fngonzalez`) y a Jorge Fazzini (`jfazzini`)** por cada usado que ya entró físicamente al concesionario y **todavía no tiene fotos del concesionario cargadas**. Pedido por Fer el 18/08/2026.
+
+**El aviso se repite todos los días hasta que las fotos estén** (decisión de Fer: "1 aviso x día hasta q estén las fotos"). El **único** corte es que aparezca al menos una fila en `portal_usados_fotos` para ese `usadoid` — ahí deja de salir solo. Domingo no manda: el salón está cerrado y nadie puede sacarlas.
+
+**Quién carga las fotos:** sigue siendo **solo Fer**, desde Baratito (`/precios` → sección Usados). Se le preguntó a Fer el 18/08/2026 si le daba permiso a Fazzini y dijo **no**: el aviso es para que Jorge las saque y las pase, no para que las suba. **No se tocó `puedeGestionarUsados()`.**
+
+**De dónde sale el dato:** réplica Oversoft `usados` con `recibida = true` (= ya está física) y `fechadeingreso` = el día que entró. Mismo universo vendible que la solapa `/usados` de portal-precios: `estado = Activado`, `fechadeventa is null` y `fechadealta` dentro de los últimos **18 meses** (corta la chatarra histórica de 2009-2024). Se saltean las **ocultas** y las marcadas **vendido** en `portal_usados` — no tiene sentido pedir fotos de algo que no se va a publicar. `tasaciones` (por patente) completa km real y color, y cuenta las fotos **provisorias del vendedor** que se están mostrando mientras tanto.
+
+**Cadencia y control:** pg_cron **jobid 11**, `0 13 * * 1-6` (10:00 hora AR, lun-sáb). Tabla `usados_avisos_fotos` en wjfgl, única por **(usadoid, fecha, destinatario)** — una fila por unidad, día y persona. Solo cuentan como "ya avisado hoy" las filas en estado `enviado`; un envío fallido queda `pendiente` y se reintenta en la corrida siguiente.
+
+**Template Meta:** `usado_fisico_fotos` (es_AR, UTILITY, 4 vars: destinatario · unidad+patente · detalle color/km/fotos · cuándo ingresó + hace cuántos días). El "hace N días" hace que el recordatorio diario escale solo sin necesidad de contar avisos.
+
+**Arranque:** `USADO_FOTOS_DESDE` (default `2026-08-01`) — no avisa unidades que entraron antes. Al 18/08/2026 eso deja **1 unidad**: VW Crossfox 1.6 MSI 2016 (AA374IG), ingresó el 05/08, sin ninguna foto (al día de hoy `portal_usados_fotos` está **vacía**, nunca se usó). Destinatarios cambiables sin redeploy con el env `USADO_FOTOS_DESTINATARIOS` (usuarios separados por coma).
+
+**Modos de prueba:** `?dry=1` · `?solo=<E164>` · `?forzar=1` (ignora lo ya avisado hoy) · `?desde=2026-07-01` · `?listar=1` · `?crear_template=1`.
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
