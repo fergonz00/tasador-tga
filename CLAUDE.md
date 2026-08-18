@@ -435,6 +435,24 @@ El de vencidos mira `detcash.saldo`: `0` = cobrado, `> 0` = falta. Avisa tambié
 
 **Arranque:** `PVFECHA_DESDE` (default `2026-08-18`) — el control corre **sobre las PVs hechas a partir de esa fecha** (decisión de Fer: "lo viejo ya está"). El corte mira `preventas.fecha`, **no** cuándo se cargó el renglón: si a una PV vieja le agregan hoy un renglón con fecha mala, tampoco avisa. Lo anterior queda como `historica` (registro, sin aviso): 42 casos de los 120 días previos (22 sábados, 3 domingos, 17 feriados) — Naddeo 13, J. Castro 11, Loisi 9, Buena 5, Fazzini 3, Alonso 1. Se puede correr el corte sin redeploy con `?desde=YYYY-MM-DD`.
 
+## Aviso al vendedor cuando su cliente retiró (`notify-retiro-cliente`)
+
+A las **9 de la mañana** le llega un WhatsApp al vendedor con los datos para llamar al cliente que retiró el día anterior. Pedido por Fer el 18/08/2026.
+
+**De dónde sale el dato** (réplica Oversoft): `unidades` con `entregada = true` → `fechasalida` (día del retiro), `horaprogramada` (hora del turno), `patente`, `modelo`, `responsable` (quien firmó) y `preventa`. De ahí se cruza a `preventas` (por `numero`) para el vendedor y el CUIT, a `clientes` (por `codigo` = ese CUIT) para teléfonos y mail, y a `modelos` para traducir el código VW (`AGDC8A MY26` → "VW Amarok Highline V6 AT 4X4 G2 MY26").
+
+**Destinatario: solo el vendedor** (decisión de Fer — no va copia a gerencia). Sale de `pv_vendedores_map`. Las ventas de **"T.G." (vendedorid 22) las sigue Patricia Guajardo** (`patriciag`, tel cargado el 18/08), que además es el **respaldo** (`RETIRO_FALLBACK`) cuando el vendedor no tiene WhatsApp: así ningún cliente queda sin llamado.
+
+**Cadencia:** pg_cron **jobid 10**, `0 12 * * *` (9:00 hora AR). Toma los retiros de `fechasalida < hoy` dentro de una ventana de 7 días y saltea los ya avisados (tabla `retiros_avisos`, PK `unidadid`, estados `enviado` · `sin_destinatario` · `pendiente`). **Domingos y feriados no manda** — se acumula y sale el siguiente día hábil. Si el cron falla un día, al otro salen igual (por eso la ventana de 7).
+
+**Template Meta:** `retiro_cliente_vendedor` (es_AR, UTILITY, 6 vars: destinatario · cliente · unidad · cuándo retiró · vendedor · contacto).
+
+**Dos gotchas de los datos, ya resueltos en el código:**
+- `unidades.responsable` está **cortado a 25 caracteres** ("DALLOCHIO ESTEVEZ, CONSTA") pero está al día; `clientes.nombre` viene entero pero puede haber quedado viejo (esa tabla no re-sincroniza ediciones). `mejorNombre()` usa el de `clientes` solo si continúa al truncado.
+- Los teléfonos vienen como `(caracteristica)numero`, a veces con la característica vacía, con `0` adelante o con el `15` del celular intercalado (`(221 )155079805` → `2215079805`). `normalizarTel()` lo limpia; **el formateo con guiones solo se aplica a los `11`**, porque en el interior la característica puede ser de 2, 3 o 4 dígitos y cortar a ojo daría un número mal escrito.
+
+**Arranque:** `RETIRO_DESDE` (default `2026-08-18`) — no avisa retiros anteriores. Modos de prueba: `?dry=1` · `?solo=<E164>` · `?forzar=1` (saltea el corte de domingo/feriado) · `?dias=20&desde=2026-08-01`.
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
