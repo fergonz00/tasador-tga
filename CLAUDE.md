@@ -477,6 +477,30 @@ A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fe
 
 **Modos de prueba:** `?dry=1` · `?solo=<E164>` · `?forzar=1` (ignora lo ya avisado hoy) · `?desde=2026-07-01` · `?listar=1` · `?crear_template=1`.
 
+## Aviso cuando un usado físico no tiene precio de venta (`notify-usado-sin-precio`)
+
+A las **11 de la mañana**, de **lunes a sábado**, le llega un WhatsApp **solo a Fer (`fngonzalez`)** por cada usado que ya entró físicamente al concesionario y **no tiene precio de venta cargado en Oversoft**. Pedido por Fer el 19/08/2026.
+
+Es el hermano de `notify-usado-fisico` (aquel pide las fotos, este pide el precio): mismo universo de unidades, misma cadencia, distinto corte y distinto destinatario. Va una hora más tarde a propósito, para que los dos avisos no lleguen apilados por la misma unidad.
+
+**El corte es el precio de OVERSOFT (`usados.preciodeventa` > 0), no el override de `portal_usados`.** Es a propósito: el pedido es que el precio quede cargado **en el sistema**, que es de donde lo toman la administración y el resto de los circuitos. Cargarlo solo en Baratito no apaga el aviso.
+
+**Se repite todos los días hasta que el precio esté** (decisión de Fer, mismo criterio que las fotos). Domingo no manda. El mensaje dice "hace N días", así que el recordatorio escala solo sin contar avisos.
+
+**No filtra por "parte de pago".** Fer lo pidió pensando en los usados que entran por una PV, pero un usado físico sin precio es un problema venga de donde venga, así que entran también las compras directas. Cuando la unidad tiene `preventaorigen` cargado, el mensaje lo dice (`vino de la PV 08083/1`).
+
+**De dónde sale el dato:** réplica Oversoft `usados` con `recibida = true`, `estado = Activado`, `fechadeventa is null` y `fechadealta` dentro de los últimos **18 meses** (mismo universo vendible que la solapa `/usados`). Se saltean las **ocultas** y las marcadas **vendido** en `portal_usados`. `tasaciones` (por patente) completa km real y color. El mensaje incluye el **costo de toma** (`preciodetoma`) para que Fer pueda decidir el precio sin abrir nada — es plata interna, pero el aviso va solo a él.
+
+**Ojo con la nota vieja:** el punto 14 de la memoria del panel de usados decía que "casi todo el stock está en 0 en Oversoft". **Ya no es así** (verificado 19/08/2026): de las 6 unidades físicas sin vender, las únicas dos en 0 son chatarra de 2009 y 2024, que además quedan afuera por la ventana de 18 meses. Con el corte de arranque puesto, hoy el aviso **no dispara ninguno** — recién suena cuando entra una unidad nueva sin precio, que es justo lo que se buscaba.
+
+**Cadencia y control:** pg_cron **jobid 12**, `0 14 * * 1-6` (11:00 hora AR, lun-sáb). Tabla `usados_avisos_precio` en wjfgl, única por **(usadoid, fecha, destinatario)**, con `preventa_origen` y `costo_toma` guardados para poder auditar después. Solo cuentan como "ya avisado hoy" las filas en estado `enviado`; un envío fallido queda `pendiente` y se reintenta en la corrida siguiente.
+
+**Template Meta:** `usado_sin_precio_venta` (es_AR, UTILITY, 4 vars: destinatario · unidad+patente · detalle color/km/costo de toma/PV · cuándo ingresó + hace cuántos días). Creado el 19/08/2026 desde la propia función (`?crear_template=1`). **Mientras Meta lo tiene en PENDING el envío falla y la fila no se sella** — cuando aprueba, la corrida siguiente lo manda solo.
+
+**Arranque:** `USADO_PRECIO_DESDE` (default `2026-08-01`) — no avisa unidades que entraron antes. Destinatarios cambiables sin redeploy con `USADO_PRECIO_DESTINATARIOS` (usuarios separados por coma; hoy `fngonzalez` a secas, Fer pidió expresamente que sea solo a él).
+
+**Modos de prueba:** `?dry=1` · `?solo=<E164>` · `?forzar=1` · `?desde=2009-01-01` · **`?meses=250`** (ensancha la ventana de antigüedad; sirve para validar la detección cuando el stock real está todo con precio) · `?listar=1` · `?crear_template=1`.
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
