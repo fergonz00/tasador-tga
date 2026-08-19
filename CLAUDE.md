@@ -425,7 +425,7 @@ El de vencidos mira `detcash.saldo`: `0` = cobrado, `> 0` = falta. Avisa tambié
 
 **Destinatarios:** el vendedor de la PV + los fijos del env `PVFECHA_FIJOS` (default `dlopez,mgerez,fngonzalez` = Daniel López, Mónica Gerez, Fernando N. González). Teléfonos de `tasador_usuarios.telefono_wa`, respeta `notificaciones_wa`.
 
-**Cadencia:** pg_cron **jobid 9**, `*/10 12-23 * * *` (cada 10 min, 9 a 20 hora AR). Un mensaje **por PV y por tipo** (agrupa todos los renglones de esa PV), no por renglón. Si no se corrige, **1 recordatorio por día hábil** hasta `PVFECHA_MAX_AVISOS` (10). Domingos y feriados no molesta; los sábados sí (el salón trabaja). Gracia de 20 min desde la carga para no pegarle al vendedor mientras tipea.
+**Cadencia:** pg_cron **jobid 9**, `*/10 15-23 * * *` (cada 10 min, **12 a 20 hora AR** — Fer lo corrió de 9 a 12 el 19/08/2026; el piso también vive en el env `PVFECHA_HORA_DESDE=12`). Un mensaje **por PV y por tipo** (agrupa todos los renglones de esa PV), no por renglón. Si no se corrige, **1 recordatorio por día hábil** hasta `PVFECHA_MAX_AVISOS` (10). Domingos y feriados no molesta; los sábados sí (el salón trabaja). Gracia de 20 min desde la carga para no pegarle al vendedor mientras tipea.
 
 **Cierre automático:** cada corrida re-lee los renglones y cierra la alerta si la fecha se corrigió, si la PV se anuló, si apareció el contra-asiento negativo o si el renglón fue reemplazado por otro del mismo concepto con fecha hábil. `detcash` **sí** refleja ediciones posteriores (verificado: 147/147 filas de mayo con `saldo ≠ importe`), a diferencia de `clientes`.
 

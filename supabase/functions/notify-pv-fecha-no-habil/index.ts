@@ -47,9 +47,9 @@
 //   ?crear_template=1      -> da de alta los templates que falten en Meta
 //   {"cerrar":[detcashid]} -> cierra alertas a mano (deja de recordar)
 //
-// pg_cron (jobid 9): '*/10 12-23 * * *' = cada 10 min, 9 a 20 hora AR.
+// pg_cron (jobid 9): '*/10 15-23 * * *' = cada 10 min, 12 a 20 hora AR.
 //   SELECT cron.schedule(
-//     'notify-pv-fecha-no-habil', '*/10 12-23 * * *',
+//     'notify-pv-fecha-no-habil', '*/10 15-23 * * *',
 //     $$ SELECT net.http_post(
 //       url := 'https://wjfglsafgaltusmbnccl.supabase.co/functions/v1/notify-pv-fecha-no-habil',
 //       headers := jsonb_build_object('Content-Type', 'application/json'),
@@ -72,7 +72,7 @@ const TEMPLATES: Record<string, string> = {
 const ORIGEN_PV = "VTOKM";
 const VENTANA_DIAS = Number(Deno.env.get("PVFECHA_VENTANA_DIAS") ?? "60");
 const MAX_AVISOS = Number(Deno.env.get("PVFECHA_MAX_AVISOS") ?? "10");
-const HORA_DESDE = Number(Deno.env.get("PVFECHA_HORA_DESDE") ?? "9"); // hora AR
+const HORA_DESDE = Number(Deno.env.get("PVFECHA_HORA_DESDE") ?? "12"); // hora AR (Fer, 19/08/2026: antes 9)
 const HORA_HASTA = Number(Deno.env.get("PVFECHA_HORA_HASTA") ?? "20");
 const FIJOS_DEFAULT = "dlopez,mgerez,fngonzalez";
 
