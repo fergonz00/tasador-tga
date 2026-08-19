@@ -1,9 +1,10 @@
 // Edge Function: notify-sin-responder
 // Recordatorios por WhatsApp de consultas que quedaron SIN RESPONDER.
 //
-// Cubre los dos módulos que comparten este proyecto Supabase:
-//   - tasador       (tabla `tasaciones`,    tasador.titogonzalez.online)
-//   - consulta_0km  (tabla `consultas_0km`, consulta0km.titogonzalez.online)
+// Cubre los tres circuitos que comparten este proyecto Supabase:
+//   - tasador        (tabla `tasaciones`,       tasador.titogonzalez.online)
+//   - consulta_0km   (tabla `consultas_0km`,    consulta0km.titogonzalez.online)
+//   - consulta_usado (tabla `consultas_usados`, misma app, solapa Usados)
 //
 // Lógica (idéntica para ambos, parametrizada en la tabla `recordatorios_config`):
 //   1. Busca las que están sin responder y ya cumplieron `intervalo_min`
@@ -69,12 +70,13 @@ Deno.serve(async (req: Request) => {
     const porFuente: Record<string, any> = {};
     for (const c of (cfgs || [])) porFuente[c.fuente] = c;
 
-    const [tasador, consulta0km] = await Promise.all([
+    const [tasador, consulta0km, consultaUsado] = await Promise.all([
       barrerTasador(SUPABASE_URL, SERVICE_KEY, ANON_KEY, porFuente["tasador"], dry),
       barrerConsultas0km(SUPABASE_URL, SERVICE_KEY, ANON_KEY, porFuente["consulta_0km"], dry),
+      barrerConsultasUsados(SUPABASE_URL, SERVICE_KEY, ANON_KEY, porFuente["consulta_usado"], dry),
     ]);
 
-    return json({ dry, tasador, consulta_0km: consulta0km });
+    return json({ dry, tasador, consulta_0km: consulta0km, consulta_usado: consultaUsado });
   } catch (e) {
     return json({ error: "sweep failed", detalle: String(e) }, 500);
   }
@@ -191,6 +193,60 @@ async function barrerConsultas0km(url: string, key: string, anon: string, cfg: a
   return {
     revisadas: (filas || []).length,
     grupos: grupos.length,
+    recordadas: detalle.filter((d) => d.dry || d.ok).length,
+    detalle,
+  };
+}
+
+// ---------- Consulta de usados ----------
+
+// Igual que las de 0km pero SIN agrupar: el wizard de usados guarda UNA fila por
+// consulta (un usado es una unidad única, no se piden varios de una), así que
+// cada una tiene que insistir por su cuenta. Si se agruparan, dos pedidos por
+// dos autos distintos se sellarían con un solo aviso que nombra uno solo.
+async function barrerConsultasUsados(url: string, key: string, anon: string, cfg: any, dry: boolean) {
+  if (!cfg) return { saltado: "sin config" };
+  if (cfg.activo === false) return { saltado: "desactivado" };
+
+  const corte = new Date(Date.now() - cfg.intervalo_min * 60000).toISOString();
+
+  // Sin responder = sigue en 'pendiente'. Aceptar / rechazar / contraofertar la
+  // saca sola del barrido, igual que en el 0km.
+  const path = "consultas_usados?select=id,created_at,vendedor_id,unidad,recordatorios_enviados,ultimo_recordatorio_at" +
+    "&estado=eq.pendiente" +
+    "&created_at=lt." + encodeURIComponent(corte) +
+    "&created_at=gte." + encodeURIComponent(new Date(cfg.desde).toISOString()) +
+    "&recordatorios_enviados=lt." + cfg.max_recordatorios +
+    "&order=created_at.asc&limit=" + LIMITE_POR_CORRIDA;
+
+  const filas = await sb(url, key, path);
+  const pendientes = (filas || []).filter((c: any) => tocaRecordar(c, cfg));
+  if (pendientes.length === 0) {
+    return { revisadas: (filas || []).length, recordadas: 0, detalle: [] };
+  }
+
+  const detalle: any[] = [];
+  for (const c of pendientes) {
+    const aviso = (c.recordatorios_enviados || 0) + 1;
+    if (dry) {
+      detalle.push({ id: c.id, unidad: c.unidad, aviso, dry: true });
+      continue;
+    }
+    const r = await invocarNotify(url, anon, "notify-whatsapp-consulta", {
+      consulta_id: c.id,
+      evento: "consulta_usado_sin_responder",
+    });
+    if (r.ok) {
+      await patch(url, key, `consultas_usados?id=eq.${c.id}`, {
+        recordatorios_enviados: aviso,
+        ultimo_recordatorio_at: new Date().toISOString(),
+      });
+    }
+    detalle.push({ id: c.id, unidad: c.unidad, aviso, ...r });
+  }
+
+  return {
+    revisadas: (filas || []).length,
     recordadas: detalle.filter((d) => d.dry || d.ok).length,
     detalle,
   };

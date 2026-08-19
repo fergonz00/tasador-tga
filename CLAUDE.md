@@ -326,7 +326,11 @@ Tres mejoras de UX implementadas en un único commit (`71839a3`).
 
 ### Cambio 11 — Recordatorios de consultas SIN RESPONDER (✅ COMPLETO 28/07/2026)
 
-**Qué hace:** si una consulta entra y a los **60 minutos** sigue sin contestar, llega otro WhatsApp. Y otro cada 60 min, hasta un **tope de 5 avisos**. Corre 24/7 (sin horario comercial). Cubre **los dos módulos** que comparten este proyecto Supabase: `tasaciones` (tasador) y `consultas_0km` (consulta0km.titogonzalez.online).
+**Qué hace:** si una consulta entra y a los **60 minutos** sigue sin contestar, llega otro WhatsApp. Y otro cada 60 min, hasta un **tope de 5 avisos**. Corre 24/7 (sin horario comercial). Cubre **los tres circuitos** que comparten este proyecto Supabase: `tasaciones` (tasador), `consultas_0km` y **`consultas_usados`** (los dos en consulta0km.titogonzalez.online).
+
+**⚠️ Deployar SIEMPRE con `--no-verify-jwt`.** El pg_cron la llama sin header de auth: si se deploya sin el flag, empieza a devolver `UNAUTHORIZED_NO_AUTH_HEADER` y **los recordatorios mueren en silencio** (el cron no avisa). Pasó el 19/08/2026 al agregar la fuente de usados y se corrigió en el momento. Es al revés que `notify-whatsapp-consulta`, que va con verify_jwt ON.
+
+**Fuente `consulta_usado` (19/08/2026):** misma lógica que la de 0km pero **sin agrupar** — el wizard de usados guarda una fila por consulta (un usado es una unidad única), así que cada una insiste por su cuenta; agrupar sellaría dos pedidos distintos con un aviso que nombra uno solo. Fila propia en `recordatorios_config` con `desde` = 19/08/2026. Ver el `CLAUDE.md` de consulta-0km.
 
 **Cómo sabe que ya se contestó — no hay flag nuevo, es derivado.** En cuanto la fila deja de matchear el filtro, no llega nada más. No hay que marcar nada a mano:
 - **Tasador**: `estado='pendiente'` AND `es_presencial IS NOT TRUE` AND `precio_toma_virtual IS NULL` AND `precio_toma_final IS NULL` AND `virtual_no_apto IS NOT TRUE` AND `rebotada IS NOT TRUE` AND `no_avanza_motivo IS NULL`. O sea: cargar el precio virtual, marcar NO APTO, rebotar al vendedor o "no avanza" **cortan** los recordatorios.
@@ -497,7 +501,7 @@ Es el hermano de `notify-usado-fisico` (aquel pide las fotos, este pide el preci
 
 **Cadencia y control:** pg_cron **jobid 12**, `0 14 * * 1-6` (11:00 hora AR, lun-sáb). Tabla `usados_avisos_precio` en wjfgl, única por **(usadoid, fecha, destinatario)**, con `preventa_origen` y `costo_toma` guardados para poder auditar después. Solo cuentan como "ya avisado hoy" las filas en estado `enviado`; un envío fallido queda `pendiente` y se reintenta en la corrida siguiente.
 
-**Template Meta:** `usado_sin_precio_venta` (es_AR, UTILITY, 4 vars: destinatario · unidad+patente · detalle color/km/costo de toma/PV · cuándo ingresó + hace cuántos días). Creado el 19/08/2026 desde la propia función (`?crear_template=1`). **Mientras Meta lo tiene en PENDING el envío falla y la fila no se sella** — cuando aprueba, la corrida siguiente lo manda solo.
+**Template Meta:** `usado_sin_precio_venta` (es_AR, UTILITY, 4 vars: destinatario · unidad+patente · detalle color/km/costo de toma/PV · cuándo ingresó + hace cuántos días). Creado el 19/08/2026 desde la propia función (`?crear_template=1`) y **APROBADO ese mismo día**: el circuito está 100% operativo.
 
 **Arranque:** `USADO_PRECIO_DESDE` (default `2026-08-01`) — no avisa unidades que entraron antes. Destinatarios cambiables sin redeploy con `USADO_PRECIO_DESTINATARIOS` (usuarios separados por coma; hoy `fngonzalez` a secas, Fer pidió expresamente que sea solo a él).
 
