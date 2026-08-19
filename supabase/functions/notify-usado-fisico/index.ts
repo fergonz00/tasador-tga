@@ -38,6 +38,7 @@
 //   ?solo=549113...        -> manda un ejemplo a ese numero (prueba)
 //   ?forzar=1              -> ignora lo ya avisado hoy (para probar de nuevo)
 //   ?desde=2026-08-01      -> corte de arranque por fechadeingreso
+//   ?meses=250             -> ensancha la ventana de antiguedad (solo pruebas)
 //   ?listar=1              -> lista los templates de la WABA
 //   ?crear_template=1      -> da de alta el template en Meta (una sola vez)
 //
@@ -104,6 +105,7 @@ Deno.serve(async (req: Request) => {
       dry: flag("dry"),
       forzar: flag("forzar"),
       desde: String(par("desde") ?? DESDE).slice(0, 10),
+      meses: Number(par("meses")) > 0 ? Number(par("meses")) : ANTIGUEDAD_MAX_MESES,
     }));
   } catch (e) {
     console.error("notify-usado-fisico:", e);
@@ -127,12 +129,12 @@ type OvsUsado = {
 
 // ── Proceso ─────────────────────────────────────────────────────────────────
 
-async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; desde: string }) {
+async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; desde: string; meses: number }) {
   const hoyAR = fechaAR(new Date());
 
   // 1) Universo vendible en Oversoft, igual que la solapa /usados.
   const corte = new Date();
-  corte.setMonth(corte.getMonth() - ANTIGUEDAD_MAX_MESES);
+  corte.setMonth(corte.getMonth() - opts.meses);
   const corteAlta = corte.toISOString().slice(0, 10);
 
   const raw = await ov(
