@@ -457,7 +457,9 @@ A las **9 de la mañana** le llega un WhatsApp al vendedor con los datos para ll
 
 ## Pedido de fotos cuando un usado entra físico (`notify-usado-fisico`)
 
-A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fer (`fngonzalez`) y a Jorge Fazzini (`jfazzini`)** por cada usado que ya entró físicamente al concesionario y **todavía no tiene fotos del concesionario cargadas**. Pedido por Fer el 18/08/2026.
+A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fer (`fngonzalez`), Jorge Fazzini (`jfazzini`) y Nadia Vera (`nvera`)** por cada usado que ya entró físicamente al concesionario y **todavía no tiene fotos del concesionario cargadas**. Pedido por Fer el 18/08/2026; Nadia sumada el 19/08/2026.
+
+**Nadia va solo en el aviso de fotos, no en el de precios** (pedido explícito de Fer). **Ojo con el padrón**: Nadia Vera está cargada **dos veces** en `tasador_usuarios` (`nadiav` del 06/05 y `nvera` del 14/05), las dos activas y **con el mismo teléfono**. Se usa `nvera` porque respeta la convención del resto (inicial + apellido). Si algún día se suman las dos al mismo aviso, le llegan dos WhatsApps iguales — conviene desactivar una.
 
 **El aviso se repite todos los días hasta que las fotos estén** (decisión de Fer: "1 aviso x día hasta q estén las fotos"). El **único** corte es que aparezca al menos una fila en `portal_usados_fotos` para ese `usadoid` — ahí deja de salir solo. Domingo no manda: el salón está cerrado y nadie puede sacarlas.
 
