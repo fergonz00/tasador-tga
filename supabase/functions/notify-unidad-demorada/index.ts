@@ -268,6 +268,7 @@ async function procesar(env: Env, opts: { dry: boolean; sync: boolean; forzar: b
     const cuando = textoAntiguedad(c.alta, c.habiles);
     const estado = textoEstado(c.u, cuando);
     const sabido = textoSabido(c.prev, c.habiles);
+    let salioAlguno = false;
 
     for (const dest of usuarios) {
       const clave = `${c.serie}|${dest.usuario}`;
@@ -290,6 +291,7 @@ async function procesar(env: Env, opts: { dry: boolean; sync: boolean; forzar: b
         primerNombre(dest.nombre), c.unidad.texto, estado, sabido,
       ]);
       if (r.ok) {
+        salioAlguno = true;
         enviados.push({ serie: c.serie, unidad: c.unidad.texto, para: dest.nombre, dias_habiles: c.habiles, motivo: c.motivo });
         await guardarAviso(env, { ...fila, estado: "enviado", enviado_at: new Date().toISOString(), meta_id: r.meta_id, error: null });
       } else {
@@ -298,8 +300,11 @@ async function procesar(env: Env, opts: { dry: boolean; sync: boolean; forzar: b
       }
     }
 
-    // El contador de la unidad avanza una vez por corrida, no una por destinatario.
-    if (!opts.dry) {
+    // El contador de la unidad avanza una vez por corrida, no una por destinatario,
+    // y SOLO si el mensaje salio de verdad. Si Meta rechaza (template todavia
+    // PENDING, token vencido), la unidad no se sella y se reintenta en la corrida
+    // siguiente en vez de quedar muda 5 dias habiles.
+    if (!opts.dry && salioAlguno) {
       await sbPatch(env, `unidades_demora?serie=eq.${encodeURIComponent(c.serie)}`, {
         avisos: (c.prev?.avisos ?? 0) + 1,
         ultimo_aviso_at: new Date().toISOString(),
