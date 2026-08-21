@@ -27,6 +27,10 @@
 //     cuando llega, no hay nada que consultar. Si la fecha pasa y la unidad
 //     sigue sin llegar, vuelve a avisar.
 //   - La unidad se cierra sola cuando Oversoft la marca recibida o entregada.
+//   - SILENCIADA: Fer puede marcar desde el panel "ya la chequee, no me avises
+//     mas" (`silenciada_at`). Deja de avisar y el vendedor la ve como una a
+//     recibir normal, pero sigue en el panel por si hay que retomarla. Si
+//     despues se le carga una nota, la nota manda y el vendedor la vuelve a ver.
 //
 // De donde sale el dato (replica Oversoft, SOLO LECTURA):
 //   `unidades` con recibida=false y entregada=false = pedida y todavia no
@@ -156,6 +160,7 @@ type OvsUnidad = {
 
 type FilaDemora = {
   serie: string;
+  silenciada_at: string | null;
   problema: string | null;
   fecha_estimada: string | null;
   nota_at: string | null;
@@ -228,7 +233,9 @@ async function procesar(env: Env, opts: { dry: boolean; sync: boolean; forzar: b
       serie, unidad: unidad.texto, alta, dias_habiles: habiles,
       preventa: String(u.preventa ?? "").trim() || null,
       problema: prev?.problema ?? null, fecha_estimada: prev?.fecha_estimada ?? null,
-      avisos: prev?.avisos ?? 0, motivo: motivo ?? "en plazo / ya avisado",
+      avisos: prev?.avisos ?? 0,
+      silenciada: prev?.silenciada_at ? true : undefined,
+      motivo: motivo ?? (prev?.silenciada_at ? "silenciada (ya chequeada)" : "en plazo / ya avisado"),
     });
     if (motivo) candidatos.push({ u, serie, alta, habiles, unidad, prev, motivo });
   }
@@ -344,6 +351,8 @@ function motivoAviso(a: {
   if (a.habiles < a.dias) return null;
 
   const prev = a.prev;
+  // Chequeada a mano y sin problema: no se avisa mas por esta unidad.
+  if (prev?.silenciada_at) return null;
   const notaAt = prev?.nota_at ? String(prev.nota_at).slice(0, 10) : null;
   const avisoAt = prev?.ultimo_aviso_at ? String(prev.ultimo_aviso_at).slice(0, 10) : null;
 
@@ -365,7 +374,7 @@ function motivoAviso(a: {
 async function estadoGuardado(env: Env) {
   const filas = await sb(
     env,
-    "unidades_demora?select=serie,problema,fecha_estimada,nota_at,avisos,ultimo_aviso_at,recibida_at,fecha_oversoft&limit=2000",
+    "unidades_demora?select=serie,problema,fecha_estimada,nota_at,avisos,ultimo_aviso_at,recibida_at,fecha_oversoft,silenciada_at&limit=2000",
   ) as FilaDemora[];
   return new Map<string, FilaDemora>(filas.map((f) => [String(f.serie), f]));
 }
