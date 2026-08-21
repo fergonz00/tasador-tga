@@ -507,6 +507,40 @@ Es el hermano de `notify-usado-fisico` (aquel pide las fotos, este pide el preci
 
 **Modos de prueba:** `?dry=1` · `?solo=<E164>` · `?forzar=1` · `?desde=2009-01-01` · **`?meses=250`** (ensancha la ventana de antigüedad; sirve para validar la detección cuando el stock real está todo con precio) · `?listar=1` · `?crear_template=1`.
 
+## Unidades a recibir que no llegan (`notify-unidad-demorada`)
+
+A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fer (`fngonzalez`) y Daniel López (`dlopez`)** por cada unidad que figura **A RECIBIR** en Oversoft y lleva más de **7 días hábiles** cargada sin entrar físicamente, para que le consulten a VW qué pasa. Pedido por Fer el 21/08/2026.
+
+**El caso que lo origino:** había dos Amarok Hero a recibir (una ya vendida) que no llegaban. Recién al reclamarlas VW dijo que los papeles de esa unidad estaban demorados y que no llegaba en el corto plazo. El vendedor ya le había prometido una fecha al cliente. El problema de fondo es que **una unidad a recibir cuenta como stock y se puede vender** (ver `feedback_definicion_stock`), así que en las pantallas se ve igual que un auto que está en el salón.
+
+**El circuito no termina en el aviso:**
+1. La Edge detecta la demora y avisa a Fer y a Daniel.
+2. Ellos le consultan a VW.
+3. **Fer** anota el problema y la fecha estimada de llegada en el panel **/precios** de portal-precios (sección "🚚 A recibir").
+4. El **vendedor** ve esa nota en `/ofertas`, en `/presupuesto` y en **consulta-0km**, y con eso sabe qué plazo prometerle al cliente.
+
+**Cadencia (definida por Fer):** primer aviso a los **7 días hábiles**; si no hay nada anotado insiste **cada 5 días hábiles**. Cargar la nota **apaga** el aviso y reinicia el reloj: vuelve a los 5 días hábiles para actualizar el estado. **Excepción:** si la nota trae una fecha estimada que todavía no venció, se calla hasta esa fecha — ya sabemos cuándo llega, no hay nada que consultar; si la fecha pasa y la unidad sigue sin llegar, vuelve a avisar. La unidad **se cierra sola** cuando Oversoft la marca recibida o entregada.
+
+**De dónde sale el dato:** réplica Oversoft `unidades` con `recibida = false` y `entregada = false`. **`fechadepedido` es la fecha de alta en Oversoft** (coincide con `statusfec`), y es contra eso que se cuentan los días hábiles. `preventa != ''` = ya vendida: ese caso es el urgente y el mensaje lo canta, porque hay un cliente esperando. **No se filtra por `asignada`/`preventa`**: la unidad vendida es justamente la que más importa.
+
+**Nombrar la unidad:** `modelos.descripcionoperativa` por código de compra; si el model-year es tan nuevo que Oversoft no lo describió todavía **y** el código base es ambiguo (`AGDD8A` = Extreme / Hero / Black Style), cae a la descripción real de ESE chasis según la factura de VW (`compras_vw.modelo_valeria`) o el reparto (`reparto_vw.descripcion`). Sin ese fallback las dos Hero se avisaban como "código AGDD8A MY26". Mismo pipeline que `portal-precios/src/lib/unidades.ts`.
+
+**Tablas nuevas en wjfgl:**
+- `unidades_demora` — una fila por chasis a recibir. La Edge escribe el espejo de Oversoft (`modelo`, `color`, `fecha_oversoft`, `preventa`, `recibida_at`) y el control de avisos (`avisos`, `ultimo_aviso_at`); **Fer escribe `problema`, `fecha_estimada`, `nota_por`, `nota_at`** desde el portal. Cada uno toca sus columnas: el sync nunca pisa la nota.
+- `unidades_demora_avisos` — log de envíos, único por `(serie, fecha, destinatario)`. Un envío fallido queda `pendiente` y se reintenta.
+
+**El contador se sella solo si el mensaje salió** (HTTP 200 de Meta). Si el template está PENDING o el token venció, la unidad no se marca como avisada y se reintenta en la corrida siguiente, en vez de quedar muda 5 días hábiles.
+
+**Cadencia técnica:** pg_cron **jobid 14**, `0 13 * * 1-6` (10:00 hora AR, lun-sáb). Domingos y feriados no manda: no hay a quién consultarle. Tope de `UNIDAD_DEMORA_MAX` (10) unidades por corrida, las más viejas primero.
+
+**Template Meta:** `unidad_a_recibir_demorada` (es_AR, UTILITY, 4 vars: destinatario · unidad con modelo/color/chasis · desde cuándo está y si está vendida · qué sabemos hasta ahora). Creado el 21/08/2026 con `?crear_template=1`, **en PENDING al cierre de esa sesión**.
+
+**Arranque:** `UNIDAD_DEMORA_DESDE` (default `2026-06-01`), medido por `fechadepedido` — sin ese corte entrarían las unidades viejas que quedaron colgadas en Oversoft sin recibirse nunca. Al 21/08/2026 la lista tiene 5 unidades a recibir, 4 de ellas ya pasadas de plazo (dos Hero de 14 días hábiles, una Trendline de 16 vendida en la PV 08753/3, una Extreme de 12).
+
+**Envs:** `UNIDAD_DEMORA_DIAS` (7) · `UNIDAD_DEMORA_REPASO` (5) · `UNIDAD_DEMORA_MAX` (10) · `UNIDAD_DEMORA_DESTINATARIOS` (`fngonzalez,dlopez`) · `UNIDAD_DEMORA_DESDE`.
+
+**Modos de prueba:** `?dry=1` (no manda ni escribe) · **`?sync=1`** (actualiza la lista de unidades **sin avisar** — es lo que alimenta el panel y consulta-0km; sirve para poblar la tabla antes de que Meta apruebe el template) · `?solo=<E164>` · `?forzar=1` · `?desde=YYYY-MM-DD` · `?dias=7` · `?listar=1` · `?crear_template=1`.
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
