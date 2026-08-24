@@ -567,6 +567,10 @@ A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fe
 
 **⚠️ Deployar con `--no-verify-jwt`** (el pg_cron la llama sin header de auth).
 
+**IDs:** reventa `tga` en ArgenDreams = `ef892191-d868-41c3-957a-860693c99f1d` (la función igual lo resuelve sola por `usuario='tga'`, no está hardcodeado). Si el usuario se desactiva, el puente corta solo y devuelve 412 sin escribir nada.
+
+**Ventana real para cotizar (medida 24/08/2026 sobre 186 casos):** desde `enviada_a_reventas_at` hasta `precio_al_vendedor_at` pasan **2,9 h de mediana**; 110 de 186 cerraron en menos de 4 h y 13 en menos de 1 h (mínimo 11 minutos). El sync de 2 min llega bien, pero **sin un aviso de entrada Fer se entera tarde** — falta ese WhatsApp (pendiente, lo pidió solo para el resultado).
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
