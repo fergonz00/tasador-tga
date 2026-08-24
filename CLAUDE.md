@@ -541,6 +541,32 @@ A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fe
 
 **Modos de prueba:** `?dry=1` (no manda ni escribe) · **`?sync=1`** (actualiza la lista de unidades **sin avisar** — es lo que alimenta el panel y consulta-0km; sirve para poblar la tabla antes de que Meta apruebe el template) · `?solo=<E164>` · `?forzar=1` · `?desde=YYYY-MM-DD` · `?dias=7` · `?listar=1` · `?crear_template=1`.
 
+## Puente con ArgenDreams — TGA tasa los usados VW de ellos (`sync-argendreams`)
+
+**El acuerdo (Fer con ArgenDreams, 24/08/2026):** ArgenDreams vende BYD y recibe usados de todas las marcas, que reparte entre 8 reventas. Lo que es **Volkswagen lo tasa TGA**. Por ahora solo VW; más adelante puede abrirse a más marcas (constante `MARCAS` en la función).
+
+**Cómo funciona.** TGA entra al circuito de ArgenDreams como **una reventa más** (usuario `tga`, rol reventa), pero en vez de cotizar en la web de ellos lo hace desde su propio tasador. El puente es la Edge Function **`sync-argendreams`** (pg_cron `*/2 * * * *`, jobid 20), que hace tres pasadas por corrida:
+
+1. **PULL** — trae las tasaciones VW que Agustín ya mandó a reventas (`en_reventa` / `precios_recibidos`) y las espeja en `tasaciones` de TGA. Las que están en `pendiente_admin` NO se traen: se ve solo lo moderado.
+2. **PUSH** — el precio que carga Fer se escribe en `reventas_precios` de ArgenDreams (upsert por `on_conflict=tasacion_id,reventa_id,ronda`, así corregirlo pisa el anterior en vez de duplicar). Se dispara al guardar y el cron es la red de seguridad.
+3. **FEEDBACK** — cuando ArgenDreams cierra (`precio_al_vendedor` / `cerrada`), compara contra el mejor precio de la ronda y le manda WhatsApp a Fer con el resultado. Va por **CallMeBot** al número fijo del proyecto (que es el de Fer), así que no necesitó template nuevo de Meta.
+
+**Se cotiza A CIEGAS** (decisión de Fer): no se ven los precios de las otras reventas hasta que cierra la ronda. Si se vieran antes, uno copia y pone un peso más — gana la operación pero pierde el termómetro de si está tasando bien, que es justamente para lo que se hizo.
+
+**Solo fngonzalez.** El tab y el feedback son de Fer (`ARGD_USUARIOS` en `index.html`). Los otros admins no ven ni el tab.
+
+**El precio que se carga es lo que TGA paga por la unidad**, no el precio al cliente: ArgenDreams le suma su comisión de plataforma (7-9%) antes de pasárselo. Es otro significado que el `precio_toma_final` del circuito propio, por eso vive en campos aparte (`externa_*`).
+
+**Aislamiento — por qué las externas no ensucian nada.** Van con `origen='argendreams'` y **`estado='argendreams'`**. Ese estado propio es lo que las mantiene fuera de `notify-pending-sweep` y `notify-sin-responder`, que filtran `estado=eq.pendiente`. Como además no tienen patente ni turno, tampoco las agarran `portal-precios/usados.ts`, `daily-agenda`, `notify-usado-fisico` ni `notify-usado-sin-precio` (todos filtran por esos campos). En el front se filtran de los tabs del admin, del selector de vendedores y de "Mis tasaciones". Si mañana se agrega un consumidor nuevo de `tasaciones`, **acordarse de filtrar `origen='tga'`**.
+
+**Columnas nuevas en `tasaciones`:** `origen` (default `'tga'`), `origen_ref_id` (uuid en ArgenDreams, con índice único), `origen_datos` (jsonb: BYD que consultaba el cliente, peritaje, ronda), `externa_precio` + `_at` + `_por`, `externa_ronda`, `externa_push_at`, `externa_estado_origen`, `externa_resultado` (`ganada`/`perdida`/`empatada`), `externa_mejor_precio`, `externa_cerrada_at`, `externa_avisado_at`.
+
+**CCA y Fórmula FG se calculan en vivo** al renderizar la card, no vienen del sync: las dos apps leen la **misma planilla CCA** (`1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko` gid=904791552), así que marca/modelo/versión matchean exacto sin normalizar. Al guardar el precio se snapshotean en `precio_cca` / `precio_formula_vw` para saber después con qué números se decidió.
+
+**Probar sin escribir:** `?dry=1`. Devuelve las tres pasadas con el detalle de qué haría.
+
+**⚠️ Deployar con `--no-verify-jwt`** (el pg_cron la llama sin header de auth).
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
