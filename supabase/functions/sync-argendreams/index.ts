@@ -20,7 +20,15 @@
 //      a nombre del usuario reventa 'tga'. Ahi entran al ranking de Agustin
 //      compitiendo con las otras reventas.
 //
-//   3) FEEDBACK ArgenDreams -> WhatsApp de Fer
+//   3) AVISO DE ENTRADA -> WhatsApp de Fer
+//      Apenas entra un VW nuevo para tasar le llega el WhatsApp con los datos
+//      del auto. Es imprescindible: la ventana para cotizar en ArgenDreams es
+//      de 2,9 h de mediana (y 13 de 186 cerraron en menos de UNA hora), asi que
+//      sin aviso la mitad se pasa de largo. Va en una pasada aparte del PULL y
+//      se sella en `externa_aviso_entrada_at`: si CallMeBot falla, la proxima
+//      corrida reintenta en vez de perderse el aviso.
+//
+//   4) FEEDBACK ArgenDreams -> WhatsApp de Fer
 //      Cuando ArgenDreams cierra la ronda (estado precio_al_vendedor o cerrada),
 //      compara el precio de TGA contra el mejor de la ronda y le avisa a Fer si
 //      gano o cuanto le falto. Es su termometro para saber si esta tasando bien.
@@ -78,9 +86,10 @@ Deno.serve(async (req: Request) => {
 
     const pull = await pasoPull(TGA_URL, TGA_KEY, dry);
     const push = await pasoPush(TGA_URL, TGA_KEY, reventaId, dry);
+    const aviso = await pasoAvisoEntrada(TGA_URL, TGA_KEY, dry);
     const feedback = await pasoFeedback(TGA_URL, TGA_KEY, reventaId, dry);
 
-    return json({ dry, reventa_id: reventaId, pull, push, feedback });
+    return json({ dry, reventa_id: reventaId, pull, push, aviso, feedback });
   } catch (e) {
     return json({ error: String(e && (e as Error).message || e) }, 500);
   }
@@ -222,7 +231,65 @@ async function pasoPush(tgaUrl: string, tgaKey: string, reventaId: string, dry: 
   return { candidatas: (pendientes || []).length, empujadas, detalle };
 }
 
-// ------------------------------------------------------------ paso 3: FEEDBACK
+// ------------------------------------------------- paso 3: AVISO DE ENTRADA
+
+// Tope por corrida: si algun dia ArgenDreams reabre un lote grande, que no se
+// convierta en 20 WhatsApps seguidos.
+const AVISOS_MAX_POR_CORRIDA = 5;
+// Solo avisamos de lo reciente: una tasacion vieja que reaparece no es noticia.
+const AVISO_VENTANA_HORAS = 24;
+
+async function pasoAvisoEntrada(tgaUrl: string, tgaKey: string, dry: boolean) {
+  const desde = new Date(Date.now() - AVISO_VENTANA_HORAS * 3600 * 1000).toISOString();
+  const nuevas = await tga(tgaUrl, tgaKey,
+    "tasaciones?origen=eq.argendreams&externa_aviso_entrada_at=is.null" +
+    "&externa_precio=is.null" +
+    "&externa_estado_origen=in.(" + ESTADOS_ABIERTOS.join(",") + ")" +
+    "&created_at=gte." + encodeURIComponent(desde) +
+    "&select=id,marca,modelo,version,anio,kilometros,color,provincia_radicacion,cliente_nombre,origen_datos,externa_ronda" +
+    "&order=created_at.asc&limit=" + AVISOS_MAX_POR_CORRIDA);
+
+  let avisadas = 0;
+  const detalle: any[] = [];
+
+  for (const t of (nuevas || [])) {
+    const msg = mensajeEntrada(t);
+    if (!dry) {
+      await avisarFer(msg);
+      await tga(tgaUrl, tgaKey, "tasaciones?id=eq." + t.id, "PATCH",
+        { externa_aviso_entrada_at: new Date().toISOString() });
+    }
+    avisadas++;
+    detalle.push({ id: t.id, modelo: t.modelo, anio: t.anio, mensaje: msg });
+  }
+
+  return { pendientes: (nuevas || []).length, avisadas, detalle };
+}
+
+function mensajeEntrada(t: any) {
+  const d = t.origen_datos || {};
+  const lineas = [
+    "🚗 VW nuevo para tasar — ArgenDreams",
+    "",
+    [t.marca, t.modelo, t.anio].filter(Boolean).join(" "),
+  ];
+  if (t.version) lineas.push(t.version);
+  lineas.push([
+    t.kilometros != null ? fmt(t.kilometros) + " km" : null,
+    t.color || null,
+    t.provincia_radicacion || null,
+  ].filter(Boolean).join(" · "));
+  if (t.cliente_nombre) {
+    lineas.push("Cliente: " + t.cliente_nombre + (d.byd_modelo ? " (consulta BYD " + d.byd_modelo + ")" : ""));
+  }
+  if (t.externa_ronda > 1) lineas.push("⚠️ Ronda " + t.externa_ronda + " — piden mejorar el precio.");
+  if (d.peritaje_cargado_at) lineas.push("🔧 Tiene peritaje cargado.");
+  lineas.push("");
+  lineas.push("Cargá tu precio en tasador.titogonzalez.online → solapa ArgenDreams.");
+  return lineas.join("\n");
+}
+
+// ------------------------------------------------------------ paso 4: FEEDBACK
 
 async function pasoFeedback(tgaUrl: string, tgaKey: string, reventaId: string, dry: boolean) {
   // Cotizamos, todavia no nos avisamos el resultado.
