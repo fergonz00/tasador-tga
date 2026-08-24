@@ -30,7 +30,9 @@
 //
 // Destinatarios: `tasador_usuarios` (telefono_wa). El vendedor sale de
 // `pv_vendedores_map` (vendedorid de Oversoft -> usuario). Los fijos, del env
-// PVFECHA_FIJOS (default: dlopez, mgerez, fngonzalez).
+// PVFECHA_FIJOS (default: dlopez, mgerez, fngonzalez). Los vendedores de
+// PVFECHA_VENDEDORES_SIN_AVISO (default: 22 = "T.G.") no reciben copia: esa PV
+// avisa solo a los fijos.
 //
 // Templates Meta (WABA "Tito Gonzalez | Tasador"), los dos es_AR / UTILITY con
 // 4 variables ({{1}} destinatario · {{2}} nro de PV · {{3}} detalle · {{4}} vendedor):
@@ -75,6 +77,14 @@ const MAX_AVISOS = Number(Deno.env.get("PVFECHA_MAX_AVISOS") ?? "10");
 const HORA_DESDE = Number(Deno.env.get("PVFECHA_HORA_DESDE") ?? "12"); // hora AR (Fer, 19/08/2026: antes 9)
 const HORA_HASTA = Number(Deno.env.get("PVFECHA_HORA_HASTA") ?? "20");
 const FIJOS_DEFAULT = "dlopez,mgerez,fngonzalez";
+
+// Vendedores "de la casa" que no son una persona a la que reclamarle: el aviso
+// va SOLO a los fijos, sin copiar al usuario mapeado en `pv_vendedores_map`.
+// 22 = "T.G." -> patriciag (pedido de Fer, 24/08/2026).
+const VENDEDORES_SIN_AVISO = new Set(
+  (Deno.env.get("PVFECHA_VENDEDORES_SIN_AVISO") ?? "22")
+    .split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0),
+);
 
 // El 1er aviso de fecha recien sale cuando el renglon lleva este tiempo cargado,
 // para no pegarle al vendedor mientras todavia esta tipeando la forma de pago.
@@ -477,7 +487,7 @@ function destinatarios(
     vistos.add(u.telefono_wa);
     out.push(u);
   };
-  if (vendedorid != null) {
+  if (vendedorid != null && !VENDEDORES_SIN_AVISO.has(Number(vendedorid))) {
     const usuario = padron.porVendedor.get(Number(vendedorid));
     if (usuario) push(padron.porUsuario.get(usuario));
   }
