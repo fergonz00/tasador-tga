@@ -553,7 +553,7 @@ Cuando un precio publicado en la **tienda oficial de ML** (`mercadolibre.com.ar/
 
 **El reloj arranca cuando Fer cambio el precio, no cuando lo vemos.** Fer lo pidio como "6 horas despues de que YO los cambie": la primera vez que se detecta el desvio, `desviado_desde` sale del ultimo cambio de `oferta_fyf` en `portal_precios_hist`. Por eso el primer aviso pudo decir "hace 4 dias" en vez de "hace 6 horas".
 
-**Cadencia:** primer aviso a las 6 h, y **uno cada 6 h hasta un tope de 4** (`ML_HORAS_AVISO` / `ML_AVISOS_MAX`, envs de portal-precios). Se **resetea solo** en cuanto el precio de ML vuelve a coincidir con la oferta; no hay nada que marcar a mano. El contador se sella **solo si Meta acepto el envio**.
+**Cadencia (definida por Fer):** primer aviso a las **6 h** de cambiado el precio, y despues **uno cada 24 h, SIN TOPE**, hasta que ML quede actualizado (`ML_HORAS_AVISO` / `ML_HORAS_REPASO`, envs de portal-precios). El **unico corte** es que el precio de ML vuelva a coincidir con la oferta — ahi se resetea solo y no hay nada que marcar a mano. El contador se sella **solo si Meta acepto el envio**.
 
 **El mapeo publicacion -> modelo es manual, en la tabla `ml_publicaciones`** (`ml_id` PK, `modelo` = modelo del portal, `ignorar` para los accesorios). Se sembraron las 17 publicaciones de autos + 3 accesorios ignorados. **Una publicacion nueva entra sola con `modelo = null` y queda "sin mapear"**: se ve en el panel y NO se compara hasta que alguien le asigne el modelo (`update ml_publicaciones set modelo = '...' where ml_id = '...'`). Es el mismo riesgo que la col "Uso concesionaria" de elcerokm-feed.
 
@@ -565,7 +565,7 @@ Cuando un precio publicado en la **tienda oficial de ML** (`mercadolibre.com.ar/
 
 **Modos de prueba:** `/api/cron/ml-tienda?dry=1` (compara y guarda, no avisa) - en la Edge: `{"solo":"<E164>"}`, `{"listar":true,"nombre":"ml_tienda_precios"}`, `{"crear_template":true}`, `{"borrar_template":true}`.
 
-**Envs:** `ML_TIENDA_DESTINATARIOS` (default `nvera,mlubrano,fngonzalez`) en Supabase - `ML_HORAS_AVISO` (6), `ML_AVISOS_MAX` (4), `ML_TIENDA_URL` en portal-precios.
+**Envs:** `ML_TIENDA_DESTINATARIOS` (default `nvera,mlubrano,fngonzalez`) en Supabase - `ML_HORAS_AVISO` (6), `ML_HORAS_REPASO` (24), `ML_TIENDA_URL` en portal-precios.
 
 ## Puente con ArgenDreams — TGA tasa los usados VW de ellos (`sync-argendreams`)
 
