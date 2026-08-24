@@ -90,6 +90,10 @@ Deno.serve(async (req: Request) => {
   try {
     if (params.get("listar") === "1") return json(await listarTemplates());
     if (params.get("crear_templates") === "1") return json(await crearTemplates());
+    // ?probar=entrada|resultado -> manda el template con datos de ejemplo, para
+    // verificar que Meta lo aprobo y que llega, sin esperar un auto real.
+    const probar = params.get("probar");
+    if (probar) return json(await probarTemplate(TGA_URL, TGA_KEY, probar));
     const reventaId = await getReventaId();
     if (!reventaId) {
       return json({
@@ -455,6 +459,17 @@ async function listarTemplates() {
   const j = await res.json();
   const propios = (j.data || []).filter((t: any) => String(t.name).startsWith("argendreams_"));
   return { status: res.status, propios, total: (j.data || []).length, error: j.error };
+}
+
+async function probarTemplate(tgaUrl: string, tgaKey: string, cual: string) {
+  const entrada = cual === "entrada";
+  const template = entrada ? TPL_ENTRADA : TPL_RESULTADO;
+  const vars = (nombre: string) => entrada
+    ? [nombre, "PRUEBA - VOLKSWAGEN TAOS 2022",
+       "5P 1,4 TSI 250 COMFORTLINE TIPT · 67.000 km · Blanco · CABA. Es un mensaje de prueba, ignoralo"]
+    : [nombre, "no ganamos la tasación", "PRUEBA - TAOS 2022 67.000 km", "$31.000.000",
+       "el mejor de la ronda fue $33.000.000, nos faltaron $2.000.000 (6,5%); es un mensaje de prueba, ignoralo"];
+  return { template, envios: await avisarFer(tgaUrl, tgaKey, template, vars, false) };
 }
 
 async function crearTemplates() {
