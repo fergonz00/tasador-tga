@@ -675,6 +675,7 @@ input, select, textarea { font-family: var(--font); }
         <button onclick="showAdminTab('usado_rechazado', this)">Usado no apto</button>
         <button onclick="showAdminTab('usado_tomado', this)">Usado tomado</button>
         <button onclick="showAdminTab('todas', this)">Todas</button>
+        <button id="tabArgd" class="hidden" onclick="showAdminTab('argendreams', this)">🤝 ArgenDreams</button>
       </div>
       <div class="cotiz-bar">
         <label>Cotización USD:</label>
@@ -1216,6 +1217,10 @@ function selectMode(mode) {
   mostrarSoloVista(viewByMode[mode]);
 
   if (mode === 'admin') {
+    // El tab de ArgenDreams es solo de Fer: es él quien cotiza y quien recibe el
+    // feedback de si estamos tasando bien o corto.
+    const tabArgd = document.getElementById('tabArgd');
+    if (tabArgd) tabArgd.classList.toggle('hidden', !_esArgd());
     loadAdminTasaciones('pendientes');
   } else if (mode === 'vendedor') {
     initWizard();
@@ -2310,7 +2315,9 @@ async function loadMisTasaciones() {
   const list = document.getElementById('misTasacionesList');
   list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Cargando...</div>';
   try {
-    const data = await sbFetch(`tasaciones?vendedor_id=eq.${currentUser.id}&order=created_at.desc`);
+    // origen=eq.tga: las espejadas de ArgenDreams no son tasaciones propias y no
+    // tienen que aparecer en "Mis tasaciones" de nadie.
+    const data = await sbFetch(`tasaciones?vendedor_id=eq.${currentUser.id}&origen=eq.tga&order=created_at.desc`);
     misTasacionesData = data;
     renderMisTasacionesList();
   } catch(e) {
@@ -2676,7 +2683,8 @@ function populateAdminVendedorSelect(data) {
   const sel = document.getElementById('adminFiltroVendedor');
   if (!sel) return;
   const prev = sel.value || adminFiltroVendedor || 'TODOS';
-  const vendedores = [...new Set(data.map(t => t.vendedor_nombre).filter(v => v))].sort();
+  // Sin las externas: "ArgenDreams" no es un vendedor del salón.
+  const vendedores = [...new Set(data.filter(t => !_esExterna(t)).map(t => t.vendedor_nombre).filter(v => v))].sort();
   sel.innerHTML = '<option value="TODOS">Todos los vendedores</option>' +
     vendedores.map(v => `<option value="${v}">${v}</option>`).join('');
   // Si el vendedor previamente seleccionado ya no está en la lista, cae a TODOS
@@ -2701,6 +2709,16 @@ function showAdminTab(tab, btn) {
 function renderAdminList(tasaciones) {
   const list = document.getElementById('adminList');
   let data = tasaciones;
+
+  // Las tasaciones espejadas desde ArgenDreams (origen='argendreams') NO son
+  // tasaciones de TGA: no tienen cliente nuestro, no van a inspección física y
+  // no cuentan para ninguna estadística del salón. Viven solo en su propio tab.
+  if (adminFiltroEstado === 'argendreams') {
+    if (!_esArgd()) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">No autorizado</div>'; return; }
+    return renderArgdList(data.filter(_esExterna));
+  }
+  data = data.filter(t => !_esExterna(t));
+
   // Filtro por estado (tab):
   //   pendientes → sin precio virtual y sin precio final
   //   virtual    → con precio virtual pero sin precio final
@@ -2751,6 +2769,290 @@ function renderAdminList(tasaciones) {
   // para tomar la decisión del precio final (datos + virtual + inspección + input final).
   const renderFn = (adminFiltroEstado === 'esperando') ? renderAdminCardEsperando : renderAdminCard;
   list.innerHTML = subtituloAdminHTML + data.map(t => renderFn(t)).join('');
+}
+
+// ============ ARGENDREAMS — TASACIONES EXTERNAS ============
+// TGA tasa los usados VW que entran por ArgenDreams, compitiendo como una reventa
+// más contra las 8 que ya cotizan ahí. La Edge Function `sync-argendreams` trae
+// las tasaciones cuando Agustín las manda a reventas, empuja de vuelta el precio
+// que se carga acá, y avisa por WhatsApp si ganamos o no cuando cierran la ronda.
+//
+// Se cotiza A CIEGAS: no vemos lo que ofrecieron los otros hasta que cierra. Es
+// la única forma de que el resultado sirva de termómetro para saber si tasamos
+// bien; viendo los precios ajenos antes, uno copia y no aprende nada.
+const ARGD_USUARIOS = ['fngonzalez'];
+
+function _esArgd() {
+  return !!(currentUser && ARGD_USUARIOS.includes(currentUser.usuario));
+}
+
+function _esExterna(t) {
+  return !!(t && t.origen && t.origen !== 'tga');
+}
+
+// Modelo 0km de la planilla VW para la Fórmula FG. Preselecciona por nombre
+// (usado "TAOS" → "VW Taos Comfortline...") y deja cambiarlo a mano, porque el
+// match automático no distingue versiones ni sabe qué hacer con un discontinuado.
+function _argdEquivSugerido(modeloUsado) {
+  if (!modeloUsado || !vwData.length) return '';
+  const base = String(modeloUsado).toUpperCase().replace(/PICK\s*-?\s*UP/g, '').trim().split(' ')[0];
+  if (!base || base.length < 3) return '';
+  const matches = vwData.filter(v => v.modelo.toUpperCase().includes(base));
+  if (!matches.length) return '';
+  // El más barato de los que matchean = la versión de entrada, que es el piso
+  // razonable cuando no sabemos la versión exacta.
+  return matches.reduce((min, v) => (v.precio_0km < min.precio_0km ? v : min), matches[0]).modelo;
+}
+
+function _argdCalc(t, equivModelo) {
+  const cotiz = getCotiz();
+  const ajuste = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override)
+                                                : calcAjusteKm(t.kilometros, t.anio, t.modelo);
+  // CCA en vivo: ambas apps leen la MISMA planilla CCA, así que marca/modelo/
+  // versión matchean exacto sin normalizar nada.
+  const cca = calcPrecioCCA(t.marca, t.modelo, t.version, t.anio);
+  const ccaBase = cca ? ((cca.moneda === 'USD') ? cca.precio * cotiz : cca.precio) : null;
+  const ccaToma = ccaBase ? ccaBase * (1 + ajuste / 100) * 0.86 : null;
+
+  let fgMercado = null, fgToma = null, precio0km = null;
+  const vw = equivModelo ? vwData.find(v => v.modelo === equivModelo) : null;
+  if (vw) {
+    precio0km = vw.precio_0km;
+    const rotacion = Number(t.rotacion_anual) || 9;
+    const anios = Math.max(0, 2026 - (t.anio || 2026));
+    fgMercado = precio0km / 1.05 / Math.pow(1 + rotacion / 100, anios);
+    fgToma = fgMercado * (1 + ajuste / 100) * 0.88;
+  }
+  return { ajuste, ccaBase, ccaToma, fgMercado, fgToma, precio0km, ccaMoneda: cca ? cca.moneda : null };
+}
+
+function renderArgdList(data) {
+  const list = document.getElementById('adminList');
+  const sinPrecio = data.filter(t => t.externa_precio == null);
+  const cotizadas = data.filter(t => t.externa_precio != null && !t.externa_resultado);
+  const cerradas  = data.filter(t => !!t.externa_resultado);
+
+  const ganadas = cerradas.filter(t => t.externa_resultado === 'ganada').length;
+  const efectividad = cerradas.length ? Math.round((ganadas / cerradas.length) * 100) : null;
+
+  // Cuánto nos faltó en promedio en las que perdimos: el número que dice si
+  // estamos tasando corto y por cuánto.
+  const perdidas = cerradas.filter(t => t.externa_resultado === 'perdida' && t.externa_mejor_precio && t.externa_precio);
+  const brechaProm = perdidas.length
+    ? perdidas.reduce((a, t) => a + ((t.externa_mejor_precio - t.externa_precio) / t.externa_precio) * 100, 0) / perdidas.length
+    : null;
+
+  const header = `
+    <div style="margin:0 16px 12px; padding:12px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">
+      🤝 Usados <strong>Volkswagen</strong> que ArgenDreams manda a tasar. Ponés el precio que TGA paga por la unidad y viaja solo a su ranking, donde compite con las otras reventas.
+      Cotizás <strong>a ciegas</strong>: cuando cierran te llega un WhatsApp con el resultado.
+    </div>
+    <div style="margin:0 16px 14px; display:flex; gap:10px; flex-wrap:wrap">
+      ${_argdStat('Sin cotizar', sinPrecio.length, sinPrecio.length ? 'var(--red)' : 'var(--vw-grey-4)')}
+      ${_argdStat('Esperando cierre', cotizadas.length, 'var(--vw-blue)')}
+      ${_argdStat('Ganadas', ganadas + ' de ' + cerradas.length, 'var(--green)')}
+      ${efectividad != null ? _argdStat('Efectividad', efectividad + '%', efectividad >= 50 ? 'var(--green)' : 'var(--red)') : ''}
+      ${brechaProm != null ? _argdStat('Nos falta (prom.)', brechaProm.toFixed(1) + '%', 'var(--vw-grey-4)') : ''}
+    </div>`;
+
+  if (data.length === 0) {
+    list.innerHTML = header + '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Todavía no llegó ninguna tasación de ArgenDreams.</div>';
+    return;
+  }
+
+  const orden = [...sinPrecio, ...cotizadas, ...cerradas];
+  list.innerHTML = header + orden.map(t => renderArgdCard(t)).join('');
+}
+
+function _argdStat(label, valor, color) {
+  return `<div style="flex:1; min-width:110px; padding:10px 12px; background:white; border:1px solid var(--vw-grey-2); border-radius:8px">
+    <div style="font-size:10px; font-weight:700; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">${label}</div>
+    <div style="font-family:var(--mono); font-size:18px; font-weight:700; color:${color}">${valor}</div>
+  </div>`;
+}
+
+function renderArgdCard(t) {
+  const equivSel = (t.equiv_0km_modelo && vwData.some(v => v.modelo === t.equiv_0km_modelo))
+    ? t.equiv_0km_modelo : _argdEquivSugerido(t.modelo);
+  const c = _argdCalc(t, equivSel);
+  const d = t.origen_datos || {};
+
+  const fotos = (t.fotos || []);
+  const fotosHTML = fotos.length
+    ? `<div class="fotos-admin-grid">${fotos.map(f => `<img src="${f}" onclick="showPhoto('${f}')">`).join('')}</div>`
+    : '<div style="font-size:13px;color:var(--vw-grey-3)">Sin fotos</div>';
+
+  const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+
+  // Badge de estado del lado de ArgenDreams
+  let badge = '';
+  if (t.externa_resultado === 'ganada') {
+    badge = '<span style="padding:3px 10px; background:#DCFCE7; color:#166534; border-radius:99px; font-size:11px; font-weight:700">🏆 GANADA</span>';
+  } else if (t.externa_resultado === 'perdida') {
+    badge = '<span style="padding:3px 10px; background:#FEE2E2; color:#991B1B; border-radius:99px; font-size:11px; font-weight:700">PERDIDA</span>';
+  } else if (t.externa_resultado === 'empatada') {
+    badge = '<span style="padding:3px 10px; background:#FEF3C7; color:#92400E; border-radius:99px; font-size:11px; font-weight:700">EMPATE</span>';
+  } else if (t.externa_precio != null) {
+    badge = '<span style="padding:3px 10px; background:#DBEAFE; color:#1E40AF; border-radius:99px; font-size:11px; font-weight:700">COTIZADA — esperando cierre</span>';
+  } else {
+    badge = '<span style="padding:3px 10px; background:#FEE2E2; color:#991B1B; border-radius:99px; font-size:11px; font-weight:700">SIN COTIZAR</span>';
+  }
+  if (t.externa_ronda > 1) {
+    badge += ` <span style="padding:3px 10px; background:var(--vw-grey-1); color:var(--vw-grey-4); border-radius:99px; font-size:11px; font-weight:700">RONDA ${t.externa_ronda}</span>`;
+  }
+  if (d.usado_version_manual) {
+    badge += ' <span style="padding:3px 10px; background:#FEF3C7; color:#92400E; border-radius:99px; font-size:11px; font-weight:700">✏️ versión a mano</span>';
+  }
+
+  // Resultado ya cerrado: mostramos la diferencia contra el mejor
+  let resultadoHTML = '';
+  if (t.externa_resultado && t.externa_mejor_precio) {
+    const dif = t.externa_mejor_precio - t.externa_precio;
+    const pct = t.externa_precio ? (dif / t.externa_precio) * 100 : 0;
+    const gano = t.externa_resultado === 'ganada';
+    resultadoHTML = `
+      <div style="margin-top:10px; padding:10px 12px; background:${gano ? '#F0FDF4' : '#FEF2F2'}; border:1px solid ${gano ? '#BBF7D0' : '#FECACA'}; border-radius:6px">
+        <div style="font-size:11px; font-weight:700; color:${gano ? '#166534' : '#991B1B'}; text-transform:uppercase; letter-spacing:0.5px">Resultado</div>
+        <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:4px; font-size:13px">
+          <div>Nuestro precio <strong style="font-family:var(--mono)">$ ${formatNum(t.externa_precio)}</strong></div>
+          <div>Mejor de la ronda <strong style="font-family:var(--mono)">$ ${formatNum(t.externa_mejor_precio)}</strong></div>
+          ${!gano && dif > 0 ? `<div style="color:#991B1B">Faltaron <strong style="font-family:var(--mono)">$ ${formatNum(dif)}</strong> (${pct.toFixed(1)}%)</div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  const bloqueado = !!t.externa_resultado;
+
+  return `
+  <div class="admin-card" style="border-left:3px solid #7C3AED">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap; margin-bottom:8px">
+      <div>
+        <div style="font-size:17px; font-weight:700; color:var(--vw-blue)">${t.marca} ${t.modelo} ${t.anio}</div>
+        <div style="font-size:13px; color:var(--vw-grey-4)">${t.version || ''}</div>
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">
+          ${formatNum(t.kilometros)} km · ${t.color || 's/color'} · ${t.provincia_radicacion || 's/provincia'}
+        </div>
+      </div>
+      <div style="text-align:right">
+        ${badge}
+        <div style="font-size:11px; color:var(--vw-grey-3); margin-top:4px">${fecha}</div>
+      </div>
+    </div>
+
+    <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:10px">
+      Cliente de ArgenDreams: <strong>${t.cliente_nombre || 's/d'}</strong>${d.byd_modelo ? ` · consulta <strong>BYD ${d.byd_modelo}</strong>` : ''}
+    </div>
+
+    ${fotosHTML}
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px">
+      <div class="precio-box cca" style="flex:1; min-width:150px">
+        <div class="label">CCA · toma</div>
+        <div class="valor">${c.ccaToma ? '$ ' + formatNum(c.ccaToma) : 'Sin dato'}</div>
+        <div class="sub">${c.ccaBase ? 'base $ ' + formatNum(c.ccaBase) + ' · km ' + (c.ajuste >= 0 ? '+' : '') + c.ajuste + '%' : 'CCA no tiene esta versión'}</div>
+      </div>
+      <div class="precio-box vw" style="flex:1; min-width:150px">
+        <div class="label">Fórmula FG · toma</div>
+        <div class="valor">${c.fgToma ? '$ ' + formatNum(c.fgToma) : 'Elegí el 0km'}</div>
+        <div class="sub">${c.precio0km ? '0km $ ' + formatNum(c.precio0km) : 'sin equivalente'}</div>
+      </div>
+    </div>
+
+    <div style="margin-top:10px">
+      <label style="font-size:11px; font-weight:600; color:var(--vw-grey-4)">0km equivalente (para la Fórmula FG)</label>
+      <select id="argdEquiv-${t.id}" onchange="onArgdEquivChange('${t.id}')" ${bloqueado ? 'disabled' : ''}
+        style="width:100%; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--sans); margin-top:4px">
+        <option value="">— sin equivalente —</option>
+        ${vwData.map(v => `<option value="${v.modelo}" ${v.modelo === equivSel ? 'selected' : ''}>${v.modelo}</option>`).join('')}
+      </select>
+    </div>
+
+    ${resultadoHTML}
+
+    ${bloqueado ? '' : `
+    <div style="margin-top:12px; padding:12px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:8px">
+      <div style="font-size:12px; font-weight:700; color:#5B21B6; margin-bottom:6px">
+        ${t.externa_precio != null ? '💰 PRECIO ENVIADO A ARGENDREAMS' : '💰 CUÁNTO PAGA TGA POR ESTA UNIDAD'}
+      </div>
+      <div style="font-size:11px; color:var(--vw-grey-4); margin-bottom:8px">
+        Es lo que pagamos nosotros por el auto, no el precio al cliente: ArgenDreams le suma su comisión de plataforma antes de pasárselo.
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <input type="number" id="argdPrecio-${t.id}" value="${t.externa_precio != null ? t.externa_precio : ''}"
+          placeholder="Precio en pesos" style="flex:1; min-width:160px; padding:10px 12px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:15px; font-family:var(--mono)">
+        <button onclick="guardarPrecioArgd('${t.id}')"
+          style="padding:10px 18px; background:#7C3AED; color:white; border:none; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer; white-space:nowrap">
+          ${t.externa_precio != null ? 'Actualizar precio' : 'Enviar precio'}
+        </button>
+      </div>
+      ${t.externa_precio != null && t.externa_push_at ? `<div style="font-size:11px; color:var(--green); margin-top:6px">✓ Ya está en el ranking de ArgenDreams. Podés corregirlo hasta que cierren.</div>` : ''}
+      ${t.externa_precio != null && !t.externa_push_at ? `<div style="font-size:11px; color:var(--vw-grey-4); margin-top:6px">⏳ Se envía en la próxima sincronización (corre cada 2 minutos).</div>` : ''}
+    </div>`}
+  </div>`;
+}
+
+function onArgdEquivChange(id) {
+  const t = allTasaciones.find(x => x.id === id);
+  if (!t) return;
+  const sel = document.getElementById('argdEquiv-' + id);
+  t.equiv_0km_modelo = sel ? sel.value : '';
+  renderAdminList(allTasaciones);
+}
+
+async function guardarPrecioArgd(id) {
+  const t = allTasaciones.find(x => x.id === id);
+  const input = document.getElementById('argdPrecio-' + id);
+  if (!t || !input) return;
+  const precio = parseFloat(input.value);
+  if (!precio || precio <= 0) { showToast('Poné un precio válido'); return; }
+
+  const sel = document.getElementById('argdEquiv-' + id);
+  const equiv = sel ? sel.value : '';
+  const c = _argdCalc(t, equiv);
+  const vw = equiv ? vwData.find(v => v.modelo === equiv) : null;
+
+  try {
+    showLoading('Guardando precio...');
+    // Guardamos también los precios de referencia del momento: sirven después
+    // para entender con qué números se decidió cada cotización.
+    await sbFetch(`tasaciones?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        externa_precio: precio,
+        externa_precio_at: new Date().toISOString(),
+        externa_precio_por: currentUser.usuario,
+        precio_cca: c.ccaBase || null,
+        precio_cca_moneda: 'ARS',
+        precio_cca_toma: c.ccaToma || null,
+        precio_formula_vw: c.fgMercado || null,
+        precio_formula_vw_toma: c.fgToma || null,
+        ajuste_km_porcentaje: c.ajuste,
+        equiv_0km_marca: vw ? 'VOLKSWAGEN' : null,
+        equiv_0km_modelo: vw ? vw.modelo : null,
+        equiv_0km_precio: vw ? vw.precio_0km : null,
+        equiv_0km_moneda: vw ? 'ARS' : null,
+        updated_at: new Date().toISOString()
+      })
+    });
+    // Empujamos ya mismo en vez de esperar al cron. Si falla, el cron lo levanta
+    // igual en la próxima corrida: el push es idempotente.
+    dispararSyncArgd();
+    hideLoading();
+    showToast('Precio guardado — va camino a ArgenDreams');
+    await loadAdminTasaciones('argendreams');
+  } catch(e) {
+    hideLoading();
+    showToast('Error al guardar el precio');
+  }
+}
+
+function dispararSyncArgd() {
+  fetch(`${SUPABASE_URL}/functions/v1/sync-argendreams`, {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: '{}'
+  }).then(r => r.json()).then(d => console.log('[sync-argendreams]', d))
+    .catch(e => console.error('[sync-argendreams]', e));
 }
 
 // Card simplificado para tab "Esperando confirmación".
