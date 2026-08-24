@@ -543,6 +543,30 @@ A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fe
 
 **Modos de prueba:** `?dry=1` (no manda ni escribe) · **`?sync=1`** (actualiza la lista de unidades **sin avisar** — es lo que alimenta el panel y consulta-0km; sirve para poblar la tabla antes de que Meta apruebe el template) · `?solo=<E164>` · `?forzar=1` · `?desde=YYYY-MM-DD` · `?dias=7` · `?listar=1` · `?crear_template=1`.
 
+## Tienda de Mercado Libre desactualizada (`notify-ml-desactualizado`)
+
+Cuando un precio publicado en la **tienda oficial de ML** (`mercadolibre.com.ar/tienda/tito-gonzalez-automotores`) lleva mas de **6 horas** distinto a la oferta vigente del portal, sale un WhatsApp a **Nadia Vera (`nvera`), Matias Lubrano (`mlubrano`) y Fer (`fngonzalez`)** para que lo corrijan. Pedido por Fer el 24/08/2026.
+
+**El motor no vive aca — vive en portal-precios.** Esta Edge Function es solo el brazo que manda el WhatsApp (el token de Meta solo existe como secret de Supabase). Quien scrapea, compara y lleva el reloj es `portal-precios/src/lib/mlTienda.ts`, disparado por el cron `/api/cron/ml-tienda` (`0 * * * *` en `vercel.json`).
+
+**Por que scraping y no la API de ML:** `api.mercadolibre.com` exige OAuth del vendedor — `/sites/MLA/search`, `/items/{id}` y el multiget devuelven 403/401 sin token. La **vidriera publica**, en cambio, trae las 20 publicaciones con id, titulo y precio dentro del JSON de las "polycards" embebido en el HTML. **Verificado que Vercel no queda bloqueado** (el que si bloquea es `listado.mercadolibre.com.ar`, que devuelve la pagina de "trafico sospechoso"). Si algun dia ML corta el scraping, la funcion tira error y **no** pisa el estado ni avisa de mas.
+
+**El reloj arranca cuando Fer cambio el precio, no cuando lo vemos.** Fer lo pidio como "6 horas despues de que YO los cambie": la primera vez que se detecta el desvio, `desviado_desde` sale del ultimo cambio de `oferta_fyf` en `portal_precios_hist`. Por eso el primer aviso pudo decir "hace 4 dias" en vez de "hace 6 horas".
+
+**Cadencia:** primer aviso a las 6 h, y **uno cada 6 h hasta un tope de 4** (`ML_HORAS_AVISO` / `ML_AVISOS_MAX`, envs de portal-precios). Se **resetea solo** en cuanto el precio de ML vuelve a coincidir con la oferta; no hay nada que marcar a mano. El contador se sella **solo si Meta acepto el envio**.
+
+**El mapeo publicacion -> modelo es manual, en la tabla `ml_publicaciones`** (`ml_id` PK, `modelo` = modelo del portal, `ignorar` para los accesorios). Se sembraron las 17 publicaciones de autos + 3 accesorios ignorados. **Una publicacion nueva entra sola con `modelo = null` y queda "sin mapear"**: se ve en el panel y NO se compara hasta que alguien le asigne el modelo (`update ml_publicaciones set modelo = '...' where ml_id = '...'`). Es el mismo riesgo que la col "Uso concesionaria" de elcerokm-feed.
+
+**Template Meta:** `ml_tienda_precios` (es_AR, UTILITY, 3 vars: primer nombre - hace cuanto - detalle en UNA linea, porque Meta rechaza los saltos de linea dentro de un parametro). Se da de alta con `{"crear_template":true}`. **Mientras esta PENDING cae a `precios_actualizados`** metiendo el aviso entero en `{{1}}`: se entiende, pero el remate sigue diciendo "se actualizaron los valores en el portal". Cuando Meta apruebe, la corrida siguiente usa el propio sin tocar nada.
+
+**Gotcha Meta (costo una vuelta):** un template en **PENDING no se puede editar** ("solo se pueden editar si se rechazaron"), y si lo borras **Meta te bloquea reusar ese nombre** por un rato largo (`error_subcode 2388023`). Si hay que cambiarle el cuerpo antes de la aprobacion: borrar y crear con **otro nombre**. Por eso el primer intento (`ml_tienda_desactualizada`) quedo muerto.
+
+**Panel:** `precios.titogonzalez.online/ml-tienda` — precio publicado vs oferta, hace cuanto, stock, ademas de **que modelos con stock no estan publicados** y cuales quedaron publicados sin stock. Lo ven los tres duenios **+ `nvera` y `mlubrano`** (helper `puedeVerTiendaML` en `portal-precios/src/lib/acceso.ts`), porque son los que tienen que arreglarlo. Es solo lectura y no muestra costos ni margenes. **Entrar al panel refresca el estado pero NUNCA manda WhatsApp** (corre en modo `avisar: false`).
+
+**Modos de prueba:** `/api/cron/ml-tienda?dry=1` (compara y guarda, no avisa) - en la Edge: `{"solo":"<E164>"}`, `{"listar":true,"nombre":"ml_tienda_precios"}`, `{"crear_template":true}`, `{"borrar_template":true}`.
+
+**Envs:** `ML_TIENDA_DESTINATARIOS` (default `nvera,mlubrano,fngonzalez`) en Supabase - `ML_HORAS_AVISO` (6), `ML_AVISOS_MAX` (4), `ML_TIENDA_URL` en portal-precios.
+
 ## Puente con ArgenDreams — TGA tasa los usados VW de ellos (`sync-argendreams`)
 
 **El acuerdo (Fer con ArgenDreams, 24/08/2026):** ArgenDreams vende BYD y recibe usados de todas las marcas, que reparte entre 8 reventas. Lo que es **Volkswagen lo tasa TGA**. Por ahora solo VW; más adelante puede abrirse a más marcas (constante `MARCAS` en la función).
