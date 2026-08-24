@@ -57,8 +57,19 @@ const ESTADOS_ABIERTOS = ["en_reventa", "precios_recibidos"];
 // Estados en los que ArgenDreams ya definio con quien se queda.
 const ESTADOS_CERRADOS = ["precio_al_vendedor", "cerrada"];
 
-const CALLMEBOT_PHONE = "5491156559854";
-const CALLMEBOT_KEY = "6552632";
+// WhatsApp por la Cloud API de Meta, igual que el resto del proyecto (mismos
+// secrets WA_TASADOR_*). Dos templates propios, hay que darlos de alta una sola
+// vez con ?crear_templates=1 y esperar que Meta los apruebe.
+const META_API_URL = "https://graph.facebook.com/v25.0";
+const META_LANGUAGE = "es_AR";
+const WABA_ID_DEFAULT = "1183788370595856"; // WABA "Tito Gonzalez | Tasador"
+const TPL_ENTRADA = "argendreams_nuevo_vw";
+const TPL_RESULTADO = "argendreams_resultado";
+
+// Quién recibe. Es info de Fer y de nadie más: sirve para saber si está tasando
+// bien o corto. Se respeta el opt-out `notificaciones_wa` de la tabla.
+const DESTINATARIOS = (Deno.env.get("ARGD_DESTINATARIOS") ?? "fngonzalez")
+  .split(",").map((s) => s.trim()).filter(Boolean);
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -73,9 +84,12 @@ Deno.serve(async (req: Request) => {
   const TGA_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!TGA_URL || !TGA_KEY) return json({ error: "SUPABASE env vars missing" }, 500);
 
-  const dry = new URL(req.url).searchParams.get("dry") === "1";
+  const params = new URL(req.url).searchParams;
+  const dry = params.get("dry") === "1";
 
   try {
+    if (params.get("listar") === "1") return json(await listarTemplates());
+    if (params.get("crear_templates") === "1") return json(await crearTemplates());
     const reventaId = await getReventaId();
     if (!reventaId) {
       return json({
@@ -253,40 +267,45 @@ async function pasoAvisoEntrada(tgaUrl: string, tgaKey: string, dry: boolean) {
   const detalle: any[] = [];
 
   for (const t of (nuevas || [])) {
-    const msg = mensajeEntrada(t);
-    if (!dry) {
-      await avisarFer(msg);
+    const envios = await avisarFer(tgaUrl, tgaKey, TPL_ENTRADA, (nombre) => varsEntrada(t, nombre), dry);
+    // Sellar SOLO si el WhatsApp salio de verdad. Si Meta lo rechaza (template
+    // sin aprobar, ventana, lo que sea) queda sin sellar y la proxima corrida
+    // reintenta, que es justamente el punto de tener la columna.
+    const salio = envios.some((e: any) => e.estado === "enviado");
+    if (!dry && salio) {
       await tga(tgaUrl, tgaKey, "tasaciones?id=eq." + t.id, "PATCH",
         { externa_aviso_entrada_at: new Date().toISOString() });
     }
-    avisadas++;
-    detalle.push({ id: t.id, modelo: t.modelo, anio: t.anio, mensaje: msg });
+    if (salio || dry) avisadas++;
+    detalle.push({ id: t.id, modelo: t.modelo, anio: t.anio, envios });
   }
 
   return { pendientes: (nuevas || []).length, avisadas, detalle };
 }
 
-function mensajeEntrada(t: any) {
+// Variables del template `argendreams_nuevo_vw`:
+//   {{1}} nombre · {{2}} el auto · {{3}} ficha + cliente + avisos
+function varsEntrada(t: any, nombre: string) {
   const d = t.origen_datos || {};
-  const lineas = [
-    "🚗 VW nuevo para tasar — ArgenDreams",
-    "",
-    [t.marca, t.modelo, t.anio].filter(Boolean).join(" "),
-  ];
-  if (t.version) lineas.push(t.version);
-  lineas.push([
+  const auto = [t.marca, t.modelo, t.anio].filter(Boolean).join(" ");
+
+  const ficha = [
+    t.version || null,
     t.kilometros != null ? fmt(t.kilometros) + " km" : null,
     t.color || null,
     t.provincia_radicacion || null,
-  ].filter(Boolean).join(" · "));
+  ].filter(Boolean).join(" · ");
+
+  const extras: string[] = [];
   if (t.cliente_nombre) {
-    lineas.push("Cliente: " + t.cliente_nombre + (d.byd_modelo ? " (consulta BYD " + d.byd_modelo + ")" : ""));
+    extras.push("El cliente es " + t.cliente_nombre +
+      (d.byd_modelo ? " y consulta un BYD " + d.byd_modelo : ""));
   }
-  if (t.externa_ronda > 1) lineas.push("⚠️ Ronda " + t.externa_ronda + " — piden mejorar el precio.");
-  if (d.peritaje_cargado_at) lineas.push("🔧 Tiene peritaje cargado.");
-  lineas.push("");
-  lineas.push("Cargá tu precio en tasador.titogonzalez.online → solapa ArgenDreams.");
-  return lineas.join("\n");
+  if (t.externa_ronda > 1) extras.push("OJO: es la ronda " + t.externa_ronda + ", piden mejorar el precio");
+  if (d.peritaje_cargado_at) extras.push("tiene peritaje cargado");
+
+  const detalle = [ficha, ...extras].filter(Boolean).join(". ");
+  return [nombre, auto, detalle || "sin más datos cargados"];
 }
 
 // ------------------------------------------------------------ paso 4: FEEDBACK
@@ -324,59 +343,179 @@ async function pasoFeedback(tgaUrl: string, tgaKey: string, reventaId: string, d
     const mio = Number(t.externa_precio);
     const resultado = ganamos ? "ganada" : (mejor > 0 && mio >= mejor ? "empatada" : "perdida");
 
+    // El resultado se guarda siempre (lo muestra el panel aunque el WhatsApp
+    // falle); `externa_avisado_at` se agrega abajo solo si el aviso salio.
     const patch: any = {
       externa_resultado: resultado,
       externa_mejor_precio: mejor || null,
       externa_cerrada_at: new Date().toISOString(),
       externa_estado_origen: orig.estado,
-      externa_avisado_at: new Date().toISOString(),
     };
 
-    const msg = mensajeFeedback(t, mio, mejor, ganamos, validos.length, orig);
-    if (!dry) {
-      await avisarFer(msg);
-      await tga(tgaUrl, tgaKey, "tasaciones?id=eq." + t.id, "PATCH", patch);
-    }
-    avisadas++;
-    detalle.push({ ref: t.origen_ref_id, resultado, mio, mejor, mensaje: msg });
+    const envios = await avisarFer(tgaUrl, tgaKey, TPL_RESULTADO,
+      (nombre) => varsResultado(t, nombre, mio, mejor, ganamos, validos.length, orig), dry);
+    const salio = envios.some((e: any) => e.estado === "enviado");
+    if (salio) patch.externa_avisado_at = new Date().toISOString();
+    if (!dry) await tga(tgaUrl, tgaKey, "tasaciones?id=eq." + t.id, "PATCH", patch);
+    if (salio || dry) avisadas++;
+    detalle.push({ ref: t.origen_ref_id, resultado, mio, mejor, envios });
   }
 
   return { revisadas: cotizadas.length, avisadas, detalle };
 }
 
-function mensajeFeedback(t: any, mio: number, mejor: number, ganamos: boolean, cuantas: number, orig: any) {
+// Variables del template `argendreams_resultado`:
+//   {{1}} nombre · {{2}} ganamos/no · {{3}} el auto · {{4}} nuestro precio · {{5}} el cierre
+function varsResultado(t: any, nombre: string, mio: number, mejor: number,
+                       ganamos: boolean, cuantas: number, orig: any) {
   const auto = [t.modelo, t.anio, t.kilometros ? fmt(t.kilometros) + " km" : null]
     .filter(Boolean).join(" ");
-  const cab = ganamos ? "GANAMOS la tasacion de ArgenDreams" : "No ganamos la tasacion de ArgenDreams";
-  const lineas = [
-    (ganamos ? "✅ " : "❌ ") + cab,
-    "",
-    auto,
-    "Nuestro precio: $" + fmt(mio),
-  ];
+
+  const cierre: string[] = [];
   if (mejor > 0 && !ganamos) {
     const dif = mejor - mio;
     const pct = mio > 0 ? (dif / mio) * 100 : 0;
-    lineas.push("Mejor precio: $" + fmt(mejor));
-    lineas.push("Nos faltaron $" + fmt(dif) + " (" + pct.toFixed(1) + "%)");
+    cierre.push("el mejor de la ronda fue $" + fmt(mejor) +
+      ", nos faltaron $" + fmt(dif) + " (" + pct.toFixed(1) + "%)");
+  } else if (ganamos) {
+    cierre.push("fue el precio más alto de la ronda");
   }
-  lineas.push("");
-  lineas.push("Cotizaron " + cuantas + " reventas contando la nuestra.");
+  cierre.push("cotizaron " + cuantas + " reventas contando la nuestra");
   if (orig && orig.precio_final_admin) {
-    lineas.push("ArgenDreams le ofrecio al cliente $" + fmt(Number(orig.precio_final_admin)) + ".");
+    cierre.push("ArgenDreams le ofreció al cliente $" + fmt(Number(orig.precio_final_admin)));
   }
-  return lineas.join("\n");
+
+  return [
+    nombre,
+    ganamos ? "ganamos la tasación" : "no ganamos la tasación",
+    auto,
+    "$" + fmt(mio),
+    cierre.join("; "),
+  ];
 }
 
-async function avisarFer(mensaje: string) {
-  const url = "https://api.callmebot.com/whatsapp.php?phone=" + encodeURIComponent(CALLMEBOT_PHONE) +
-    "&text=" + encodeURIComponent(mensaje) + "&apikey=" + encodeURIComponent(CALLMEBOT_KEY);
-  try {
-    await fetch(url);
-  } catch (_e) {
-    // Fire and forget: si CallMeBot falla no bloqueamos el sync. El resultado
-    // igual queda guardado en la tasacion y se ve en el panel.
+/** Manda un template de Meta a los destinatarios (hoy, solo Fer). */
+async function avisarFer(tgaUrl: string, tgaKey: string, template: string,
+                         armarVars: (nombre: string) => string[], dry: boolean) {
+  const WA_PHONE_ID = Deno.env.get("WA_TASADOR_PHONE_ID");
+  const WA_TOKEN = Deno.env.get("WA_TASADOR_TOKEN");
+  if (!WA_PHONE_ID || !WA_TOKEN) return [{ error: "WA_TASADOR env vars missing" }];
+
+  const lista = DESTINATARIOS.map((u) => '"' + u + '"').join(",");
+  const users = await tga(tgaUrl, tgaKey,
+    "tasador_usuarios?usuario=in.(" + encodeURIComponent(lista) + ")" +
+    "&select=usuario,nombre,telefono_wa,activo,notificaciones_wa");
+
+  const validos = (users || []).filter((u: any) =>
+    u.activo !== false && u.notificaciones_wa !== false &&
+    u.telefono_wa && String(u.telefono_wa).trim().length > 0);
+
+  const out: any[] = [];
+  for (const u of validos) {
+    const nombre = String(u.nombre || u.usuario).split(" ")[0];
+    const vars = armarVars(nombre);
+    if (dry) { out.push({ usuario: u.usuario, dry: true, vars }); continue; }
+
+    const payload = {
+      messaging_product: "whatsapp",
+      to: String(u.telefono_wa).replace(/^\+/, "").replace(/[\s-]/g, ""),
+      type: "template",
+      template: {
+        name: template,
+        language: { code: META_LANGUAGE },
+        components: [{ type: "body", parameters: vars.map((v) => ({ type: "text", text: String(v || "") })) }],
+      },
+    };
+    try {
+      const res = await fetch(META_API_URL + "/" + WA_PHONE_ID + "/messages", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + WA_TOKEN, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await res.json();
+      out.push(res.ok && j.messages
+        ? { usuario: u.usuario, estado: "enviado", id: j.messages[0].id }
+        : { usuario: u.usuario, estado: "error", detalle: j.error?.message || JSON.stringify(j) });
+    } catch (e) {
+      out.push({ usuario: u.usuario, estado: "error", detalle: String(e) });
+    }
   }
+  if (validos.length === 0) out.push({ error: "sin destinatarios con telefono_wa" });
+  return out;
+}
+
+// ------------------------------------------------------- templates de Meta
+
+async function listarTemplates() {
+  const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? WABA_ID_DEFAULT;
+  const WA_TOKEN = Deno.env.get("WA_TASADOR_TOKEN");
+  const res = await fetch(
+    META_API_URL + "/" + WABA_ID + "/message_templates?limit=100&fields=name,status,category,language",
+    { headers: { Authorization: "Bearer " + WA_TOKEN } });
+  const j = await res.json();
+  const propios = (j.data || []).filter((t: any) => String(t.name).startsWith("argendreams_"));
+  return { status: res.status, propios, total: (j.data || []).length, error: j.error };
+}
+
+async function crearTemplates() {
+  const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? WABA_ID_DEFAULT;
+  const WA_TOKEN = Deno.env.get("WA_TASADOR_TOKEN");
+
+  const defs = [
+    {
+      name: TPL_ENTRADA,
+      language: META_LANGUAGE,
+      category: "UTILITY",
+      components: [
+        { type: "HEADER", format: "TEXT", text: "VW nuevo para tasar en ArgenDreams" },
+        {
+          type: "BODY",
+          text: "Hola {{1}}, entró un {{2}} para tasar en ArgenDreams. {{3}}. Cargá tu precio en el tasador, solapa ArgenDreams: allá las tasaciones se cierran en unas 3 horas.",
+          example: {
+            body_text: [[
+              "Fer",
+              "VOLKSWAGEN TAOS 2022",
+              "5P 1,4 TSI 250 COMFORTLINE TIPT · 67.000 km · Blanco · CABA. El cliente es Maximiliano Santos y consulta un BYD SONG PRO",
+            ]],
+          },
+        },
+        { type: "FOOTER", text: "Aviso automático · Tito Gonzalez" },
+      ],
+    },
+    {
+      name: TPL_RESULTADO,
+      language: META_LANGUAGE,
+      category: "UTILITY",
+      components: [
+        { type: "HEADER", format: "TEXT", text: "Resultado de la tasación en ArgenDreams" },
+        {
+          type: "BODY",
+          text: "Hola {{1}}, {{2}} del {{3}}. Nuestro precio fue {{4}} y {{5}}. El detalle lo tenés en el tasador, solapa ArgenDreams.",
+          example: {
+            body_text: [[
+              "Fer",
+              "no ganamos la tasación",
+              "TAOS 2022 67.000 km",
+              "$31.000.000",
+              "el mejor de la ronda fue $33.000.000, nos faltaron $2.000.000 (6,5%); cotizaron 5 reventas contando la nuestra",
+            ]],
+          },
+        },
+        { type: "FOOTER", text: "Aviso automático · Tito Gonzalez" },
+      ],
+    },
+  ];
+
+  const out: any[] = [];
+  for (const def of defs) {
+    const res = await fetch(META_API_URL + "/" + WABA_ID + "/message_templates", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + WA_TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify(def),
+    });
+    out.push({ template: def.name, status: res.status, respuesta: await res.json() });
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------- helpers

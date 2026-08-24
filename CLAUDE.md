@@ -549,7 +549,12 @@ A las **10 de la mañana**, de **lunes a sábado**, les llega un WhatsApp a **Fe
 
 1. **PULL** — trae las tasaciones VW que Agustín ya mandó a reventas (`en_reventa` / `precios_recibidos`) y las espeja en `tasaciones` de TGA. Las que están en `pendiente_admin` NO se traen: se ve solo lo moderado.
 2. **PUSH** — el precio que carga Fer se escribe en `reventas_precios` de ArgenDreams (upsert por `on_conflict=tasacion_id,reventa_id,ronda`, así corregirlo pisa el anterior en vez de duplicar). Se dispara al guardar y el cron es la red de seguridad.
-3. **FEEDBACK** — cuando ArgenDreams cierra (`precio_al_vendedor` / `cerrada`), compara contra el mejor precio de la ronda y le manda WhatsApp a Fer con el resultado. Va por **CallMeBot** al número fijo del proyecto (que es el de Fer), así que no necesitó template nuevo de Meta.
+3. **AVISO DE ENTRADA** — apenas entra un VW nuevo le llega el WhatsApp a Fer con los datos del auto. Es imprescindible por la ventana corta (ver abajo).
+4. **FEEDBACK** — cuando ArgenDreams cierra (`precio_al_vendedor` / `cerrada`), compara contra el mejor precio de la ronda y le manda WhatsApp a Fer con el resultado.
+
+**WhatsApp por Meta Cloud API**, como todo el proyecto (mismos secrets `WA_TASADOR_PHONE_ID` / `WA_TASADOR_TOKEN`). Nada de CallMeBot: Fer lo pidió expresamente y además es un tercero gratuito sin garantías. Dos templates propios `es_AR` / UTILITY: **`argendreams_nuevo_vw`** (3 variables: nombre, auto, ficha+cliente+avisos) y **`argendreams_resultado`** (5: nombre, ganamos/no, auto, nuestro precio, cierre). Se dan de alta con **`?crear_templates=1`** (una sola vez) y se controlan con **`?listar=1`**. Destinatarios en el env `ARGD_DESTINATARIOS` (default `fngonzalez`), respetando el opt-out `notificaciones_wa`.
+
+**Los sellos van solo si el WhatsApp salió de verdad** (`estado === "enviado"`). Si Meta rechaza —template sin aprobar, lo que sea—, la fila queda sin sellar y la próxima corrida reintenta. El resultado de la tasación, en cambio, se guarda siempre: el panel lo muestra aunque el aviso haya fallado.
 
 **Se cotiza A CIEGAS** (decisión de Fer): no se ven los precios de las otras reventas hasta que cierra la ronda. Si se vieran antes, uno copia y pone un peso más — gana la operación pero pierde el termómetro de si está tasando bien, que es justamente para lo que se hizo.
 
