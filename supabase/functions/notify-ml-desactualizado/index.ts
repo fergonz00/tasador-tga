@@ -8,14 +8,14 @@
 // - Destinatarios: usuarios de `tasador_usuarios` cuyo `usuario` esté en
 //   ML_TIENDA_DESTINATARIOS (env, default nvera,mlubrano,fngonzalez), activos,
 //   con telefono_wa. Dedup por teléfono (Nadia tiene 2 cuentas, mismo número).
-// - Template Meta: `ml_tienda_desactualizada` (es_AR): {{1}} primer nombre,
-//   {{2}} horas de desvío, {{3}} detalle (una sola línea — Meta rechaza saltos
-//   de línea dentro de un parámetro). Si ese template todavía no está aprobado,
-//   cae a `precios_actualizados` metiendo el aviso en {{1}}.
+// - Template Meta: `ml_tienda_precios` (es_AR): {{1}} primer nombre, {{2}} hace
+//   cuánto está mal ("4 días"), {{3}} detalle (una sola línea — Meta rechaza los
+//   saltos de línea dentro de un parámetro). Mientras ese template no esté
+//   aprobado, cae a `precios_actualizados` metiendo el aviso entero en {{1}}.
 
 const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
-const TEMPLATE_NAME = "ml_tienda_desactualizada";
+const TEMPLATE_NAME = "ml_tienda_precios";
 const TEMPLATE_FALLBACK = "precios_actualizados";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 
