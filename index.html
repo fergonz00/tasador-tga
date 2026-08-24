@@ -2710,14 +2710,21 @@ function renderAdminList(tasaciones) {
   const list = document.getElementById('adminList');
   let data = tasaciones;
 
-  // Las tasaciones espejadas desde ArgenDreams (origen='argendreams') NO son
-  // tasaciones de TGA: no tienen cliente nuestro, no van a inspección física y
-  // no cuentan para ninguna estadística del salón. Viven solo en su propio tab.
+  // Las tasaciones espejadas desde ArgenDreams (origen='argendreams') no son
+  // tasaciones de TGA: no tienen cliente nuestro ni van a inspección física, y
+  // no cuentan para ninguna estadística del salón. Recorrido que pidió Fer:
+  // mientras están SIN cotizar viven en "Pendientes" mezcladas con las propias
+  // (es lo primero que mira al entrar, así no se le pasan), y en cuanto les
+  // pone precio se mudan al tab ArgenDreams a esperar el resultado.
   if (adminFiltroEstado === 'argendreams') {
     if (!_esArgd()) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">No autorizado</div>'; return; }
     return renderArgdList(data.filter(_esExterna));
   }
-  data = data.filter(t => !_esExterna(t));
+  if (adminFiltroEstado === 'pendientes' && _esArgd()) {
+    data = data.filter(t => !_esExterna(t) || t.externa_precio == null);
+  } else {
+    data = data.filter(t => !_esExterna(t));
+  }
 
   // Filtro por estado (tab):
   //   pendientes → sin precio virtual y sin precio final
@@ -2726,7 +2733,10 @@ function renderAdminList(tasaciones) {
   //   final      → con precio final cargado (siempre va a este tab, aunque no haya pasado por virtual)
   //   todas      → todas
   if (adminFiltroEstado === 'pendientes') {
-    data = data.filter(t => !t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto && !t.no_avanza_motivo);
+    // Las de ArgenDreams ya vienen filtradas arriba (sin cotizar) y no tienen
+    // precio virtual/final, así que se saltean esta condición.
+    data = data.filter(t => _esExterna(t) ||
+      (!t.precio_toma_virtual && !t.precio_toma_final && !t.virtual_no_apto && !t.no_avanza_motivo));
   } else if (adminFiltroEstado === 'virtual') {
     data = data.filter(t => t.precio_toma_virtual && !t.precio_toma_final && !t.no_avanza_motivo && !t.virtual_no_apto);
   } else if (adminFiltroEstado === 'esperando') {
@@ -2755,7 +2765,8 @@ function renderAdminList(tasaciones) {
   }
   // Subtítulo descriptivo por tab (qué significa el filtro activo)
   const subtitulosAdmin = {
-    pendientes: '⏳ Tasaciones que mandaron los vendedores y todavía no les pusiste precio virtual. Es tu primera acción sobre cada una.',
+    pendientes: '⏳ Tasaciones que mandaron los vendedores y todavía no les pusiste precio virtual. Es tu primera acción sobre cada una.' +
+      (_esArgd() ? ' Las de <b>ArgenDreams</b> (borde violeta) también aparecen acá hasta que les cargues el precio; después pasan a su solapa.' : ''),
     virtual: '💡 Ya tienen precio virtual REFERENCIAL cargado. Falta que el vendedor agende turno y que el cliente traiga la unidad para inspección física.',
     esperando: '🔍 El tasador físico ya inspeccionó y sugirió precio. Falta que vos cierres con el PRECIO FINAL para notificar al vendedor.',
     usado_rechazado: '❌ Tasaciones que marcaste como NO APTAS para toma (con el motivo cargado). El vendedor recibió notificación por WhatsApp.',
@@ -2768,7 +2779,9 @@ function renderAdminList(tasaciones) {
   // En "Esperando confirmación" usamos un card simplificado que solo muestra lo necesario
   // para tomar la decisión del precio final (datos + virtual + inspección + input final).
   const renderFn = (adminFiltroEstado === 'esperando') ? renderAdminCardEsperando : renderAdminCard;
-  list.innerHTML = subtituloAdminHTML + data.map(t => renderFn(t)).join('');
+  // Las de ArgenDreams usan su propia card aunque estén en "Pendientes": el
+  // circuito es otro (no hay precio virtual, ni turno, ni margen 0km).
+  list.innerHTML = subtituloAdminHTML + data.map(t => _esExterna(t) ? renderArgdCard(t) : renderFn(t)).join('');
 }
 
 // ============ ARGENDREAMS — TASACIONES EXTERNAS ============
@@ -2844,7 +2857,7 @@ function renderArgdList(data) {
 
   const header = `
     <div style="margin:0 16px 12px; padding:12px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">
-      🤝 Usados <strong>Volkswagen</strong> que ArgenDreams manda a tasar. Ponés el precio que TGA paga por la unidad y viaja solo a su ranking, donde compite con las otras reventas.
+      🤝 Usados <strong>Volkswagen</strong> que ArgenDreams manda a tasar, ya cotizados. Las que todavía no tienen precio están en <strong>Pendientes</strong>.
       Cotizás <strong>a ciegas</strong>: cuando cierran te llega un WhatsApp con el resultado.
     </div>
     <div style="margin:0 16px 14px; display:flex; gap:10px; flex-wrap:wrap">
@@ -2855,13 +2868,52 @@ function renderArgdList(data) {
       ${brechaProm != null ? _argdStat('Nos falta (prom.)', brechaProm.toFixed(1) + '%', 'var(--vw-grey-4)') : ''}
     </div>`;
 
-  if (data.length === 0) {
-    list.innerHTML = header + '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Todavía no llegó ninguna tasación de ArgenDreams.</div>';
+  // Las que todavía no tienen precio viven en "Pendientes", no acá: este tab es
+  // para las que ya cotizaste y están esperando (o ya tienen) resultado.
+  const orden = [...cotizadas, ...cerradas];
+  if (orden.length === 0) {
+    const msg = sinPrecio.length
+      ? `Tenés <b>${sinPrecio.length}</b> sin cotizar esperando en la solapa <b>Pendientes</b>.`
+      : 'Todavía no cotizaste ninguna tasación de ArgenDreams.';
+    list.innerHTML = header + `<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">${msg}</div>`;
     return;
   }
-
-  const orden = [...sinPrecio, ...cotizadas, ...cerradas];
   list.innerHTML = header + orden.map(t => renderArgdCard(t)).join('');
+}
+
+// Comparativo de km, igual que en las tasaciones propias: cuánto recorrió por
+// año contra lo esperado, y el % de ajuste editable que mueve CCA y Fórmula FG.
+// Reusa aplicarAjusteKm/resetAjusteKm, que son genéricos por id.
+function _argdAjusteKmHTML(t, c, bloqueado) {
+  if (!t.kilometros || !t.anio) return '';
+  const antiguedad = Math.max(1, 2026 - t.anio);
+  const kmPorAnio = esPickup(t.modelo) ? 20000 : 15000;
+  const kmEsperados = antiguedad * kmPorAnio;
+  const ratio = t.kilometros / kmEsperados;
+  const kmExcedido = ratio >= 1.0;
+  const kmRealAnual = Math.round(t.kilometros / antiguedad);
+  const tieneOverride = t.ajuste_km_override != null;
+  const auto = calcAjusteKm(t.kilometros, t.anio, t.modelo);
+
+  return `
+    <div style="margin-top:10px; padding:10px 12px; background:${kmExcedido ? '#FFF7ED' : '#EFF6FF'}; border-radius:6px; border:1px solid ${kmExcedido ? '#FDBA74' : '#BFDBFE'}">
+      ${kmExcedido ? `
+        <div style="font-size:12px; font-weight:700; color:#9A3412; margin-bottom:4px">⚠️ KM FUERA DE LO COMÚN</div>
+        <div style="font-size:12px; color:#9A3412; margin-bottom:8px">Recorrió <b>${formatNum(kmRealAnual)} km/año</b> — se esperan ${formatNum(kmPorAnio)} km/año (${(ratio*100).toFixed(0)}% del esperado)</div>
+      ` : `
+        <div style="font-size:12px; color:#1E40AF; margin-bottom:8px">Recorrió <b>${formatNum(kmRealAnual)} km/año</b> contra ${formatNum(kmPorAnio)} esperados — ${formatNum(t.kilometros)} km reales vs ${formatNum(kmEsperados)} esperados (${(ratio*100).toFixed(0)}%)</div>
+      `}
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+        <span style="font-size:12px; color:var(--vw-grey-4)"><b>Ajuste km (afecta CCA + Fórmula FG):</b></span>
+        <input type="number" step="0.5" id="ajusteKm-${t.id}" value="${c.ajuste}" ${bloqueado ? 'disabled' : ''} onclick="event.stopPropagation()"
+          onkeydown="if(event.key==='Enter'){event.stopPropagation(); aplicarAjusteKm('${t.id}');}"
+          style="width:80px; padding:6px 8px; font-size:13px; font-family:var(--mono); font-weight:700; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box; text-align:right">
+        <span style="font-size:12px; color:var(--vw-grey-4)">%</span>
+        ${bloqueado ? '' : `<button onclick="event.stopPropagation(); aplicarAjusteKm('${t.id}')" style="padding:6px 12px; background:var(--vw-blue); color:white; border:none; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">Aplicar</button>`}
+        ${tieneOverride && !bloqueado ? `<button onclick="event.stopPropagation(); resetAjusteKm('${t.id}')" style="padding:6px 10px; background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:6px; font-weight:600; font-size:11px; cursor:pointer" title="Volver al ajuste automático">↩ Auto (${auto}%)</button>` : ''}
+        <span style="font-size:11px; color:var(--vw-grey-3); flex:1; min-width:80px; text-align:right">${tieneOverride ? 'Editado' : 'Automático'}</span>
+      </div>
+    </div>`;
 }
 
 function _argdStat(label, valor, color) {
@@ -2945,6 +2997,8 @@ function renderArgdCard(t) {
 
     ${fotosHTML}
 
+    ${_argdAjusteKmHTML(t, c, bloqueado)}
+
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px">
       <div class="precio-box cca" style="flex:1; min-width:150px">
         <div class="label">CCA · toma</div>
@@ -2955,6 +3009,18 @@ function renderArgdCard(t) {
         <div class="label">Fórmula FG · toma</div>
         <div class="valor">${c.fgToma ? '$ ' + formatNum(c.fgToma) : 'Elegí el 0km'}</div>
         <div class="sub">${c.precio0km ? '0km $ ' + formatNum(c.precio0km) : 'sin equivalente'}</div>
+      </div>
+      <div class="precio-box kavak" style="flex:1; min-width:150px">
+        <div class="label">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(editable)</span></div>
+        <div style="display:flex; align-items:center; gap:4px; margin:4px 0">
+          <span style="font-family:var(--mono); font-weight:700">$</span>
+          <input type="number" id="kavak-${t.id}" value="${t.precio_kavak || ''}" placeholder="0" ${bloqueado ? 'disabled' : ''}
+            onclick="event.stopPropagation()"
+            onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
+            style="flex:1; min-width:70px; padding:3px 6px; font-family:var(--mono); font-weight:700; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
+          ${bloqueado ? '' : `<button onclick="event.stopPropagation(); guardarKavak('${t.id}')" title="Guardar" style="padding:3px 8px; background:var(--vw-blue); color:white; border:none; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer">✓</button>`}
+        </div>
+        <div class="sub">Precio compra directo</div>
       </div>
     </div>
 
@@ -3038,8 +3104,10 @@ async function guardarPrecioArgd(id) {
     // igual en la próxima corrida: el push es idempotente.
     dispararSyncArgd();
     hideLoading();
-    showToast('Precio guardado — va camino a ArgenDreams');
-    await loadAdminTasaciones('argendreams');
+    showToast('Precio enviado a ArgenDreams — pasó a su solapa');
+    // Recargamos el tab en el que está parado: si cotizó desde Pendientes, ve
+    // que la tasación se fue de ahí.
+    await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
   } catch(e) {
     hideLoading();
     showToast('Error al guardar el precio');
