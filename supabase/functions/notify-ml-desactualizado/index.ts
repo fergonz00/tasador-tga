@@ -66,8 +66,16 @@ Deno.serve(async (req: Request) => {
   if (body?.crear_template === true) {
     return json(await crearTemplate(WA_TOKEN));
   }
+  // Editar el cuerpo de un template ya creado (pasar template_id). Meta sólo
+  // deja editar los APPROVED/REJECTED: para uno PENDING hay que borrar y crear.
+  if (body?.editar_template) {
+    return json(await editarTemplate(WA_TOKEN, String(body.editar_template)));
+  }
+  if (body?.borrar_template === true) {
+    return json(await borrarTemplate(WA_TOKEN));
+  }
 
-  const horas = Number(body?.horas ?? 6);
+  const horas = String(body?.horas ?? "6 horas");
   const detalle = String(body?.detalle ?? "").replace(/\s+/g, " ").trim();
   if (!detalle) return json({ error: "falta detalle" }, 400);
   const solo = String(body?.solo || "").trim() || null;
@@ -83,7 +91,7 @@ type Env = {
   WA_TOKEN: string;
 };
 
-async function procesar(env: Env, horas: number, detalle: string, solo: string | null) {
+async function procesar(env: Env, horas: string, detalle: string, solo: string | null) {
   const { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN } = env;
 
   if (solo) {
@@ -140,12 +148,12 @@ async function enviar(
   token: string,
   tel: string,
   primerNombre: string,
-  horas: number,
+  horas: string,
   detalle: string,
 ): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
   const propio = await postMeta(phoneId, token, tel, TEMPLATE_NAME, [
     primerNombre,
-    String(horas),
+    horas,
     recortar(detalle, 900),
   ]);
   if (propio.ok) return { ...propio, template: TEMPLATE_NAME };
@@ -155,7 +163,7 @@ async function enviar(
   if (!noExiste) return { ...propio, template: TEMPLATE_NAME };
 
   const texto = recortar(
-    `🛒 Mercado Libre desactualizado hace ${horas} h — ${detalle} — detalle en precios.titogonzalez.online/ml-tienda`,
+    `🛒 Mercado Libre desactualizado hace ${horas} — ${detalle} — detalle en precios.titogonzalez.online/ml-tienda`,
     900,
   );
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
@@ -196,28 +204,53 @@ async function postMeta(
   }
 }
 
+// {{1}} primer nombre · {{2}} cuánto hace ("7 horas", "3 dias") · {{3}} detalle.
+const TEMPLATE_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! La tienda de Mercado Libre quedo desactualizada: hace {{2}} que hay precios distintos a la oferta vigente del portal.\n\n{{3}}\n\nPor favor actualizalos en Mercado Libre. El detalle completo esta en precios.titogonzalez.online/ml-tienda",
+    example: {
+      body_text: [[
+        "Nadia",
+        "7 horas",
+        "Polo Track: esta en $27.040.374 y la oferta es $27.499.999",
+      ]],
+    },
+  },
+];
+
 async function crearTemplate(token: string) {
-  const payload = {
+  return await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, token, {
     name: TEMPLATE_NAME,
     language: META_LANGUAGE,
     category: "UTILITY",
-    components: [
-      {
-        type: "BODY",
-        text:
-          "Hola {{1}}! La tienda de Mercado Libre quedo desactualizada: hace {{2}} horas que hay precios distintos a la oferta vigente del portal.\n\n{{3}}\n\nPor favor actualizalos en Mercado Libre. El detalle completo esta en precios.titogonzalez.online/ml-tienda",
-        example: {
-          body_text: [[
-            "Nadia",
-            "6",
-            "Polo Track: esta en $27.040.374 y la oferta es $27.499.999",
-          ]],
-        },
-      },
-    ],
-  };
+    components: TEMPLATE_COMPONENTS,
+  });
+}
+
+async function editarTemplate(token: string, templateId: string) {
+  return await postJson(`${META_API_URL}/${templateId}`, token, {
+    category: "UTILITY",
+    components: TEMPLATE_COMPONENTS,
+  });
+}
+
+async function borrarTemplate(token: string) {
   try {
-    const res = await fetch(`${META_API_URL}/${WABA_ID}/message_templates`, {
+    const res = await fetch(
+      `${META_API_URL}/${WABA_ID}/message_templates?name=${TEMPLATE_NAME}`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+    );
+    return { status: res.status, body: await res.json() };
+  } catch (e) {
+    return { error: String(e) };
+  }
+}
+
+async function postJson(url: string, token: string, payload: unknown) {
+  try {
+    const res = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
