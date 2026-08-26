@@ -2643,10 +2643,10 @@ async function marcarCierre(tasId, cerrada, dejoUsado) {
   if (cerrada && dejoUsado) {
     const tas = (misTasacionesData || []).find(t => t.id === tasId)
       || (allTasaciones || []).find(t => t.id === tasId);
-    const nroExistente = tas && tas.numero_interno;
-    if (!nroExistente) {
-      pedirNumeroInternoModal(tasId, async (nro) => {
-        await _ejecutarCierre(tasId, true, true, nro, 'vendedor');
+    const faltantes = _faltantesDeToma(tas);
+    if (faltantes) {
+      pedirDatosTomaModal(tasId, faltantes, async (datos) => {
+        await _ejecutarCierre(tasId, true, true, datos, 'vendedor');
       });
       return;
     }
@@ -3407,10 +3407,10 @@ async function marcarCierreComoTasador(tasId, cerrada, dejoUsado) {
     const tas = (allTasaciones || []).find(t => t.id === tasId)
       || (fisicoData || []).find(t => t.id === tasId)
       || (misTasacionesData || []).find(t => t.id === tasId);
-    const nroExistente = tas && tas.numero_interno;
-    if (!nroExistente) {
-      pedirNumeroInternoModal(tasId, async (nro) => {
-        await _ejecutarCierre(tasId, true, true, nro, 'staff');
+    const faltantes = _faltantesDeToma(tas);
+    if (faltantes) {
+      pedirDatosTomaModal(tasId, faltantes, async (datos) => {
+        await _ejecutarCierre(tasId, true, true, datos, 'staff');
       });
       return;
     }
@@ -3418,8 +3418,19 @@ async function marcarCierreComoTasador(tasId, cerrada, dejoUsado) {
   await _ejecutarCierre(tasId, cerrada, dejoUsado, null, 'staff');
 }
 
+// Qué hay que pedir antes de cerrar CON usado tomado: el nº interno (como siempre)
+// y la patente si falta o es de relleno. Devuelve null si no falta nada.
+function _faltantesDeToma(tas) {
+  const nro = tas && tas.numero_interno;
+  const pat = tas && tas.patente;
+  const faltaNro = !nro;
+  const faltaPat = !patenteFormatoOk(pat);
+  if (!faltaNro && !faltaPat) return null;
+  return { nro: faltaNro, patente: faltaPat, patenteActual: faltaPat ? '' : normalizarPatente(pat) };
+}
+
 // PATCH compartido del cierre. Si viene nroInterno, lo incluye en el payload.
-async function _ejecutarCierre(tasId, cerrada, dejoUsado, nroInterno, origen) {
+async function _ejecutarCierre(tasId, cerrada, dejoUsado, datos, origen) {
   try {
     showLoading('Guardando...');
     const payload = {
@@ -3427,7 +3438,8 @@ async function _ejecutarCierre(tasId, cerrada, dejoUsado, nroInterno, origen) {
       usado_tomado: cerrada ? dejoUsado : false,
       venta_cerrada_at: new Date().toISOString()
     };
-    if (nroInterno) payload.numero_interno = String(nroInterno).trim();
+    if (datos && datos.nro) payload.numero_interno = String(datos.nro).trim();
+    if (datos && datos.patente) payload.patente = normalizarPatente(datos.patente);
     await sbFetch(`tasaciones?id=eq.${tasId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload)
@@ -3448,25 +3460,62 @@ async function _ejecutarCierre(tasId, cerrada, dejoUsado, nroInterno, origen) {
 }
 
 // Modal para pedir el Nº interno cuando se cierra "con usado" y todavía no está cargado.
-function pedirNumeroInternoModal(tasId, onConfirm) {
+// La patente es el ÚNICO campo que une la tasación con el usado en Oversoft (y de
+// ahí con el panel de usados del portal). Al tasar en virtual el vendedor todavía
+// no la tiene y pone cualquier cosa: sobre 308 tasaciones había 57 con patente
+// trucha o vacía, y las 57 eran virtuales. Por eso se exige acá, al cerrar CON
+// usado tomado, que es el momento en que el auto ya es nuestro y la patente se lee.
+function normalizarPatente(p) {
+  return String(p || '').toUpperCase().replace(/[\s-]/g, '');
+}
+
+// Formatos reales: vieja AAA000 y Mercosur AA000AA. Todo lo demás (000000,
+// XXX000XX, AA0000AA, AA000A) no es una patente.
+function patenteFormatoOk(p) {
+  const v = normalizarPatente(p);
+  return /^[A-Z]{3}[0-9]{3}$/.test(v) || /^[A-Z]{2}[0-9]{3}[A-Z]{2}$/.test(v);
+}
+
+// OO000OO y AG000AA tienen forma válida pero son relleno. El tell es el 000 del
+// medio: no se bloquea (AA000AA existe de verdad), se pide confirmar.
+function patenteSospechosa(p) {
+  const v = normalizarPatente(p);
+  return /^[A-Z]{3}000$/.test(v) || /^[A-Z]{2}000[A-Z]{2}$/.test(v);
+}
+
+function pedirDatosTomaModal(tasId, faltantes, onConfirm) {
   const existing = document.getElementById('nroInternoModal');
   if (existing) existing.remove();
+  const pideNro = !!faltantes.nro;
+  const pidePat = !!faltantes.patente;
+  const campoNro = pideNro ? `
+          <label style="font-size:12px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:6px">Nº interno *</label>
+          <input type="text" id="nroInternoInput" placeholder="Ej: 12345" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:16px; font-family:var(--mono); font-weight:700; box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarDatosTomaModal();}">
+  ` : '';
+  const campoPat = pidePat ? `
+          <label style="font-size:12px; font-weight:600; color:var(--vw-grey-5); display:block; margin:${pideNro ? '14px' : '0'} 0 6px">Patente *</label>
+          <input type="text" id="patenteTomaInput" placeholder="Ej: AI285DX" value="${faltantes.patenteActual || ''}" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:16px; font-family:var(--mono); font-weight:700; text-transform:uppercase; box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarDatosTomaModal();}">
+          <div style="font-size:11px; color:var(--vw-grey-4); margin-top:5px">Es lo que engancha el usado con el stock y el panel de vendedores. Sin patente real la unidad queda suelta.</div>
+  ` : '';
+  const titulo = pideNro && pidePat ? '🔢 Datos de la toma' : pidePat ? '🔤 Patente del usado' : '🔢 Nº interno del usado';
+  const bajada = pidePat
+    ? 'El usado pasa a ser nuestro: cargá la patente real (y el nº interno que se le asignó).'
+    : 'Cargá el número interno que se le asignó al usado en el sistema. Aparece en la hoja imprimible para rendir a administración.';
   const modalHTML = `
-    <div id="nroInternoModal" class="modal-overlay" onclick="if(event.target===this)cerrarNumeroInternoModal()">
+    <div id="nroInternoModal" class="modal-overlay" onclick="if(event.target===this)cerrarDatosTomaModal()">
       <div class="modal-box" style="max-width:460px">
         <div class="modal-header">
           <div style="flex:1">
-            <div style="font-size:16px; font-weight:700; color:#065F46">🔢 Nº interno del usado</div>
-            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">Cargá el número interno que se le asignó al usado en el sistema. Aparece en la hoja imprimible para rendir a administración.</div>
+            <div style="font-size:16px; font-weight:700; color:#065F46">${titulo}</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">${bajada}</div>
           </div>
-          <button onclick="cerrarNumeroInternoModal()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0">✕</button>
+          <button onclick="cerrarDatosTomaModal()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0">✕</button>
         </div>
         <div class="modal-body">
-          <label style="font-size:12px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:6px">Nº interno *</label>
-          <input type="text" id="nroInternoInput" placeholder="Ej: 12345" style="width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:16px; font-family:var(--mono); font-weight:700; box-sizing:border-box" onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarNumeroInternoModal();}">
+          ${campoNro}${campoPat}
           <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">
-            <button onclick="cerrarNumeroInternoModal()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
-            <button onclick="confirmarNumeroInternoModal()" style="padding:10px 16px; background:#065F46; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Confirmar cierre</button>
+            <button onclick="cerrarDatosTomaModal()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+            <button onclick="confirmarDatosTomaModal()" style="padding:10px 16px; background:#065F46; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Confirmar cierre</button>
           </div>
         </div>
       </div>
@@ -3475,23 +3524,43 @@ function pedirNumeroInternoModal(tasId, onConfirm) {
   document.body.insertAdjacentHTML('beforeend', modalHTML);
   document.body.style.overflow = 'hidden';
   window.__pendingCierre = { tasId, onConfirm };
-  setTimeout(() => document.getElementById('nroInternoInput')?.focus(), 50);
+  setTimeout(() => document.getElementById(pideNro ? 'nroInternoInput' : 'patenteTomaInput')?.focus(), 50);
 }
 
-function cerrarNumeroInternoModal() {
+function cerrarDatosTomaModal() {
   const m = document.getElementById('nroInternoModal');
   if (m) m.remove();
   document.body.style.overflow = '';
   window.__pendingCierre = null;
 }
 
-async function confirmarNumeroInternoModal() {
-  const nro = (document.getElementById('nroInternoInput')?.value || '').trim();
-  if (!nro) { showToast('Cargá el Nº interno'); return; }
+async function confirmarDatosTomaModal() {
+  const inputNro = document.getElementById('nroInternoInput');
+  const inputPat = document.getElementById('patenteTomaInput');
+
+  let nro = null;
+  if (inputNro) {
+    nro = (inputNro.value || '').trim();
+    if (!nro) { showToast('Cargá el Nº interno'); return; }
+  }
+
+  let patente = null;
+  if (inputPat) {
+    patente = normalizarPatente(inputPat.value);
+    if (!patente) { showToast('Cargá la patente'); return; }
+    if (!patenteFormatoOk(patente)) {
+      showToast('Esa patente no tiene formato válido (AAA000 o AA000AA)');
+      return;
+    }
+    if (patenteSospechosa(patente) && !confirm(`"${patente}" parece una patente de relleno. ¿Es la patente real del usado?`)) {
+      return;
+    }
+  }
+
   const pending = window.__pendingCierre;
-  cerrarNumeroInternoModal();
+  cerrarDatosTomaModal();
   if (pending && typeof pending.onConfirm === 'function') {
-    await pending.onConfirm(nro);
+    await pending.onConfirm({ nro, patente });
   }
 }
 
