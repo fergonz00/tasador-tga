@@ -569,11 +569,13 @@ Cuando un precio publicado en la **tienda oficial de ML** (`mercadolibre.com.ar/
 
 ## Feed de MarketShell (Shell) desactualizado (`notify-marketshell`)
 
-A las **9 de la manana, todos los dias**, les llega un WhatsApp a **Fer (`fngonzalez`), Ines Alonso (`ialonso`) y Nadia Vera (`nvera`)** **solo si hay algo mal** en el feed que alimenta `marketshell.shell.com.ar/autos?seller=tito gonzalez`. Si esta todo bien no llega nada. Pedido por Fer el 01/09/2026.
+A la **manana, todos los dias**, les llega un WhatsApp a **Fer (`fngonzalez`) y Nadia Vera (`nvera`)** **solo si hay algo mal** en lo que `marketshell.shell.com.ar/autos?seller=tito gonzalez` le publica al cliente. Si esta todo bien no llega nada. Pedido por Fer el 01/09/2026.
 
-**Que se audita — y que NO.** El portal publico de Shell **no se puede leer**: esta detras del checkpoint de Vercel y devuelve **HTTP 429** a curl, WebFetch y cualquier cliente sin browser real. Lo que se controla es la **planilla de Grupo Simpli "Copia de Shell2"** (`1qpm0C-gb5YZRQ72kbdTVFiprSKRi9O_2guhLZhmi3G8`), que es de donde ellos arman el portal y lo unico que manejamos nosotros. Si Simpli dejara de importar el archivo, eso no se ve desde aca.
+**Se auditan DOS cosas, y la que manda es la segunda:**
+1. La **planilla de Grupo Simpli "Copia de Shell2"** (`1qpm0C-gb5YZRQ72kbdTVFiprSKRi9O_2guhLZhmi3G8`), que es el archivo que ellos importan. Ahi se detecta lo que **rompe la importacion** (precio vacio, `#ERROR!`, feed frenado).
+2. ⭐ **Lo que el portal realmente publica**, auto por auto, contra nuestro precio y stock. **Este es el que importa**: el 01/09 la planilla estaba impecable y el portal mostraba precios de marzo.
 
-**El motor de la auditoria no vive aca.** Esta Edge Function es el brazo que manda el WhatsApp (el token de Meta solo existe como secret de Supabase). Quien mira la planilla es el Apps Script del feed, en `marketshell-feed/live/Chequeo.js`, expuesto como **`?modo=chequeo`** (JSON, solo lectura) del mismo web app que ya corria el feed.
+**El motor no vive aca.** Esta Edge Function es el brazo que manda el WhatsApp (el token de Meta solo existe como secret de Supabase). La planilla la mira el Apps Script del feed (`marketshell-feed/live/Chequeo.js`, modo **`?modo=chequeo`**, JSON de solo lectura, que ademas devuelve el `catalogo` que se manda a Shell); el portal lo mira **`chequeo_portal.py` desde la PC de Fer** (ver abajo por que).
 
 **Que cuenta como "no esta ok":**
 
@@ -595,29 +597,37 @@ A las **9 de la manana, todos los dias**, les llega un WhatsApp a **Fer (`fngonz
 
 **Si el chequeo no se puede correr, eso tambien se avisa.** Sin eso, un Apps Script caido o un token vencido se verian igual que "todo bien" — que es el modo de falla peligroso de cualquier alerta que solo habla cuando hay problemas.
 
-**⛔ DADO DE BAJA el 01/09/2026 por pedido de Fer — "da de baja el whatsapp hasta que este ok".** El cron `marketshell-chequeo-diario` esta **desagendado** (`select cron.unschedule('marketshell-chequeo-diario')`), asi que **hoy no sale ningun aviso**. La Edge Function, la tabla, los secrets y el template siguen en pie: solo falta volver a agendarla.
+**✅ REACTIVADO el 01/09/2026, mirando LO PUBLICADO.** Estuvo unas horas de baja: el control original miraba solo la planilla y ese mismo dia la planilla estaba impecable mientras el portal publicaba precios de marzo — habria dicho "todo ok" todos los dias. Fer lo apago ("da de baja el whatsapp hasta que este ok"), Grupo Simpli importo, y se volvio a prender con el control rehecho contra el portal.
 
-**Por que se dio de baja:** el chequeo mira la planilla, y la planilla esta bien — pero **lo que Shell publica esta mal** (precios de marzo, ver abajo). O sea que el aviso diria "todo ok" todos los dias mientras el portal muestra precios equivocados. Avisar en falso es peor que no avisar. **Volver a activarlo recien cuando Simpli importe y el portal muestre nuestros precios**, y de paso con un control que mire lo publicado y no solo la planilla.
+**⭐⭐ DONDE CORRE CADA COSA (lo importante):**
 
-**Que estaba mal (01/09/2026):** Shell publicaba `Tera Trend 29.227.766` contra nuestros `31.200.000` (idem Saveiro Comfortline CD y Polo Comfortline). Esos valores **no figuran en `portal_precios_hist`**, o sea nunca fueron precios nuestros; el desfasaje no es un % fijo (-6,32% / -5,52% / -5,84%), asi que tampoco es un descuento de Shell. Ademas la ficha llama al modelo "Tera" / "Saveiro" / "Polo" mientras nuestra columna `new_car_model.name` trae el nombre completo. **Son los datos que Grupo Simpli cargo cuando creo la planilla el 26/03/2026** (dueño `ffrancos@gruposimpli.com`; se compartio con Fer recien el 29/07). La columna P quedo enganchada a nuestros precios el **31/08**, y con 5 celdas vacias que hacian que **el importador rechazara el archivo entero** (lo aviso Nadia Vera) — se corrigio el 01/09. **Falta que Simpli corra la importacion.**
+| que | donde | cuando |
+|---|---|---|
+| leer **lo que Shell publica** y compararlo | **`marketshell-feed/chequeo_portal.py`, en la PC de Fer** (tarea programada de Windows "MarketShell - chequeo portal") | 9:00 AR |
+| mandar el WhatsApp | Edge `notify-marketshell` (le POSTea el script) | al toque |
+| chequear la planilla + **vigilar que el script haya corrido** | Edge `notify-marketshell` via pg_cron | 10:00 AR |
 
-**Para reactivarlo** (mismo jobid no, se reasigna):
-```sql
-select cron.schedule('marketshell-chequeo-diario', '0 12 * * *', $$
-  select net.http_post(
-    url := 'https://wjfglsafgaltusmbnccl.supabase.co/functions/v1/notify-marketshell',
-    headers := jsonb_build_object('Content-Type','application/json',
-      'Authorization','Bearer <SERVICE_ROLE_KEY>', 'x-stock-secret','<STOCK_NOTIF_SECRET>'),
-    body := '{}'::jsonb); $$);
-```
+**⚠️ POR QUE EL CHEQUEO DEL PORTAL NO CORRE EN LA NUBE:** `marketshell.shell.com.ar` devuelve **429 ("Vercel Security Checkpoint") a toda IP de datacenter**. Probado el 01/09/2026 desde **Supabase Edge (Deno)** y desde **Google (Apps Script)**: los dos rebotan, con headers de navegador completos y todo. Desde la red de la oficina devuelve 200. **No volver a intentar moverlo a la nube sin probar primero** — y tampoco darlo por imposible sin reintentar: el primer intento de la sesion tambien dio 429 y era transitorio.
 
-**Cadencia (cuando este activo):** pg_cron `marketshell-chequeo-diario`, `0 12 * * *` (9:00 hora AR, todos los dias). Tabla **`marketshell_avisos`** en wjfgl (PK `fecha`): no repite el aviso si el cron corre dos veces y deja el historial de que dias el feed estuvo mal. Se escribe la fila **aunque el envio falle** (`enviados = 0` + `error`), para que un dia con problemas no parezca un dia limpio.
+**Como se leen los autos publicados:** el portal es una app **SvelteKit** y el HTML ya trae los autos serializados (array `cars` con `name`, `unified_amount`, `stock`), asi que alcanza con `urllib` — nada de navegador ni JS. **La pagina 1 va SIN `page`** (`&page=1` devuelve 500); el resto sale de `totalPages`. Su paginador **repite alguna fila entre paginas y su contador puede no cerrar** con lo que se ve: por eso se deduplica por `id` y la diferencia de conteo se informa como aviso, nunca como problema.
+
+**Tolerancia de precio = $100, y no es capricho:** la plataforma guarda el importe con ~7 digitos de precision, asi que devuelve 27.700.012 donde mandamos 27.700.011 y 70.200.030 donde mandamos 70.200.034. Son pesos sobre precios de decenas de millones. Una diferencia de precio de verdad es de cientos de miles.
+
+**⭐ El silencio no puede significar "todo bien".** Si la PC esta apagada, el script no corre y no avisa nadie. Por eso el script llama a la Edge **siempre**, aunque no encuentre nada: esa llamada es el latido, y queda en `marketshell_portal_chequeos`. El cron de las 10:00 mira esa tabla y, si hace mas de **30 h** (`MARKETSHELL_MAX_HORAS_PORTAL`) que nadie verifico el portal, avisa `portal_sin_verificar` como **critico**.
+
+**Destinatarios: `fngonzalez,nvera` — Fer y Nadia Vera.** Ines Alonso estuvo en la primera version y **la saco Fer** el 01/09 ("solo a nadia y a mi no a ines").
+
+**Verificado en vivo el 01/09/2026:** la tarea corrio, encontro 2 problemas reales — el **Virtus Sense MSI MT** con 1 unidad sin publicar, y el **Amarok Hero V6** publicado con 2 unidades cuando tenemos 1 — y **los 2 WhatsApps salieron** (Fer y Nadia, 0 errores).
+
+**Que dispara el aviso, del portal:** `shell_precio` (Shell publica otro precio) · `shell_stock` (otro stock) · `shell_falta` (modelo con unidades sin publicar) · `shell_sobra` (Shell publica algo que no esta en nuestro archivo, o sea con el precio congelado) · `portal_sin_verificar` (nadie miro el portal en 30 h) · `shell_ilegible` (no se pudo leer, aviso).
+
+Cadencia:** el script local a las **9:00 AR** (tarea de Windows) y el cron `marketshell-chequeo-diario` `0 13 * * *` (**10:00 AR**) — una hora despues a proposito, para que el vigia mire una corrida ya hecha. Tabla **`marketshell_avisos`** en wjfgl (PK `fecha`): no repite el aviso si el cron corre dos veces y deja el historial de que dias el feed estuvo mal. Se escribe la fila **aunque el envio falle** (`enviados = 0` + `error`), para que un dia con problemas no parezca un dia limpio.
 
 **Template Meta:** `marketshell_feed_alerta` (es_AR, UTILITY, 3 vars: nombre - resumen - detalle en UNA linea, porque Meta rechaza los saltos de linea dentro de un parametro). Creado y **APROBADO el 01/09/2026**. **Sin fallback a proposito** (misma decision que `notify-feed`): el unico template generico aprobado, `precios_actualizados`, cierra con "se actualizaron los valores en el portal", o sea avisaria de otra cosa. Preferible que el aviso no salga y quede el error en la tabla.
 
 **Envs (Supabase secrets):** `MARKETSHELL_URL` (exec URL del web app) - `MARKETSHELL_TOKEN` - `MARKETSHELL_DESTINATARIOS` (default `fngonzalez,ialonso,nvera`, dedup por telefono porque Nadia tiene dos cuentas con el mismo numero).
 
-**Modos de prueba:** `{"dry":true}` (corre el chequeo, no manda) - `{"dry":true,"simular":true}` (inventa problemas para ver el texto; el resumen arranca con "PRUEBA" a proposito) - `{"solo":"<E164>"}` - `{"forzar":true}` (ignora la fila del dia) - `{"listar":true}` / `{"crear_template":true}`.
+**Modos de prueba:** `python chequeo_portal.py --dry` (compara contra el portal y muestra todo **sin** mandar WhatsApp) - en la Edge: `{"dry":true}` - `{"dry":true,"simular":true}` (inventa problemas para ver el texto; el resumen arranca con "PRUEBA" a proposito) - `{"solo":"<E164>"}` - `{"forzar":true}` (ignora la fila del dia) - `{"listar":true}` / `{"crear_template":true}`.
 
 **⚠️ Deployar con `--no-verify-jwt`** (gatea con `x-stock-secret`, igual que `notify-ml-desactualizado`).
 
