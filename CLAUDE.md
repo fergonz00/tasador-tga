@@ -567,6 +567,46 @@ Cuando un precio publicado en la **tienda oficial de ML** (`mercadolibre.com.ar/
 
 **Envs:** `ML_TIENDA_DESTINATARIOS` (default `nvera,mlubrano,fngonzalez`) en Supabase - `ML_HORAS_AVISO` (6), `ML_HORAS_REPASO` (24), `ML_TIENDA_URL` en portal-precios.
 
+## Feed de MarketShell (Shell) desactualizado (`notify-marketshell`)
+
+A las **9 de la manana, todos los dias**, les llega un WhatsApp a **Fer (`fngonzalez`), Ines Alonso (`ialonso`) y Nadia Vera (`nvera`)** **solo si hay algo mal** en el feed que alimenta `marketshell.shell.com.ar/autos?seller=tito gonzalez`. Si esta todo bien no llega nada. Pedido por Fer el 01/09/2026.
+
+**Que se audita — y que NO.** El portal publico de Shell **no se puede leer**: esta detras del checkpoint de Vercel y devuelve **HTTP 429** a curl, WebFetch y cualquier cliente sin browser real. Lo que se controla es la **planilla de Grupo Simpli "Copia de Shell2"** (`1qpm0C-gb5YZRQ72kbdTVFiprSKRi9O_2guhLZhmi3G8`), que es de donde ellos arman el portal y lo unico que manejamos nosotros. Si Simpli dejara de importar el archivo, eso no se ve desde aca.
+
+**El motor de la auditoria no vive aca.** Esta Edge Function es el brazo que manda el WhatsApp (el token de Meta solo existe como secret de Supabase). Quien mira la planilla es el Apps Script del feed, en `marketshell-feed/live/Chequeo.js`, expuesto como **`?modo=chequeo`** (JSON, solo lectura) del mismo web app que ya corria el feed.
+
+**Que cuenta como "no esta ok":**
+
+| nivel | codigo | que pasa |
+|---|---|---|
+| critico | `precio_vacio` | fila de "Hoja 1" sin precio o en 0 |
+| critico | `inv_sin_match` | fila de "Copia de importNewVehicle" que no matchea "Hoja 1" -> col P vacia |
+| critico | `inv_error` / `inv_precio_vacio` | P o Q en `#ERROR!`, o P sin precio |
+| critico | `hoja1_sin_match` | modelo publicado que ya no existe en el portal de precios |
+| critico | `feed_caido` | hace >= 3 h que no corre `aplicarFeed`, o se perdio el trigger horario |
+| critico | `portal_caido` | `/api/public/ofertas` no responde o devuelve 0 modelos |
+| aviso | `alta_pendiente` | modelo con stock en baratito que no llega al archivo de Simpli |
+| aviso | `formula_pisada` | P o Q con un valor pegado a mano en vez de la formula |
+| aviso | `duplicado` | el mismo modelo dos veces en "Hoja 1" |
+
+**Por que el precio vacio es critico y no un detalle:** el importador de Grupo Simpli **rechaza el archivo entero** si una sola fila viene sin `new_car_trims.amount` (lo aviso Nadia Vera el 01/09/2026). Un hueco en un modelo sin stock tira abajo la actualizacion de todos los demas.
+
+**Como se detecta que el feed se freno:** `aplicarFeed` sella `ScriptProperties.ultimaCorridaOK` al terminar bien, y el chequeo compara contra eso (`FEED_MAX_HORAS = 3`). **El desfasaje suelto NO se avisa**: el trigger es horario, asi que casi siempre hay alguna fila esperando turno y avisarlo seria ruido todos los dias. Solo se nombra si ademas el feed esta caido.
+
+**Si el chequeo no se puede correr, eso tambien se avisa.** Sin eso, un Apps Script caido o un token vencido se verian igual que "todo bien" — que es el modo de falla peligroso de cualquier alerta que solo habla cuando hay problemas.
+
+**Cadencia:** pg_cron **jobid 26** `marketshell-chequeo-diario`, `0 12 * * *` (9:00 hora AR, todos los dias). Tabla **`marketshell_avisos`** en wjfgl (PK `fecha`): no repite el aviso si el cron corre dos veces y deja el historial de que dias el feed estuvo mal. Se escribe la fila **aunque el envio falle** (`enviados = 0` + `error`), para que un dia con problemas no parezca un dia limpio.
+
+**Template Meta:** `marketshell_feed_alerta` (es_AR, UTILITY, 3 vars: nombre - resumen - detalle en UNA linea, porque Meta rechaza los saltos de linea dentro de un parametro). Creado y **APROBADO el 01/09/2026**. **Sin fallback a proposito** (misma decision que `notify-feed`): el unico template generico aprobado, `precios_actualizados`, cierra con "se actualizaron los valores en el portal", o sea avisaria de otra cosa. Preferible que el aviso no salga y quede el error en la tabla.
+
+**Envs (Supabase secrets):** `MARKETSHELL_URL` (exec URL del web app) - `MARKETSHELL_TOKEN` - `MARKETSHELL_DESTINATARIOS` (default `fngonzalez,ialonso,nvera`, dedup por telefono porque Nadia tiene dos cuentas con el mismo numero).
+
+**Modos de prueba:** `{"dry":true}` (corre el chequeo, no manda) - `{"dry":true,"simular":true}` (inventa problemas para ver el texto; el resumen arranca con "PRUEBA" a proposito) - `{"solo":"<E164>"}` - `{"forzar":true}` (ignora la fila del dia) - `{"listar":true}` / `{"crear_template":true}`.
+
+**⚠️ Deployar con `--no-verify-jwt`** (gatea con `x-stock-secret`, igual que `notify-ml-desactualizado`).
+
+**Dos cosas que el chequeo NO mira y quedaron para preguntarle a Nadia Vera (Simpli):** la columna `new_car_trims.currency` esta **vacia en las 38 filas** (dato preexistente, el feed no la toca — si su importador la valida es la misma bomba que el precio vacio), y las columnas de imagenes/brochure estan vacias en todas. No se metieron como alerta porque, al estar siempre vacias, avisarian todos los dias hasta que se resuelvan.
+
 ## Puente con ArgenDreams — TGA tasa los usados VW de ellos (`sync-argendreams`)
 
 **El acuerdo (Fer con ArgenDreams, 24/08/2026):** ArgenDreams vende BYD y recibe usados de todas las marcas, que reparte entre 8 reventas. Lo que es **Volkswagen lo tasa TGA**. Por ahora solo VW; más adelante puede abrirse a más marcas (constante `MARCAS` en la función).

@@ -242,7 +242,9 @@ function chequeoSimulado(): Chequeo {
   ];
   return {
     ok: false, criticos: 1, avisos: 1, problemas,
-    resumen: "1 modelos sin precio en Hoja 1 - 1 modelos con stock sin publicar",
+    // Arranca con "PRUEBA" a proposito: este texto solo sale con {"simular":true}
+    // y no tiene que poder confundirse con un aviso real.
+    resumen: "PRUEBA del aviso (esto es un ejemplo, el feed esta bien) - 1 modelo sin precio - 1 modelo con stock sin publicar",
   };
 }
 
