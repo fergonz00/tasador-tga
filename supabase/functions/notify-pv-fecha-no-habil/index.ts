@@ -74,7 +74,7 @@ const TEMPLATES: Record<string, string> = {
 const ORIGEN_PV = "VTOKM";
 const VENTANA_DIAS = Number(Deno.env.get("PVFECHA_VENTANA_DIAS") ?? "60");
 const MAX_AVISOS = Number(Deno.env.get("PVFECHA_MAX_AVISOS") ?? "10");
-const HORA_DESDE = Number(Deno.env.get("PVFECHA_HORA_DESDE") ?? "12"); // hora AR (Fer, 19/08/2026: antes 9)
+const HORA_DESDE = Number(Deno.env.get("PVFECHA_HORA_DESDE") ?? "13"); // hora AR (Fer, 01/09/2026: antes 12; y antes 9)
 const HORA_HASTA = Number(Deno.env.get("PVFECHA_HORA_HASTA") ?? "20");
 const FIJOS_DEFAULT = "dlopez,mgerez,fngonzalez";
 
