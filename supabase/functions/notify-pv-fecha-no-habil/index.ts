@@ -49,7 +49,7 @@
 //   ?crear_template=1      -> da de alta los templates que falten en Meta
 //   {"cerrar":[detcashid]} -> cierra alertas a mano (deja de recordar)
 //
-// pg_cron (jobid 9): '*/10 15-23 * * *' = cada 10 min, 12 a 20 hora AR.
+// pg_cron (jobid 9): '*/10 16-23 * * *' = cada 10 min, 13 a 20 hora AR.
 //   SELECT cron.schedule(
 //     'notify-pv-fecha-no-habil', '*/10 15-23 * * *',
 //     $$ SELECT net.http_post(
