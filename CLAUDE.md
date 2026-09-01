@@ -595,7 +595,23 @@ A las **9 de la manana, todos los dias**, les llega un WhatsApp a **Fer (`fngonz
 
 **Si el chequeo no se puede correr, eso tambien se avisa.** Sin eso, un Apps Script caido o un token vencido se verian igual que "todo bien" — que es el modo de falla peligroso de cualquier alerta que solo habla cuando hay problemas.
 
-**Cadencia:** pg_cron **jobid 26** `marketshell-chequeo-diario`, `0 12 * * *` (9:00 hora AR, todos los dias). Tabla **`marketshell_avisos`** en wjfgl (PK `fecha`): no repite el aviso si el cron corre dos veces y deja el historial de que dias el feed estuvo mal. Se escribe la fila **aunque el envio falle** (`enviados = 0` + `error`), para que un dia con problemas no parezca un dia limpio.
+**⛔ DADO DE BAJA el 01/09/2026 por pedido de Fer — "da de baja el whatsapp hasta que este ok".** El cron `marketshell-chequeo-diario` esta **desagendado** (`select cron.unschedule('marketshell-chequeo-diario')`), asi que **hoy no sale ningun aviso**. La Edge Function, la tabla, los secrets y el template siguen en pie: solo falta volver a agendarla.
+
+**Por que se dio de baja:** el chequeo mira la planilla, y la planilla esta bien — pero **lo que Shell publica esta mal** (precios de marzo, ver abajo). O sea que el aviso diria "todo ok" todos los dias mientras el portal muestra precios equivocados. Avisar en falso es peor que no avisar. **Volver a activarlo recien cuando Simpli importe y el portal muestre nuestros precios**, y de paso con un control que mire lo publicado y no solo la planilla.
+
+**Que estaba mal (01/09/2026):** Shell publicaba `Tera Trend 29.227.766` contra nuestros `31.200.000` (idem Saveiro Comfortline CD y Polo Comfortline). Esos valores **no figuran en `portal_precios_hist`**, o sea nunca fueron precios nuestros; el desfasaje no es un % fijo (-6,32% / -5,52% / -5,84%), asi que tampoco es un descuento de Shell. Ademas la ficha llama al modelo "Tera" / "Saveiro" / "Polo" mientras nuestra columna `new_car_model.name` trae el nombre completo. **Son los datos que Grupo Simpli cargo cuando creo la planilla el 26/03/2026** (dueño `ffrancos@gruposimpli.com`; se compartio con Fer recien el 29/07). La columna P quedo enganchada a nuestros precios el **31/08**, y con 5 celdas vacias que hacian que **el importador rechazara el archivo entero** (lo aviso Nadia Vera) — se corrigio el 01/09. **Falta que Simpli corra la importacion.**
+
+**Para reactivarlo** (mismo jobid no, se reasigna):
+```sql
+select cron.schedule('marketshell-chequeo-diario', '0 12 * * *', $$
+  select net.http_post(
+    url := 'https://wjfglsafgaltusmbnccl.supabase.co/functions/v1/notify-marketshell',
+    headers := jsonb_build_object('Content-Type','application/json',
+      'Authorization','Bearer <SERVICE_ROLE_KEY>', 'x-stock-secret','<STOCK_NOTIF_SECRET>'),
+    body := '{}'::jsonb); $$);
+```
+
+**Cadencia (cuando este activo):** pg_cron `marketshell-chequeo-diario`, `0 12 * * *` (9:00 hora AR, todos los dias). Tabla **`marketshell_avisos`** en wjfgl (PK `fecha`): no repite el aviso si el cron corre dos veces y deja el historial de que dias el feed estuvo mal. Se escribe la fila **aunque el envio falle** (`enviados = 0` + `error`), para que un dia con problemas no parezca un dia limpio.
 
 **Template Meta:** `marketshell_feed_alerta` (es_AR, UTILITY, 3 vars: nombre - resumen - detalle en UNA linea, porque Meta rechaza los saltos de linea dentro de un parametro). Creado y **APROBADO el 01/09/2026**. **Sin fallback a proposito** (misma decision que `notify-feed`): el unico template generico aprobado, `precios_actualizados`, cierra con "se actualizaron los valores en el portal", o sea avisaria de otra cosa. Preferible que el aviso no salga y quede el error en la tabla.
 
