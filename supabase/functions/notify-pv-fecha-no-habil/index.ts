@@ -94,8 +94,14 @@ const GRACIA_MIN = Number(Deno.env.get("PVFECHA_GRACIA_MIN") ?? "20");
 // prometida (Fer, 18/08/2026): la transferencia tarda en acreditar y el recibo
 // en cargarse, asi que antes de eso el aviso seria un falso positivo.
 const GRACIA_HABILES = Number(Deno.env.get("PVFECHA_GRACIA_HABILES") ?? "3");
-// Saldo por debajo del cual se considera cobrado (redondeos de centavos).
-const TOLERANCIA_SALDO = Number(Deno.env.get("PVFECHA_TOLERANCIA_SALDO") ?? "1");
+// Saldo por debajo del cual el renglon se considera cobrado. Es el MAYOR entre
+// un piso fijo y un % del importe: sobre una PV de $29 M un resto de $4.353 es
+// un redondeo del ERP, no una deuda que justifique un aviso diario para siempre
+// (caso 08753/3, 02/09/2026). El % hace que la tolerancia escale con la operacion.
+const TOLERANCIA_SALDO = Number(Deno.env.get("PVFECHA_TOLERANCIA_SALDO") ?? "5000");
+const TOLERANCIA_PCT = Number(Deno.env.get("PVFECHA_TOLERANCIA_PCT") ?? "0.001");
+const estaCobrado = (importe: unknown, saldo: unknown) =>
+  Number(saldo) <= Math.max(TOLERANCIA_SALDO, Math.abs(Number(importe)) * TOLERANCIA_PCT);
 
 // Corte de arranque del control de FECHAS: corre sobre las PREVENTAS HECHAS A
 // PARTIR de esta fecha (Fer, 18/08/2026: "lo viejo ya esta"). Lo de PVs
@@ -189,7 +195,8 @@ type Renglon = {
 
 type Alerta = {
   detcashid: number; tipo: string; referencia: string; motivo: string | null;
-  importe: number | null; saldo_pendiente: number | null; vencimiento: string;
+  importe: number | null; saldo_pendiente: number | null; importe_cobrado: number | null;
+  vencimiento: string;
   dia_texto: string | null; vendedorid: number | null; vendedor_nombre: string | null;
   fecha_pv: string | null; estado: string; ultimo_aviso_dia: string | null; avisos: number;
 };
@@ -226,7 +233,7 @@ async function procesar(
   }
   if (opts.tipos.includes(TIPO_VENCIDO)) {
     for (const r of aCobrar) {
-      if (Number(r.saldo) <= TOLERANCIA_SALDO) continue; // ya cobrado
+      if (estaCobrado(r.importe, r.saldo)) continue; // ya cobrado
       // Recien se reclama pasados GRACIA_HABILES dias habiles del vencimiento.
       if (sumarHabiles(r.vencimiento!.slice(0, 10), GRACIA_HABILES, feriados) > hoyAR) continue;
       candidatos.push({ tipo: TIPO_VENCIDO, r, texto: esNoHabil(r.vencimiento!, feriados).texto });
@@ -279,7 +286,7 @@ async function procesar(
     ...previas.filter((a) => a.estado === "abierta" && opts.tipos.includes(a.tipo)),
     ...(nuevas as unknown as Alerta[]).filter((a) => a.estado === "abierta"),
   ];
-  const cerradas = await detectarCerradas(env, abiertas, renglones, pvs, feriados, hoyAR, opts.dry);
+  const { cerradas, refrescadas } = await revisarAbiertas(env, abiertas, renglones, pvs, feriados, hoyAR, opts.dry);
   const cerradasClaves = new Set(cerradas.map((c) => clave(c.detcashid, c.tipo)));
 
   // ── A quien le toca aviso ─────────────────────────────────────────────────
@@ -299,6 +306,7 @@ async function procesar(
     alertas_nuevas: nuevas.length,
     historicas: nuevas.filter((n) => n.estado === "historica").length,
     cerradas: cerradas.length, detalle_cerradas: cerradas,
+    refrescadas: refrescadas.length, detalle_refrescadas: refrescadas,
     pendientes: pendientes.length,
   };
   if (!enHorario) {
@@ -366,11 +374,20 @@ async function procesar(
   return { ...resumen, grupos_avisados: grupos.size, enviados, errores };
 }
 
-// Cierra la alerta cuando el problema se resolvio. Segun el tipo:
-//   fecha_no_habil  -> la fecha se corrigio / el renglon se anulo o reemplazo
-//   vencido_impago  -> entro la plata / se reprogramo la fecha a futuro
-// En los dos: PV anulada o renglon inexistente.
-async function detectarCerradas(
+// Repasa las alertas abiertas contra lo que dice HOY la replica. Dos cosas:
+//
+//   a) Las CIERRA cuando el problema se resolvio. Segun el tipo:
+//        fecha_no_habil  -> la fecha se corrigio / el renglon se anulo o reemplazo
+//        vencido_impago  -> entro la plata / se reprogramo la fecha a futuro
+//      En los dos: PV anulada o renglon inexistente.
+//
+//   b) Las que siguen abiertas, las REFRESCA (importe / saldo / vencimiento).
+//      Sin esto los numeros quedaban congelados en el dia de la deteccion y el
+//      recordatorio repetia montos viejos: el 02/09/2026 dos alertas reclamaban
+//      $52,2 M cuando la deuda real era $6,6 M (cobros posteriores no contados
+//      y una PV editada de 31,4 a 30,29 M). El objeto `a` se muta a proposito
+//      para que el mensaje de ESTA corrida ya salga con los numeros de hoy.
+async function revisarAbiertas(
   env: Env, abiertas: Alerta[], renglones: Renglon[], pvs: Map<string, PV>,
   feriados: Map<string, string>, hoyAR: string, dry: boolean,
 ) {
@@ -388,6 +405,7 @@ async function detectarCerradas(
   const todos = [...porId.values()];
 
   const cerradas: { detcashid: number; tipo: string; motivo: string; vencimiento_corregido: string | null }[] = [];
+  const refrescadas: Record<string, unknown>[] = [];
   for (const a of abiertas) {
     const id = Number(a.detcashid);
     const r = porId.get(id);
@@ -399,7 +417,7 @@ async function detectarCerradas(
     if (pv?.anulada) motivoCierre = "PV anulada";
     else if (!r) motivoCierre = "renglon ya no existe";
     else if (a.tipo === TIPO_VENCIDO) {
-      if (Number(r.saldo) <= TOLERANCIA_SALDO) motivoCierre = "pago cobrado";
+      if (estaCobrado(r.importe, r.saldo)) motivoCierre = "pago cobrado";
       else if (r.vencimiento && sumarHabiles(r.vencimiento.slice(0, 10), GRACIA_HABILES, feriados) > hoyAR) {
         motivoCierre = "fecha reprogramada a futuro";
         nuevaFecha = r.vencimiento.slice(0, 10);
@@ -422,7 +440,10 @@ async function detectarCerradas(
       }
     }
 
-    if (!motivoCierre) continue;
+    if (!motivoCierre) {
+      if (r) await refrescar(env, a, r, feriados, refrescadas, dry);
+      continue;
+    }
     cerradas.push({ detcashid: id, tipo: a.tipo, motivo: motivoCierre, vencimiento_corregido: nuevaFecha });
     if (!dry) {
       await sb(env, `pv_fechas_alertas?detcashid=eq.${id}&tipo=eq.${a.tipo}`, {
@@ -432,11 +453,46 @@ async function detectarCerradas(
           corregido_at: new Date().toISOString(),
           vencimiento_corregido: nuevaFecha,
           saldo_pendiente: saldo,
+          // Al cerrar tambien queda el importe de hoy: la PV se pudo editar
+          // despues de detectada (08762/3: de 31,4 M a 30,29 M).
+          ...(r ? { importe: Number(r.importe), importe_cobrado: Number(r.importe) - Number(r.saldo) } : {}),
         }),
       });
     }
   }
-  return cerradas;
+  return { cerradas, refrescadas };
+}
+
+// Pone al dia los numeros de una alerta que sigue abierta. Solo escribe si algo
+// cambio: son 3 filas por corrida, pero no tiene sentido un PATCH al pedo.
+async function refrescar(
+  env: Env, a: Alerta, r: Renglon, feriados: Map<string, string>,
+  refrescadas: Record<string, unknown>[], dry: boolean,
+) {
+  const fresco = {
+    importe: Number(r.importe),
+    saldo_pendiente: Number(r.saldo),
+    importe_cobrado: Number(r.importe) - Number(r.saldo),
+    vencimiento: (r.vencimiento ?? a.vencimiento).slice(0, 10),
+    dia_texto: r.vencimiento ? esNoHabil(r.vencimiento, feriados).texto : a.dia_texto,
+  };
+  const cambio = Number(a.importe) !== fresco.importe ||
+    Number(a.saldo_pendiente) !== fresco.saldo_pendiente ||
+    String(a.vencimiento ?? "").slice(0, 10) !== fresco.vencimiento;
+  if (!cambio) return;
+
+  refrescadas.push({
+    detcashid: Number(a.detcashid), tipo: a.tipo, referencia: a.referencia,
+    antes: { importe: a.importe, saldo_pendiente: a.saldo_pendiente, vencimiento: a.vencimiento },
+    ahora: { importe: fresco.importe, saldo_pendiente: fresco.saldo_pendiente, vencimiento: fresco.vencimiento },
+  });
+  Object.assign(a, fresco); // el aviso de esta corrida ya sale con los numeros de hoy
+  if (!dry) {
+    await sb(env, `pv_fechas_alertas?detcashid=eq.${Number(a.detcashid)}&tipo=eq.${a.tipo}`, {
+      method: "PATCH",
+      body: JSON.stringify(fresco),
+    });
+  }
 }
 
 // ── Textos del mensaje ──────────────────────────────────────────────────────
