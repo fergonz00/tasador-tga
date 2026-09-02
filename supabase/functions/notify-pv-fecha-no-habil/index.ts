@@ -26,7 +26,7 @@
 //   3. Da de alta las alertas nuevas en `pv_fechas_alertas` (PK detcashid+tipo).
 //   4. Re-chequea las abiertas y cierra las que se resolvieron.
 //   5. Manda 1 mensaje por PV y por tipo (agrupa los renglones de esa PV).
-//      Si no se corrige: 1 recordatorio por dia habil, hasta MAX_AVISOS.
+//      Si no se corrige: 1 recordatorio por dia habil, sin tope (MAX_AVISOS=0).
 //
 // Destinatarios: `tasador_usuarios` (telefono_wa). El vendedor sale de
 // `pv_vendedores_map` (vendedorid de Oversoft -> usuario). Los fijos, del env
@@ -73,7 +73,10 @@ const TEMPLATES: Record<string, string> = {
 // Renglones de la PV: los carga el vendedor con origen VTOKM.
 const ORIGEN_PV = "VTOKM";
 const VENTANA_DIAS = Number(Deno.env.get("PVFECHA_VENTANA_DIAS") ?? "60");
-const MAX_AVISOS = Number(Deno.env.get("PVFECHA_MAX_AVISOS") ?? "10");
+// Tope de recordatorios por alerta. **0 = sin tope** (Fer, 02/09/2026: "que
+// siga avisando sin limite"). El aviso se corta solo cuando el problema se
+// resuelve y la alerta se cierra, no por cansancio.
+const MAX_AVISOS = Number(Deno.env.get("PVFECHA_MAX_AVISOS") ?? "0");
 const HORA_DESDE = Number(Deno.env.get("PVFECHA_HORA_DESDE") ?? "13"); // hora AR (Fer, 01/09/2026: antes 12; y antes 9)
 const HORA_HASTA = Number(Deno.env.get("PVFECHA_HORA_HASTA") ?? "20");
 const FIJOS_DEFAULT = "dlopez,mgerez,fngonzalez";
@@ -292,7 +295,7 @@ async function procesar(
   // ── A quien le toca aviso ─────────────────────────────────────────────────
   const pendientes = abiertas.filter((a) => !cerradasClaves.has(clave(a.detcashid, a.tipo)));
   const aAvisar = pendientes.filter((a) => {
-    if ((a.avisos ?? 0) >= MAX_AVISOS) return false;
+    if (MAX_AVISOS > 0 && (a.avisos ?? 0) >= MAX_AVISOS) return false;
     if (opts.forzar) return true;
     return a.ultimo_aviso_dia !== hoyAR; // 1 aviso por dia
   });
