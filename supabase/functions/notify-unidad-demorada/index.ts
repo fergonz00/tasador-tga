@@ -1,7 +1,7 @@
 // Edge Function: notify-unidad-demorada
 //
 // Unidades que figuran A RECIBIR en Oversoft y no llegan. Cuando una unidad
-// lleva mas de 7 dias habiles cargada en el sistema sin entrar fisicamente, le
+// lleva mas de 12 dias habiles cargada en el sistema sin entrar fisicamente, le
 // avisa por WhatsApp a Fer y a Daniel Lopez para que le consulten a VW que
 // paso. Pedido por Fer el 21/08/2026: se vendio una Amarok Hero que estaba "a
 // recibir" y recien al reclamarla nos enteramos de que los papeles estaban
@@ -18,7 +18,7 @@
 //      sabe que plazo prometerle al cliente antes de vender la unidad.
 //
 // Cadencia (definida por Fer el 21/08/2026):
-//   - Primer aviso a los DIAS_ALERTA (7) dias habiles desde que la unidad esta
+//   - Primer aviso a los DIAS_ALERTA (12) dias habiles desde que la unidad esta
 //     en Oversoft (`fechadepedido`, que es la fecha de alta).
 //   - Sin nota cargada: reincide cada DIAS_REPASO (5) dias habiles.
 //   - Con nota cargada: se apaga y vuelve a los 5 dias habiles de la nota, para
@@ -58,7 +58,7 @@
 //   ?solo=549113...        -> manda un ejemplo a ese numero (prueba)
 //   ?forzar=1              -> ignora la cadencia y lo ya avisado hoy
 //   ?desde=2026-06-01      -> corte de arranque por fechadepedido
-//   ?dias=7                -> cambia el umbral de dias habiles (pruebas)
+//   ?dias=12               -> cambia el umbral de dias habiles (pruebas)
 //   ?listar=1              -> lista los templates de la WABA
 //   ?crear_template=1      -> da de alta el template en Meta (una sola vez)
 //
@@ -72,7 +72,7 @@ const TEMPLATE_NAME = "unidad_a_recibir_demorada";
 const WABA_ID_DEFAULT = "1183788370595856"; // WABA "Tito Gonzalez | Tasador"
 
 // Dias habiles que puede estar una unidad "a recibir" antes de que sea raro.
-const DIAS_ALERTA = Number(Deno.env.get("UNIDAD_DEMORA_DIAS") ?? 7);
+const DIAS_ALERTA = Number(Deno.env.get("UNIDAD_DEMORA_DIAS") ?? 12);
 // Cada cuantos dias habiles se vuelve a insistir.
 const DIAS_REPASO = Number(Deno.env.get("UNIDAD_DEMORA_REPASO") ?? 5);
 // Tope de unidades por corrida, para que un problema masivo no dispare 40 mensajes.
