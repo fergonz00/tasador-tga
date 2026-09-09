@@ -571,6 +571,21 @@ Cuando un precio publicado en la **tienda oficial de ML** (`mercadolibre.com.ar/
 
 **Envs:** `ML_TIENDA_DESTINATARIOS` (default `nvera,mlubrano,fngonzalez`) en Supabase - `ML_HORAS_AVISO` (6), `ML_HORAS_REPASO` (24), `ML_TIENDA_URL` en portal-precios.
 
+## Falta el SIRCREB del mes (`notify-sircreb-pendiente`)
+
+Le llega un WhatsApp a **Fer (`fngonzalez`)** el **dia 1**, y despues cada 2 dias, mientras no se cargue el SIRCREB del mes en curso. Pedido por Fer el 09/09/2026.
+
+**Para que sirve ese numero.** El cliente tiene que pagarle a VW en la cuenta recaudadora (SICE) con deposito en efectivo o con cheque a la orden que el concesionario endosa a esa cuenta: asi la plata no pasa por nuestro banco. Cuando el cliente pide **transferir**, entra y sale de nuestra cuenta: 0,6% + 0,6% de impuesto a los debitos y creditos **mas el SIRCREB de IIBB, que cambia todos los meses** (0,30% en sep-26 → 1,50% total). Con ese porcentaje la consulta de precio (0km y usados) descuenta el costo de la ganancia antes de que Fer autorice un valor. Sin el numero del mes, se sigue usando el del mes anterior con cartel de desactualizado.
+
+- **Lo pasa Valeria Reyna** (gerenta administrativa) y lo carga Fer en `precios.titogonzalez.online/precios` → "🏦 SIRCREB del mes".
+- **Motor:** cron de Vercel `/api/cron/sircreb` en portal-precios (`0 12 * * *` = 9 hs ART) → esta Edge con `x-stock-secret`. Deployada **con `--no-verify-jwt`** (el cron no manda Authorization), al reves que `notify-whatsapp-consulta`.
+- **Template:** reusa `precios_actualizados`, que tiene una sola variable y ya esta aprobado: el aviso entero va en `{{1}}`. No hizo falta esperar aprobacion de uno nuevo.
+- **Se corta solo:** el cron mira si hay fila para el mes en `costos_financieros_mes`. Cuando aparece, deja de avisar. `costos_financieros_avisos` lleva la cuenta para no repetir antes de 48 h, y solo corre el reloj si Meta acepto el envio.
+- **Modo de prueba:** `/api/cron/sircreb?dry=1` (evalua y devuelve el texto, no manda) · en la Edge `{"texto":"...","solo":"<E164>"}`.
+- **Envs:** `SIRCREB_DESTINATARIOS` (default `fngonzalez`) en Supabase.
+
+⚠️ **`notify-sin-responder` cambio con esto** (09/09/2026). Una consulta que el vendedor **reabre** porque el cliente pidio pagar una parte por transferencia vuelve a `pendiente` con el `created_at` viejo. El sweeper ahora filtra, ordena y agrupa por **`pendiente_desde`** — columna generada `COALESCE(reabierta_at, created_at)` en `consultas_0km` y `consultas_usados` — y `notify-whatsapp-consulta` calcula la antiguedad igual. Sin eso el recordatorio salia al toque diciendo "SIN RESPONDER hace 20 dias". Para las consultas que nunca se reabrieron es identica a `created_at`: no cambia nada. Doc completa en el `CLAUDE.md` de consulta-0km.
+
 ## Feed de MarketShell (Shell) desactualizado (`notify-marketshell`)
 
 A la **manana, todos los dias**, les llega un WhatsApp a **Fer (`fngonzalez`) y Nadia Vera (`nvera`)** **solo si hay algo mal** en lo que `marketshell.shell.com.ar/autos?seller=tito gonzalez` le publica al cliente. Si esta todo bien no llega nada. Pedido por Fer el 01/09/2026.

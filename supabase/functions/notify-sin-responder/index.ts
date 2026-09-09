@@ -149,12 +149,16 @@ async function barrerConsultas0km(url: string, key: string, anon: string, cfg: a
 
   // Sin responder = sigue en 'pendiente'. Cuando el admin acepta/rechaza/
   // contraoferta pasa a otro estado y sale sola del barrido.
-  const path = "consultas_0km?select=id,created_at,vendedor_id,recordatorios_enviados,ultimo_recordatorio_at" +
+  // `pendiente_desde` = COALESCE(reabierta_at, created_at). Una consulta que el
+  // vendedor reabrio (el cliente pidio pagar una parte por transferencia) vuelve a
+  // pendiente con fecha de HOY: sin esto el recordatorio saldria al toque diciendo
+  // "sin responder hace 20 dias", contando desde la carga original.
+  const path = "consultas_0km?select=id,created_at,pendiente_desde,vendedor_id,recordatorios_enviados,ultimo_recordatorio_at" +
     "&estado=eq.pendiente" +
-    "&created_at=lt." + encodeURIComponent(corte) +
-    "&created_at=gte." + encodeURIComponent(new Date(cfg.desde).toISOString()) +
+    "&pendiente_desde=lt." + encodeURIComponent(corte) +
+    "&pendiente_desde=gte." + encodeURIComponent(new Date(cfg.desde).toISOString()) +
     "&recordatorios_enviados=lt." + cfg.max_recordatorios +
-    "&order=vendedor_id.asc,created_at.asc&limit=" + LIMITE_POR_CORRIDA;
+    "&order=vendedor_id.asc,pendiente_desde.asc&limit=" + LIMITE_POR_CORRIDA;
 
   const filas = await sb(url, key, path);
   const pendientes = (filas || []).filter((c: any) => tocaRecordar(c, cfg));
@@ -212,12 +216,12 @@ async function barrerConsultasUsados(url: string, key: string, anon: string, cfg
 
   // Sin responder = sigue en 'pendiente'. Aceptar / rechazar / contraofertar la
   // saca sola del barrido, igual que en el 0km.
-  const path = "consultas_usados?select=id,created_at,vendedor_id,unidad,recordatorios_enviados,ultimo_recordatorio_at" +
+  const path = "consultas_usados?select=id,created_at,pendiente_desde,vendedor_id,unidad,recordatorios_enviados,ultimo_recordatorio_at" +
     "&estado=eq.pendiente" +
-    "&created_at=lt." + encodeURIComponent(corte) +
-    "&created_at=gte." + encodeURIComponent(new Date(cfg.desde).toISOString()) +
+    "&pendiente_desde=lt." + encodeURIComponent(corte) +
+    "&pendiente_desde=gte." + encodeURIComponent(new Date(cfg.desde).toISOString()) +
     "&recordatorios_enviados=lt." + cfg.max_recordatorios +
-    "&order=created_at.asc&limit=" + LIMITE_POR_CORRIDA;
+    "&order=pendiente_desde.asc&limit=" + LIMITE_POR_CORRIDA;
 
   const filas = await sb(url, key, path);
   const pendientes = (filas || []).filter((c: any) => tocaRecordar(c, cfg));
@@ -259,7 +263,7 @@ function agruparPorSubmit(filas: any[]): any[][] {
     const va = String(a.vendedor_id || "");
     const vb = String(b.vendedor_id || "");
     if (va !== vb) return va < vb ? -1 : 1;
-    return Date.parse(a.created_at) - Date.parse(b.created_at);
+    return Date.parse(a.pendiente_desde || a.created_at) - Date.parse(b.pendiente_desde || b.created_at);
   });
 
   const grupos: any[][] = [];
@@ -267,7 +271,7 @@ function agruparPorSubmit(filas: any[]): any[][] {
     const ultimo = grupos[grupos.length - 1];
     const ref = ultimo && ultimo[ultimo.length - 1];
     const mismoVendedor = ref && String(ref.vendedor_id || "") === String(f.vendedor_id || "");
-    const cerca = ref && Math.abs(Date.parse(f.created_at) - Date.parse(ref.created_at)) <= VENTANA_GRUPO_MS;
+    const cerca = ref && Math.abs(Date.parse(f.pendiente_desde || f.created_at) - Date.parse(ref.pendiente_desde || ref.created_at)) <= VENTANA_GRUPO_MS;
     if (mismoVendedor && cerca) ultimo.push(f);
     else grupos.push([f]);
   }
