@@ -44,6 +44,15 @@ const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 // eso este texto describe un caso pendiente en la cuenta de gestion.
 const TEMPLATE_NAME = "gestion_pendiente_terminal";
 
+// Template del resumen diario. Sigue el mismo patron que el que quedo UTILITY:
+// habla de items SIN REVISAR, no de contenido que llega (ver
+// reference_whatsapp_template_utility).
+const TEMPLATE_RESUMEN = "gestion_resumen_sin_revisar";
+
+// El listado entra en un parametro y Meta no acepta saltos de linea, asi que va
+// separado por " · ". Con mas de esto, se corta y el detalle queda en el portal.
+const MAX_LISTADO = 900;
+
 // Por ahora solo Fer (decision suya, 8-sep-2026). Cuando se sume alguien mas,
 // se agrega su usuario acá o en CIRCULARES_DESTINATARIOS.
 const DESTINATARIOS_DEFAULT = "fngonzalez";
@@ -235,6 +244,57 @@ async function crearVariante(
   return { nombre, status: res.status, body: await res.json() };
 }
 
+async function crearTemplateResumen(token: string) {
+  const res = await fetch(`${META_API_URL}/${WABA_ID}/message_templates`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: TEMPLATE_RESUMEN, language: META_LANGUAGE, category: "UTILITY",
+      components: [{
+        type: "BODY",
+        text: "Hola {{1}}, quedaron {{2}} comunicaciones de la terminal sin revisar: " +
+          "{{3}}. Estan cargadas en el portal de gestion para que las revises.",
+        example: {
+          body_text: [[
+            "Fernando",
+            "3",
+            "Ventas N°102 e-Mobility (REQUIERE ACCION) · Ventas N°103 Certificacion " +
+            "goTOzero · Autoahorro N°69-26 Condiciones Comerciales Septiembre 2026",
+          ]],
+        },
+      }],
+    }),
+  });
+  return { status: res.status, body: await res.json() };
+}
+
+async function enviarResumen(
+  phoneId: string, token: string, tel: string,
+  nombre: string, cantidad: string, listado: string,
+) {
+  const res = await fetch(`${META_API_URL}/${phoneId}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp", to: tel, type: "template",
+      template: {
+        name: TEMPLATE_RESUMEN, language: { code: META_LANGUAGE },
+        components: [{
+          type: "body",
+          parameters: [
+            { type: "text", text: nombre },
+            { type: "text", text: cantidad },
+            { type: "text", text: listado },
+          ],
+        }],
+      },
+    }),
+  });
+  const j = await res.json();
+  if (!res.ok || j?.error) return { ok: false, error: j?.error?.message ?? `HTTP ${res.status}` };
+  return { ok: true, id: j?.messages?.[0]?.id };
+}
+
 async function listarTemplate(token: string) {
   const res = await fetch(
     `${META_API_URL}/${WABA_ID}/message_templates?fields=name,language,status,category,components&limit=200`,
@@ -283,6 +343,9 @@ Deno.serve(async (req) => {
   }
   if (body?.listar === true) return json(await listarTemplate(WA_TOKEN));
   if (body?.crear_template === true) return json(await crearTemplate(WA_TOKEN));
+  if (body?.crear_template_resumen === true) {
+    return json(await crearTemplateResumen(WA_TOKEN));
+  }
 
   const dry = body?.dry === true;
   const solo = typeof body?.solo === "string" ? body.solo : null;
@@ -299,6 +362,19 @@ Deno.serve(async (req) => {
     return json({ error: "Error leyendo circulares", detalle: String(e) }, 500);
   }
   if (!pendientes.length) return json({ ok: true, enviados: 0, info: "nada pendiente" });
+
+  // El aviso de a una usa `pendientes` (con tope por corrida). El resumen
+  // necesita TODAS las del dia, asi que se piden aparte.
+  let todasPendientes: Circular[] = pendientes;
+  if (body?.resumen === true) {
+    try {
+      todasPendientes = await sb(SUPABASE_URL, SERVICE_KEY,
+        "circulares?select=id,tipo,numero,titulo,resumen,accion,requiere_accion" +
+        "&avisado_en=is.null&resumen=not.is.null&order=fecha.asc&limit=100");
+    } catch (e) {
+      return json({ error: "Error leyendo circulares", detalle: String(e) }, 500);
+    }
+  }
 
   // --- 2) a quien ------------------------------------------------------------
   const usuarios = (Deno.env.get("CIRCULARES_DESTINATARIOS") ?? DESTINATARIOS_DEFAULT)
@@ -329,6 +405,46 @@ Deno.serve(async (req) => {
   if (!destinos.length) return json({ error: "Sin destinatarios con telefono_wa" }, 500);
 
   // --- 3) mandar -------------------------------------------------------------
+  // --- resumen diario: UN mensaje con todo lo del dia -----------------------
+  if (body?.resumen === true) {
+    const item = (c: Circular) => {
+      const area = AREA[c.tipo] ?? c.tipo;
+      return unaLinea(
+        `${area}${c.numero ? ` N°${c.numero}` : ""}` +
+        (c.titulo ? ` ${c.titulo}` : "") +
+        (c.requiere_accion ? " (REQUIERE ACCION)" : ""),
+      );
+    };
+    // Primero las que piden accion: si el listado se corta, que sobrevivan.
+    const orden = [...todasPendientes].sort((a, b) =>
+      Number(!!b.requiere_accion) - Number(!!a.requiere_accion));
+    const listado = recortar(orden.map(item).join(" · "), MAX_LISTADO);
+    const cantidad = String(todasPendientes.length);
+
+    if (dry) {
+      return json({ resumen: true, cantidad, listado,
+                    a: destinos.map((d) => d.tel) });
+    }
+    const out: unknown[] = [];
+    let algunoOk = false;
+    for (const d of destinos) {
+      const r = await enviarResumen(WA_PHONE_ID, WA_TOKEN, d.tel, d.nombre,
+                                    cantidad, listado);
+      out.push({ tel: d.tel, ...r });
+      if (r.ok) algunoOk = true;
+    }
+    // Se marcan TODAS, no solo las que entraron en el listado recortado: el
+    // resumen ya salio y el detalle completo esta en el portal.
+    if (algunoOk && !solo) {
+      const ahora = new Date().toISOString();
+      for (const c of todasPendientes) {
+        await sb(SUPABASE_URL, SERVICE_KEY, `circulares?id=eq.${c.id}`,
+          { method: "PATCH", body: { avisado_en: ahora } });
+      }
+    }
+    return json({ ok: true, resumen: true, cantidad, listado, resultados: out });
+  }
+
   const resultados: unknown[] = [];
   for (const c of pendientes) {
     const area = AREA[c.tipo] ?? c.tipo;
