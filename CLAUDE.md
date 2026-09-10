@@ -416,18 +416,35 @@ Tres controles sobre la forma de pago que el vendedor carga en la PV, los tres a
 | tipo | qué detecta | cuándo avisa |
 |---|---|---|
 | `fecha_no_habil` | la fecha de pago cae **sábado, domingo o feriado** | a los ~15 min de cargada (20 min de gracia) |
-| `plazo_excedido` | la fecha de pago cae **más allá de 5 días hábiles desde la operación** | a los ~15 min de cargada (20 min de gracia) |
+| `plazo_excedido` | **sólo en la venta de fin de mes que se patenta al mes siguiente**: la fecha de pago cae más allá de 5 días hábiles desde la operación | a los ~15 min de cargada (20 min de gracia) |
 | `vencido_impago` | pasó la fecha prometida y el pago **no figura cobrado** (o quedó saldo) | a los **3 días hábiles** del vencimiento (`PVFECHA_GRACIA_HABILES`) |
 
 ### El plazo de cobro: 5 días hábiles desde la operación (`plazo_excedido`)
 
 **La regla, textual de Fer (10/09/2026):** *"cuando se vende algo a fin de mes nunca se puede poner una fecha de cobro en la 2da semana, salvo excepción dada de forma explícita y documentada. Si es el 30/09 el pago a más tardar es el 7/10, si es el 29/09 es el 06/10, y así sucesivamente."* El disparador fue una PV real: **08126/1, operación del 27/08 con la cancelación de $55,7 M puesta al 10/09** — el tope eran 5 días hábiles, o sea el 03/09.
 
+### ⚠️ Sólo aplica a la venta de fin de mes que se patenta al mes siguiente
+
+**Recorte de Fer el 10/09/2026**, el mismo día: *"esto tiene que ser para las operaciones que se hacen a fin de mes y que aclara en comentarios que se patenta al mes siguiente, por ejemplo una pv hecha el 28/09 y que dice «se patenta en octubre», no para las otras que no cumplan esa regla."* Son **dos condiciones juntas**:
+
+1. la PV cae en los **últimos 7 días del mes** (`PVPLAZO_DIAS_FIN_MES`, medido contra el largo real del mes: 25-31 en agosto, 24-30 en junio, 22-28 en febrero), y
+2. su comentario dice que **se patenta un mes posterior**.
+
+Una PV normal que se patenta en su propio mes **no se controla**. El recorte baja el volumen de **540 renglones fuera de plazo (2025-26) a ~80**, o sea de ~1 aviso por día hábil a **~4 PVs por mes**. De las 1.463 PVs desde 2025, **177 quedan alcanzadas** por la regla; sólo las que además se pasan del tope avisan.
+
+**El mes sale del comentario de la PV, que el vendedor escribe a mano.** El patrón real es consistente — `PATENTA SEPTIEMBRE`, `SE PATENTA EN MAYO`, `OFERTA PATENTANDO MES DE JULIO`, `patenta mes de septiembre caso contrario abona aumento del 10%` — y se busca el primer nombre de mes dentro de los 60 caracteres posteriores a `patent`. Conviven **"septiembre" y "setiembre"**, mayúsculas, minúsculas y acentos, así que se normaliza antes.
+
+**Los `\b` del regex no son decorativos:** sin ellos `mayo` matchea adentro de **`mayorista`** y `mayores`, que aparecen en los comentarios. Pero con ellos se perdían **7 PVs con el mes pegado por un typo** (`patenta mes d emayo`, `mes deoctubre`, `septiembrecaso`, `abril2025`), así que `repararPegotes()` los despega **antes** de buscar, en vez de aflojar el regex — aflojarlo traía de vuelta el falso positivo de `mayorista`.
+
+**🕳️ El agujero conocido: 79 PVs de fin de mes (2025-26) no dicen en qué mes se patentan**, y el control no las ve. La regla depende de que el vendedor escriba el comentario; si no lo escribe, no hay aviso. Está planteado a Fer.
+
+**Diagnóstico `?alcance=`** responde "¿por qué no avisó de esta PV?": `?alcance=2026-08-01` (todas desde esa fecha) o `?alcance=PV 08126/1` (una sola). Devuelve día, último día del mes, mes detectado en el comentario, si quedó alcanzada y el motivo.
+
 **Se mide contra `preventas.fecha` (la fecha de la OPERACIÓN), no contra la fecha de carga del renglón.** Si la PV no aparece en la ventana de lectura, cae a la fecha de carga: es más benigna (nunca es anterior a la de la PV), así que el fallback no puede inventar un incumplimiento. Los feriados cuentan: una PV del **09/10** tiene tope **19/10**, no el 16, porque el 12/10 es feriado.
 
 **No avisa si la plata ya entró.** Un renglón con fecha corrida pero `saldo` en 0 es letra muerta: no hay nada que corregir. Por eso de los **69 renglones fuera de plazo** de jun-sep 2026 sólo **11** son candidatos reales.
 
-**Volumen medido antes de encenderlo** (485 renglones con vencimiento, jun-sep 2026): **69 fuera de plazo = 14 %**, ~1 por día hábil. Por vendedor: Naddeo 26, Buena 15, Loisi 12, J. Castro 7, M. Castro 5, Bandiera 2, T.G. 2. **27 de los 69 se pasan por UN solo día hábil** — si ese ruido molesta, `PVPLAZO_TOLERANCIA=1` baja los avisos a ~42 sin tocar código.
+**Volumen ANTES del recorte** (485 renglones con vencimiento, jun-sep 2026): 69 fuera de plazo = 14 %, ~1 por día hábil. **Con el recorte de fin de mes queda en ~4 PVs por mes.** Si aun así molesta, `PVPLAZO_TOLERANCIA=1` (días hábiles de colchón) afloja sin tocar código; `PVPLAZO_DIAS_FIN_MES=31` desactiva la condición de fecha y deja sólo la del comentario.
 
 **La excepción es parte de la regla.** Fer la escribió como *"explícita y documentada"*, así que tiene endpoint propio y **exige las dos cosas** — sin `motivo` y `por` no entra:
 
@@ -444,7 +461,7 @@ Deja la alerta en estado **`excepcion`** con `excepcion_motivo`, `excepcion_por`
 
 **Arranque:** `PVPLAZO_DESDE` (default `2026-09-11`) — sólo PVs hechas de esa fecha en adelante, igual que `PVFECHA_DESDE`. Las anteriores quedan `historica` para no disparar ~10 mensajes el día que se enciende. Se corre otro corte sin redeploy con `?desde_plazo=YYYY-MM-DD`.
 
-**Env propios:** `PVPLAZO_HABILES` (default 5), `PVPLAZO_TOLERANCIA` (default 0), `PVPLAZO_DESDE`. Template Meta `pv_plazo_excedido` (es_AR, **UTILITY**, 4 vars como los otros dos).
+**Env propios:** `PVPLAZO_HABILES` (default 5), `PVPLAZO_TOLERANCIA` (default 0), `PVPLAZO_DIAS_FIN_MES` (default 7), `PVPLAZO_DESDE`. Template Meta `pv_plazo_excedido` (es_AR, **UTILITY**, 4 vars como los otros dos).
 
 ⚠️ **Un renglón puede disparar `plazo_excedido` y `fecha_no_habil` a la vez** (fecha corrida Y en sábado) y salen **dos mensajes** para la misma PV, uno por control. Es a propósito: son dos correcciones distintas. Si molesta, hay que priorizar uno en el armado de grupos.
 
@@ -797,3 +814,10 @@ Cadencia:** el script local a las **9:00 AR** (tarea de Windows) y el cron `mark
 - Antes de un cambio grande, siempre presentar un **PLAN** primero y esperar aprobación.
 - Micro-commits > big bang.
 - Idioma de comunicación: **español**.
+
+
+## ⚠️ PostgREST corta en 1.000 filas sin avisar (verificado 10/09/2026)
+
+Pedir `limit=5000` a la réplica Oversoft **devuelve 1.000 filas y parece una respuesta completa**: medido contra `detcash` con `origen=VTOKM` desde 2024, `limit=5000` devolvió **1.000** cuando el total real paginando era **4.939**.
+
+`notify-pv-fecha-no-habil` confiaba en ese `limit=5000` en todas sus lecturas. Con la ventana default de 60 días no se llega al tope (~300 renglones), pero con `?dias=200` sí (986) y con más se comía renglones **en silencio**. Ahora **`ov()` y `sb()` paginan de a 1.000** en vez de confiar en el `limit`; `sb()` sólo pagina los GET, las escrituras van derecho. Importaba también para `pv_fechas_alertas`, que crece ~80 filas por mes: en un año la lectura habría empezado a perder alertas viejas y a re-crearlas como nuevas.

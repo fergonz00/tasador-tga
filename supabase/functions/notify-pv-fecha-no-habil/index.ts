@@ -15,6 +15,18 @@
 //                          7/10; si es el 29/09, el 6/10, y asi sucesivamente").
 //                          Se mide contra `preventas.fecha` (la fecha de la
 //                          OPERACION), no contra la fecha de carga del renglon.
+//
+//                          ** SOLO aplica a la venta de fin de mes que se patenta
+//                          al mes siguiente ** (recorte de Fer, 10/09/2026). Son
+//                          DOS condiciones juntas:
+//                            1. la PV cae en los ultimos N dias del mes, y
+//                            2. su `comentario` dice que se patenta un mes
+//                               posterior ("PATENTA SEPTIEMBRE" en una PV de
+//                               agosto).
+//                          Es el caso donde el cobro se corre a la 2da semana del
+//                          mes siguiente y descoloca el flujo. Una PV normal que
+//                          se patenta en su propio mes NO se controla.
+//
 //                          Unica salida legitima: excepcion explicita y
 //                          documentada -> {"excepcion":{...}} (ver Modos).
 //
@@ -130,6 +142,12 @@ const PLAZO_HABILES = Number(Deno.env.get("PVPLAZO_HABILES") ?? "5");
 // (14%), de los cuales 27 se pasan por UN solo dia habil. Si ese volumen molesta,
 // subir a 1 por env y los avisos bajan a ~42, sin tocar codigo ni redeployar.
 const PLAZO_TOLERANCIA = Number(Deno.env.get("PVPLAZO_TOLERANCIA") ?? "0");
+// Cuantos dias del final del mes cuentan como "fin de mes". Con 7: en un mes de
+// 31 dias es del 25 al 31; en uno de 30, del 24 al 30; en febrero, del 22 al 28.
+// Se mide contra el largo real del mes en vez de un dia fijo. Ponerlo en 31
+// desactiva la condicion de fecha y deja solo la del comentario.
+const PLAZO_DIAS_FIN_MES = Number(Deno.env.get("PVPLAZO_DIAS_FIN_MES") ?? "7");
+
 // Corte de arranque del control de PLAZO: solo PVs hechas de esta fecha en
 // adelante. Las anteriores quedan `historica` (registradas, sin avisar) para no
 // disparar decenas de mensajes por operaciones ya cerradas el dia que se enciende.
@@ -205,6 +223,9 @@ Deno.serve(async (req: Request) => {
     const com = body["comunicado"] as Record<string, unknown> | undefined;
     if (com && typeof com === "object") return json(await comunicado(env, com));
 
+    const alc = par("alcance");
+    if (alc) return json(await diagnosticoAlcance(env, String(alc)));
+
     const solo = String(par("solo") ?? "").trim();
     if (solo) return json(await pruebaDirigida(env, solo.replace(/^\+/, "").replace(/[\s-]/g, "")));
 
@@ -243,7 +264,7 @@ type Alerta = {
   fecha_pv: string | null; estado: string; ultimo_aviso_dia: string | null; avisos: number;
 };
 
-type PV = { vendedorid: number; vendedor: string; fecha: string; anulada: boolean };
+type PV = { vendedorid: number; vendedor: string; fecha: string; anulada: boolean; comentario: string };
 
 // ── Nucleo ──────────────────────────────────────────────────────────────────
 
@@ -260,7 +281,7 @@ async function procesar(
   const renglones: Renglon[] = await ov(
     env,
     `detcash?origen=eq.${ORIGEN_PV}&fecha=gte.${desdeLectura}` +
-    `&select=detcashid,fecha,vencimiento,importe,saldo,motivo,referencia&limit=5000`,
+    `&select=detcashid,fecha,vencimiento,importe,saldo,motivo,referencia`,
   );
   // Los importes negativos son contra-asientos de anulacion, no promesas de pago.
   const aCobrar = renglones.filter((r) => r.vencimiento && Number(r.importe) > 0);
@@ -293,10 +314,12 @@ async function procesar(
       // que corregir y el aviso seria ruido puro.
       if (estaCobrado(r.importe, r.saldo)) continue;
       const pv = pvs.get(r.referencia);
-      // La regla se mide desde la fecha de la OPERACION. Si la PV no aparece en
-      // la ventana, se cae a la fecha de carga del renglon (mas benigna: nunca
-      // es anterior a la de la PV, asi que no inventa un incumplimiento).
-      const base = (pv?.fecha ?? r.fecha).slice(0, 10);
+      // Sin la PV no se puede saber si es una venta de fin de mes que se patenta
+      // despues, y ese es justamente el unico caso que se controla: se saltea.
+      if (!pv) continue;
+      if (!esVentaFinDeMesQuePatentaDespues(pv.fecha.slice(0, 10), pv.comentario).aplica) continue;
+      // La regla se mide desde la fecha de la OPERACION, no desde la de carga.
+      const base = pv.fecha.slice(0, 10);
       const tope = sumarHabiles(base, PLAZO_HABILES, feriados);
       const limite = PLAZO_TOLERANCIA > 0 ? sumarHabiles(tope, PLAZO_TOLERANCIA, feriados) : tope;
       if (r.vencimiento!.slice(0, 10) <= limite) continue;
@@ -304,7 +327,7 @@ async function procesar(
     }
   }
 
-  const previas: Alerta[] = await sb(env, `pv_fechas_alertas?select=*&limit=20000`);
+  const previas: Alerta[] = await sb(env, `pv_fechas_alertas?select=*`);
   const clave = (id: number | string, tipo: string) => `${id}|${tipo}`;
   const previasPorClave = new Map(previas.map((a) => [clave(a.detcashid, a.tipo), a]));
 
@@ -469,7 +492,7 @@ async function revisarAbiertas(
   if (faltantes.length) {
     const extra: Renglon[] = await ov(
       env,
-      `detcash?detcashid=in.(${faltantes.join(",")})&select=detcashid,fecha,vencimiento,importe,saldo,motivo,referencia&limit=5000`,
+      `detcash?detcashid=in.(${faltantes.join(",")})&select=detcashid,fecha,vencimiento,importe,saldo,motivo,referencia`,
     );
     for (const r of extra) porId.set(r.detcashid, r);
   }
@@ -493,7 +516,11 @@ async function revisarAbiertas(
       const base = (pv?.fecha ?? r.fecha).slice(0, 10);
       const tope = sumarHabiles(base, PLAZO_HABILES, feriados);
       const limite = PLAZO_TOLERANCIA > 0 ? sumarHabiles(tope, PLAZO_TOLERANCIA, feriados) : tope;
-      if (estaCobrado(r.importe, r.saldo)) motivoCierre = "pago cobrado";
+      // Si corrigieron el comentario y ya no es una venta que se patenta al mes
+      // siguiente, la PV deja de estar alcanzada por la regla.
+      const alcance = pv ? esVentaFinDeMesQuePatentaDespues(base, pv.comentario) : { aplica: true, motivo: "" };
+      if (!alcance.aplica) motivoCierre = `fuera de la regla: ${alcance.motivo}`;
+      else if (estaCobrado(r.importe, r.saldo)) motivoCierre = "pago cobrado";
       else if (r.vencimiento && r.vencimiento.slice(0, 10) <= limite) {
         motivoCierre = "fecha corregida dentro del plazo";
         nuevaFecha = r.vencimiento.slice(0, 10);
@@ -646,7 +673,7 @@ function destinatarios(
 // ── Calendario ──────────────────────────────────────────────────────────────
 
 async function feriadosMap(env: Env) {
-  const filas = await sb(env, `feriados_ar?select=fecha,nombre&limit=2000`);
+  const filas = await sb(env, `feriados_ar?select=fecha,nombre`);
   return new Map<string, string>(filas.map((f: { fecha: string; nombre: string }) => [String(f.fecha).slice(0, 10), f.nombre]));
 }
 
@@ -665,6 +692,85 @@ function esNoHabil(fechaISO: string, feriados: Map<string, string>) {
 function esNoHabilParaAvisar(hoyISO: string, feriados: Map<string, string>) {
   if (feriados.has(hoyISO)) return true;
   return diaSemana(hoyISO) === 0;
+}
+
+// ── El caso que controla la regla del plazo ────────────────────────────────
+//
+// El vendedor deja escrito en el comentario de la PV en que mes se patenta:
+// "PATENTA SEPTIEMBRE", "SE PATENTA EN MAYO", "OFERTA PATENTANDO MES DE JULIO",
+// "patenta mes de  septiembre caso contrario abona aumento del 10%". Se busca el
+// primer nombre de mes que aparece DESPUES de "patent", dentro de los 60
+// caracteres siguientes (mas lejos ya es otra cosa del comentario).
+//
+// Ojo con la ortografia real de la casa: conviven "septiembre" y "setiembre", y
+// los comentarios vienen en mayusculas, en minusculas y con acentos rotos, asi
+// que se normaliza (sin tildes, minusculas) antes de buscar.
+const MESES: Record<string, number> = {
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7,
+  agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
+};
+const NOMBRES_MES =
+  "enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre";
+// Los limites de palabra son obligatorios: sin ellos "mayo" matchea adentro de
+// "mayoristas" y de "mayores", que aparecen en los comentarios.
+const RE_MES = new RegExp(`\\b(${NOMBRES_MES})\\b`);
+
+const sinTildes = (s: string) =>
+  String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+// Los comentarios se tipean a las apuradas y el mes queda pegado a lo de al lado.
+// Los tres typos reales que aparecen en la base (7 PVs desde 2025), y que sin
+// reparar se pierden porque el limite de palabra no encuentra donde cortar:
+//   "patenta mes d emayo"        -> la "e" de "de" se despego  ("d e" + mes)
+//   "patenta mes deoctubre"      -> "de" pegado al mes
+//   "patentando mes de septiembrecaso" / "patentar abril2025" -> pegado atras
+// Se reparan ANTES de buscar, asi el resto de la funcion trabaja con limites de
+// palabra limpios en vez de aflojar el regex (aflojarlo traia de vuelta el falso
+// positivo de "mayorista").
+function repararPegotes(t: string): string {
+  let out = t.replace(/\bd\s+e(?=[a-z])/g, "de ");
+  out = out.replace(new RegExp(`\\bde(${NOMBRES_MES})\\b`, "g"), "de $1");
+  // "mayo" queda afuera de este ultimo paso a proposito: separarlo romperia
+  // "mayorista" en "mayo rista" y volveria a dar el falso positivo.
+  out = out.replace(
+    new RegExp(`\\b(${NOMBRES_MES.replace("mayo|", "")})(?=[a-z0-9])`, "g"),
+    "$1 ",
+  );
+  return out;
+}
+
+function mesQuePatenta(comentario: string): number | null {
+  const t = repararPegotes(sinTildes(comentario));
+  const re = /patent\w*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) {
+    const mm = t.slice(m.index, m.index + 60).match(RE_MES);
+    if (mm) return MESES[mm[1]];
+  }
+  return null;
+}
+
+// ¿La PV es de fin de mes Y dice que se patenta un mes posterior?
+// Las dos condiciones juntas: es el unico caso que la regla controla.
+function esVentaFinDeMesQuePatentaDespues(fechaPV: string, comentario: string) {
+  const anio = Number(fechaPV.slice(0, 4));
+  const mes = Number(fechaPV.slice(5, 7));
+  const dia = Number(fechaPV.slice(8, 10));
+
+  const ultimoDia = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+  if (dia <= ultimoDia - PLAZO_DIAS_FIN_MES) return { aplica: false, motivo: "no es fin de mes" };
+
+  const mesPat = mesQuePatenta(comentario);
+  if (mesPat === null) return { aplica: false, motivo: "el comentario no dice en que mes se patenta" };
+
+  // Distancia en meses, dando la vuelta en diciembre (PV de dic -> "enero" = 1).
+  const distancia = (mesPat - mes + 12) % 12;
+  // 0 = se patenta en su propio mes (el caso normal, no se controla).
+  // 1-3 = se patenta despues; mas que eso es una referencia vieja del comentario.
+  if (distancia < 1 || distancia > 3) {
+    return { aplica: false, motivo: distancia === 0 ? "se patenta en el mismo mes" : "mes del comentario fuera de rango" };
+  }
+  return { aplica: true, motivo: `se patenta ${distancia} mes(es) despues` };
 }
 
 // Suma dias habiles BANCARIOS (lun-vie, sin feriados) a una fecha.
@@ -720,8 +826,8 @@ async function preventasDe(env: Env, refs: string[], dias: number) {
   const out = new Map<string, PV>();
   if (!refs.length) return out;
   const desde = isoMasDias(fechaAR(new Date()), -Math.abs(dias) - 120);
-  const pvs = await ov(env, `preventas?fecha=gte.${desde}&select=numero,fecha,vendedorid,anulada&limit=5000`);
-  const vends = await ov(env, `vendedores?select=vendedorid,nombre&limit=1000`);
+  const pvs = await ov(env, `preventas?fecha=gte.${desde}&select=numero,fecha,vendedorid,anulada,comentario,comentarioaux`);
+  const vends = await ov(env, `vendedores?select=vendedorid,nombre`);
   const nombreVend = new Map<number, string>(vends.map((v: { vendedorid: number; nombre: string }) => [Number(v.vendedorid), String(v.nombre || "").trim()]));
   const buscados = new Set(refs);
   for (const p of pvs) {
@@ -731,9 +837,47 @@ async function preventasDe(env: Env, refs: string[], dias: number) {
       vendedor: nombreVend.get(Number(p.vendedorid)) || `vendedor ${p.vendedorid}`,
       fecha: p.fecha,
       anulada: p.anulada === true,
+      comentario: `${p.comentario ?? ""} ${p.comentarioaux ?? ""}`,
     });
   }
   return out;
+}
+
+// Por que una PV entra o no en la regla del plazo. Responde la pregunta que van a
+// hacer Daniel y Monica: "¿por que no avisó de esta?".
+//   ?alcance=2026-08-01   -> todas las PVs desde esa fecha
+//   ?alcance=PV 08126/1   -> una sola
+async function diagnosticoAlcance(env: Env, arg: string) {
+  const esFecha = /^\d{4}-\d{2}-\d{2}$/.test(arg);
+  const desde = esFecha ? arg : isoMasDias(fechaAR(new Date()), -120);
+  const pvs = await ov(
+    env,
+    `preventas?fecha=gte.${desde}&select=numero,fecha,anulada,comentario,comentarioaux&order=fecha.asc`,
+  );
+  const filas = pvs
+    .filter((p: { numero: string }) => esFecha || p.numero === arg)
+    .map((p: { numero: string; fecha: string; anulada: boolean; comentario: string; comentarioaux: string }) => {
+      const fecha = String(p.fecha).slice(0, 10);
+      const comentario = `${p.comentario ?? ""} ${p.comentarioaux ?? ""}`;
+      const r = esVentaFinDeMesQuePatentaDespues(fecha, comentario);
+      return {
+        pv: p.numero,
+        fecha,
+        dia: Number(fecha.slice(8, 10)),
+        ultimo_dia_del_mes: new Date(Date.UTC(Number(fecha.slice(0, 4)), Number(fecha.slice(5, 7)), 0)).getUTCDate(),
+        mes_pv: Number(fecha.slice(5, 7)),
+        mes_que_patenta: mesQuePatenta(comentario),
+        anulada: p.anulada === true,
+        alcanzada: r.aplica,
+        motivo: r.motivo,
+      };
+    });
+  return {
+    dias_fin_de_mes: PLAZO_DIAS_FIN_MES,
+    total: filas.length,
+    alcanzadas: filas.filter((f) => f.alcanzada).length,
+    filas,
+  };
 }
 
 // Comunicado unitario a los vendedores (la regla del plazo, y cualquier otro que
@@ -957,29 +1101,61 @@ async function crearTemplates(env: Env) {
 
 // ── Helpers HTTP ────────────────────────────────────────────────────────────
 
+// Las LECTURAS se paginan por el mismo motivo que en `ov()`: PostgREST corta en
+// 1.000 filas sin avisar. `pv_fechas_alertas` va por ~80 filas al mes, asi que en
+// un anio la lectura empezaria a perder alertas viejas en silencio y a re-crear
+// las que ya estaban. Las escrituras (POST/PATCH/DELETE) van derecho.
 // deno-lint-ignore no-explicit-any
 async function sb(env: Env, path: string, options: RequestInit & { headers?: Record<string, string> } = {}): Promise<any[]> {
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
-    ...options,
-    headers: {
-      apikey: env.SERVICE_KEY,
-      Authorization: `Bearer ${env.SERVICE_KEY}`,
-      "Content-Type": "application/json",
-      ...(options.headers ?? {}),
-    },
-  });
-  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
-  const txt = await res.text();
-  return txt ? JSON.parse(txt) : [];
+  const headers = {
+    apikey: env.SERVICE_KEY,
+    Authorization: `Bearer ${env.SERVICE_KEY}`,
+    "Content-Type": "application/json",
+    ...(options.headers ?? {}),
+  };
+  const pedir = async (url: string) => {
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+    const txt = await res.text();
+    return txt ? JSON.parse(txt) : [];
+  };
+
+  const base = `${env.SUPABASE_URL}/rest/v1/${path}`;
+  const metodo = (options.method ?? "GET").toUpperCase();
+  if (metodo !== "GET" || /[?&]limit=/.test(path)) return await pedir(base);
+
+  const PAGINA = 1000;
+  // deno-lint-ignore no-explicit-any
+  const out: any[] = [];
+  const sep = path.includes("?") ? "&" : "?";
+  for (let offset = 0; ; offset += PAGINA) {
+    const pagina = await pedir(`${base}${sep}limit=${PAGINA}&offset=${offset}`);
+    out.push(...pagina);
+    if (pagina.length < PAGINA) return out;
+    if (offset > 200_000) return out; // red de seguridad
+  }
 }
 
+// ⚠️ PostgREST corta en 1.000 filas SIN AVISAR: `limit=5000` devuelve 1.000 y la
+// respuesta parece completa (verificado 10/09/2026 contra la replica: pedir 5000
+// renglones VTOKM devolvio 1.000 cuando el total real era 4.939). Con la ventana
+// default de 60 dias no se llega, pero con `?dias=200` si, y la corrida se comia
+// renglones en silencio. Por eso se pagina siempre en vez de confiar en el limit.
 // deno-lint-ignore no-explicit-any
 async function ov(env: Env, path: string): Promise<any[]> {
-  const res = await fetch(`${env.OV_URL}/${path}`, {
-    headers: { apikey: env.OV_KEY, Authorization: `Bearer ${env.OV_KEY}` },
-  });
-  if (!res.ok) throw new Error(`Oversoft ${res.status}: ${await res.text()}`);
-  return await res.json();
+  const PAGINA = 1000;
+  const out: any[] = [];
+  for (let offset = 0; ; offset += PAGINA) {
+    const sep = path.includes("?") ? "&" : "?";
+    const res = await fetch(`${env.OV_URL}/${path}${sep}limit=${PAGINA}&offset=${offset}`, {
+      headers: { apikey: env.OV_KEY, Authorization: `Bearer ${env.OV_KEY}` },
+    });
+    if (!res.ok) throw new Error(`Oversoft ${res.status}: ${await res.text()}`);
+    const pagina = await res.json();
+    out.push(...pagina);
+    if (pagina.length < PAGINA) return out;
+    if (offset > 200_000) return out; // red de seguridad
+  }
 }
 
 // deno-lint-ignore no-explicit-any
