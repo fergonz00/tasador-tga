@@ -417,6 +417,7 @@ Tres controles sobre la forma de pago que el vendedor carga en la PV, los tres a
 |---|---|---|
 | `fecha_no_habil` | la fecha de pago cae **sábado, domingo o feriado** | a los ~15 min de cargada (20 min de gracia) |
 | `plazo_excedido` | **sólo en la venta de fin de mes que se patenta al mes siguiente**: la fecha de pago cae más allá de 5 días hábiles desde la operación | a los ~15 min de cargada (20 min de gracia) |
+| `plazo_sin_mes` | es de fin de mes y el cobro se pasó del tope, pero **el comentario no dice en qué mes se patenta** — avisa **sólo a Fer y Daniel** | a los ~15 min de cargada (20 min de gracia) |
 | `vencido_impago` | pasó la fecha prometida y el pago **no figura cobrado** (o quedó saldo) | a los **3 días hábiles** del vencimiento (`PVFECHA_GRACIA_HABILES`) |
 
 ### El plazo de cobro: 5 días hábiles desde la operación (`plazo_excedido`)
@@ -436,7 +437,9 @@ Una PV normal que se patenta en su propio mes **no se controla**. El recorte baj
 
 **Los `\b` del regex no son decorativos:** sin ellos `mayo` matchea adentro de **`mayorista`** y `mayores`, que aparecen en los comentarios. Pero con ellos se perdían **7 PVs con el mes pegado por un typo** (`patenta mes d emayo`, `mes deoctubre`, `septiembrecaso`, `abril2025`), así que `repararPegotes()` los despega **antes** de buscar, en vez de aflojar el regex — aflojarlo traía de vuelta el falso positivo de `mayorista`.
 
-**🕳️ El agujero conocido: 79 PVs de fin de mes (2025-26) no dicen en qué mes se patentan**, y el control no las ve. La regla depende de que el vendedor escriba el comentario; si no lo escribe, no hay aviso. Está planteado a Fer.
+**🕳️ El agujero, y cómo se tapó:** el mes lo escribe el vendedor a mano, así que si no lo escribe la regla se esquiva sola — **79 PVs de fin de mes (2025-26) no dicen en qué mes se patentan**. Decisión de Fer (10/09/2026): esas PVs, cuando además tienen el cobro pasado del tope, disparan **`plazo_sin_mes`**, que avisa **sólo a Fer y a Daniel López** (`PVPLAZO_SIN_MES_DESTINATARIOS`, default `fngonzalez,dlopez`) — **no al vendedor y no a Mónica**: no se aprieta a nadie por algo que el sistema no puede afirmar, pero tampoco pasa en silencio. Son ~4 PVs por mes. La alerta **se cierra sola cuando completan el comentario**; si ahí resulta que patenta al mes siguiente, `plazo_excedido` la levanta como alerta propia.
+
+**Verificar el ruteo con `?destinos=`:** `?destinos=plazo_sin_mes&vendedorid=289` devuelve a quién le llegaría. Existe porque "que este aviso NO le llegue al vendedor" es exactamente lo que se rompe en silencio. Comprobado con el mismo vendedorid: `plazo_sin_mes` → `fngonzalez, dlopez`; `plazo_excedido` → `gbuena, dlopez, mgerez, fngonzalez`.
 
 **Diagnóstico `?alcance=`** responde "¿por qué no avisó de esta PV?": `?alcance=2026-08-01` (todas desde esa fecha) o `?alcance=PV 08126/1` (una sola). Devuelve día, último día del mes, mes detectado en el comentario, si quedó alcanzada y el motivo.
 

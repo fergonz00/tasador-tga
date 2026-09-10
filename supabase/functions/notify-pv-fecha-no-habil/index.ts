@@ -29,6 +29,12 @@
 //
 //                          Unica salida legitima: excepcion explicita y
 //                          documentada -> {"excepcion":{...}} (ver Modos).
+//   D) `plazo_sin_mes`   — la PV es de fin de mes y el cobro se paso del tope,
+//                          pero el comentario NO dice en que mes se patenta, asi
+//                          que no se puede afirmar si entra en la regla. Avisa
+//                          SOLO a Fer y Daniel (`PVPLAZO_SIN_MES_DESTINATARIOS`)
+//                          para que miren la PV. Sin esto la regla se esquiva
+//                          sola no escribiendo el comentario: son ~4 PVs/mes.
 //
 // De donde sale el dato:
 //   Replica Oversoft (solo lectura) -> tabla `detcash`, filas con
@@ -91,10 +97,12 @@ const WABA_ID_DEFAULT = "1183788370595856"; // WABA "Tito Gonzalez | Tasador"
 const TIPO_FECHA = "fecha_no_habil";
 const TIPO_VENCIDO = "vencido_impago";
 const TIPO_PLAZO = "plazo_excedido";
+const TIPO_SIN_MES = "plazo_sin_mes";
 const TEMPLATES: Record<string, string> = {
   [TIPO_FECHA]: "pv_fecha_no_habil",
   [TIPO_VENCIDO]: "pv_pago_vencido",
   [TIPO_PLAZO]: "pv_plazo_excedido",
+  [TIPO_SIN_MES]: "pv_plazo_sin_mes",
 };
 
 // Renglones de la PV: los carga el vendedor con origen VTOKM.
@@ -147,6 +155,12 @@ const PLAZO_TOLERANCIA = Number(Deno.env.get("PVPLAZO_TOLERANCIA") ?? "0");
 // Se mide contra el largo real del mes en vez de un dia fijo. Ponerlo en 31
 // desactiva la condicion de fecha y deja solo la del comentario.
 const PLAZO_DIAS_FIN_MES = Number(Deno.env.get("PVPLAZO_DIAS_FIN_MES") ?? "7");
+
+// El aviso de "no se puede saber si entra en la regla" va SOLO a Fer y Daniel
+// (Fer, 10/09/2026): no se aprieta al vendedor por algo que el sistema no puede
+// afirmar, pero tampoco se deja pasar en silencio.
+const SIN_MES_DESTINATARIOS = (Deno.env.get("PVPLAZO_SIN_MES_DESTINATARIOS") ?? "fngonzalez,dlopez")
+  .split(",").map((s) => s.trim()).filter(Boolean);
 
 // Corte de arranque del control de PLAZO: solo PVs hechas de esta fecha en
 // adelante. Las anteriores quedan `historica` (registradas, sin avisar) para no
@@ -226,6 +240,20 @@ Deno.serve(async (req: Request) => {
     const alc = par("alcance");
     if (alc) return json(await diagnosticoAlcance(env, String(alc)));
 
+    // ?destinos=plazo_sin_mes[&vendedorid=8] -> a quien le llegaria ese aviso.
+    // Existe para poder verificar que el aviso de `plazo_sin_mes` NO le llega al
+    // vendedor: es la clase de cosa que se rompe en silencio.
+    const dest = par("destinos");
+    if (dest) {
+      const padron = await padronUsuarios(env);
+      const vid = Number(par("vendedorid") ?? 0) || null;
+      return json({
+        tipo: String(dest),
+        vendedorid: vid,
+        destinos: destinatarios(padron, vid, String(dest)).map((d) => ({ usuario: d.usuario, nombre: d.nombre })),
+      });
+    }
+
     const solo = String(par("solo") ?? "").trim();
     if (solo) return json(await pruebaDirigida(env, solo.replace(/^\+/, "").replace(/[\s-]/g, "")));
 
@@ -236,7 +264,7 @@ Deno.serve(async (req: Request) => {
       dias: Number(par("dias") ?? VENTANA_DIAS) || VENTANA_DIAS,
       desde: String(par("desde") ?? DESDE).slice(0, 10),
       desdePlazo: String(par("desde_plazo") ?? PLAZO_DESDE).slice(0, 10),
-      tipos: tipo ? [tipo] : [TIPO_FECHA, TIPO_VENCIDO, TIPO_PLAZO],
+      tipos: tipo ? [tipo] : [TIPO_FECHA, TIPO_VENCIDO, TIPO_PLAZO, TIPO_SIN_MES],
     }));
   } catch (e) {
     console.error("notify-pv-fecha-no-habil:", e);
@@ -326,6 +354,22 @@ async function procesar(
       candidatos.push({ tipo: TIPO_PLAZO, r, texto: esNoHabil(r.vencimiento!, feriados).texto, tope });
     }
   }
+  if (opts.tipos.includes(TIPO_SIN_MES)) {
+    for (const r of aCobrar) {
+      if (estaCobrado(r.importe, r.saldo)) continue;
+      const pv = pvs.get(r.referencia);
+      if (!pv) continue;
+      // Fin de mes, cobro corrido, y el comentario no dice en que mes se patenta:
+      // no se puede afirmar que incumple, pero tampoco descartarlo.
+      const alcance = esVentaFinDeMesQuePatentaDespues(pv.fecha.slice(0, 10), pv.comentario);
+      if (!alcance.esFinDeMes || !alcance.sinMes) continue;
+      const base = pv.fecha.slice(0, 10);
+      const tope = sumarHabiles(base, PLAZO_HABILES, feriados);
+      const limite = PLAZO_TOLERANCIA > 0 ? sumarHabiles(tope, PLAZO_TOLERANCIA, feriados) : tope;
+      if (r.vencimiento!.slice(0, 10) <= limite) continue;
+      candidatos.push({ tipo: TIPO_SIN_MES, r, texto: esNoHabil(r.vencimiento!, feriados).texto, tope });
+    }
+  }
 
   const previas: Alerta[] = await sb(env, `pv_fechas_alertas?select=*`);
   const clave = (id: number | string, tipo: string) => `${id}|${tipo}`;
@@ -341,7 +385,7 @@ async function procesar(
     // ninguno (una deuda vencida sigue viva sea de la PV que sea).
     const fechaCorte = (pv?.fecha ?? c.r.fecha).slice(0, 10);
     const historica = (c.tipo === TIPO_FECHA && fechaCorte < opts.desde) ||
-      (c.tipo === TIPO_PLAZO && fechaCorte < opts.desdePlazo);
+      ((c.tipo === TIPO_PLAZO || c.tipo === TIPO_SIN_MES) && fechaCorte < opts.desdePlazo);
     nuevas.push({
       detcashid: c.r.detcashid,
       tipo: c.tipo,
@@ -393,6 +437,7 @@ async function procesar(
       fecha_no_habil: candidatos.filter((c) => c.tipo === TIPO_FECHA).length,
       vencido_impago: candidatos.filter((c) => c.tipo === TIPO_VENCIDO).length,
       plazo_excedido: candidatos.filter((c) => c.tipo === TIPO_PLAZO).length,
+      plazo_sin_mes: candidatos.filter((c) => c.tipo === TIPO_SIN_MES).length,
     },
     alertas_nuevas: nuevas.length,
     historicas: nuevas.filter((n) => n.estado === "historica").length,
@@ -407,7 +452,7 @@ async function procesar(
   // ── Envio: 1 mensaje por PV y por tipo ────────────────────────────────────
   const grupos = new Map<string, Alerta[]>();
   for (const a of aAvisar) {
-    if ((a.tipo === TIPO_FECHA || a.tipo === TIPO_PLAZO) && !opts.forzar && (a.avisos ?? 0) === 0) {
+    if (a.tipo !== TIPO_VENCIDO && !opts.forzar && (a.avisos ?? 0) === 0) {
       // Gracia corta: no avisar mientras el vendedor todavia esta cargando la PV.
       const r = renglones.find((x) => x.detcashid === Number(a.detcashid));
       if (r && esDeHoy(r.fecha, hoyAR) && minutosDesde(r.fecha) < GRACIA_MIN) continue;
@@ -429,12 +474,18 @@ async function procesar(
     const vendedorNombre = lista.find((a) => a.vendedor_nombre)?.vendedor_nombre ?? "sin identificar";
     const detalle = recortar(
       lista.sort((a, b) => a.vencimiento.localeCompare(b.vencimiento))
-        .map((a) => tipo === TIPO_FECHA ? lineaFecha(a) : tipo === TIPO_PLAZO ? lineaPlazo(a, feriados) : lineaVencido(a, hoyAR))
+        .map((a) =>
+          tipo === TIPO_FECHA
+            ? lineaFecha(a)
+            : (tipo === TIPO_PLAZO || tipo === TIPO_SIN_MES)
+            ? lineaPlazo(a, feriados)
+            : lineaVencido(a, hoyAR)
+        )
         .join(" · "),
       700,
     );
 
-    const destinos = destinatarios(padron, vendedorid);
+    const destinos = destinatarios(padron, vendedorid, tipo);
     if (opts.dry) {
       enviados.push({ tipo, pv: ref, vendedor: vendedorNombre, detalle, destinos: destinos.map((d) => d.nombre), renglones: lista.length });
       continue;
@@ -510,7 +561,21 @@ async function revisarAbiertas(
 
     if (pv?.anulada) motivoCierre = "PV anulada";
     else if (!r) motivoCierre = "renglon ya no existe";
-    else if (a.tipo === TIPO_PLAZO) {
+    else if (a.tipo === TIPO_SIN_MES) {
+      const base = (pv?.fecha ?? r.fecha).slice(0, 10);
+      const tope = sumarHabiles(base, PLAZO_HABILES, feriados);
+      const limite = PLAZO_TOLERANCIA > 0 ? sumarHabiles(tope, PLAZO_TOLERANCIA, feriados) : tope;
+      const alc = pv ? esVentaFinDeMesQuePatentaDespues(base, pv.comentario) : null;
+      if (estaCobrado(r.importe, r.saldo)) motivoCierre = "pago cobrado";
+      else if (alc && !alc.sinMes) {
+        // Completaron el comentario: ya se sabe si entra en la regla o no. Si
+        // entra, el control de plazo la levanta como alerta propia.
+        motivoCierre = `el comentario ya dice el mes: ${alc.motivo}`;
+      } else if (r.vencimiento && r.vencimiento.slice(0, 10) <= limite) {
+        motivoCierre = "fecha corregida dentro del plazo";
+        nuevaFecha = r.vencimiento.slice(0, 10);
+      }
+    } else if (a.tipo === TIPO_PLAZO) {
       // Se recalcula el tope en vez de confiar en el guardado: si corrigieron la
       // FECHA DE LA PV, el tope se mueve con ella.
       const base = (pv?.fecha ?? r.fecha).slice(0, 10);
@@ -654,6 +719,7 @@ async function padronUsuarios(env: Env) {
 function destinatarios(
   padron: { porUsuario: Map<string, Usuario>; porVendedor: Map<number, string>; fijos: string[] },
   vendedorid: number | null,
+  tipo?: string,
 ) {
   const out: Usuario[] = [];
   const vistos = new Set<string>();
@@ -662,6 +728,12 @@ function destinatarios(
     vistos.add(u.telefono_wa);
     out.push(u);
   };
+  // El aviso de "falta el dato" no va al vendedor ni a la gerencia entera: es
+  // para que Fer y Daniel miren la PV, no un reclamo.
+  if (tipo === TIPO_SIN_MES) {
+    for (const u of SIN_MES_DESTINATARIOS) push(padron.porUsuario.get(u));
+    return out;
+  }
   if (vendedorid != null && !VENDEDORES_SIN_AVISO.has(Number(vendedorid))) {
     const usuario = padron.porVendedor.get(Number(vendedorid));
     if (usuario) push(padron.porUsuario.get(usuario));
@@ -752,25 +824,38 @@ function mesQuePatenta(comentario: string): number | null {
 
 // ¿La PV es de fin de mes Y dice que se patenta un mes posterior?
 // Las dos condiciones juntas: es el unico caso que la regla controla.
+//
+// Devuelve tambien `esFinDeMes` y `sinMes` porque hay un tercer estado que NO es
+// ni cumple-ni-no-cumple: la PV es de fin de mes pero el comentario no aclara en
+// que mes se patenta, asi que no se puede afirmar si entra en la regla. Ese caso
+// lo levanta `plazo_sin_mes` y va solo a Fer y Daniel (decision de Fer,
+// 10/09/2026): el dato lo escribe el vendedor a mano, y sin el la regla se
+// esquiva sola. Son ~4 PVs por mes.
 function esVentaFinDeMesQuePatentaDespues(fechaPV: string, comentario: string) {
   const anio = Number(fechaPV.slice(0, 4));
   const mes = Number(fechaPV.slice(5, 7));
   const dia = Number(fechaPV.slice(8, 10));
 
   const ultimoDia = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
-  if (dia <= ultimoDia - PLAZO_DIAS_FIN_MES) return { aplica: false, motivo: "no es fin de mes" };
+  const esFinDeMes = dia > ultimoDia - PLAZO_DIAS_FIN_MES;
+  if (!esFinDeMes) return { aplica: false, esFinDeMes, sinMes: false, motivo: "no es fin de mes" };
 
   const mesPat = mesQuePatenta(comentario);
-  if (mesPat === null) return { aplica: false, motivo: "el comentario no dice en que mes se patenta" };
+  if (mesPat === null) {
+    return { aplica: false, esFinDeMes, sinMes: true, motivo: "el comentario no dice en que mes se patenta" };
+  }
 
   // Distancia en meses, dando la vuelta en diciembre (PV de dic -> "enero" = 1).
   const distancia = (mesPat - mes + 12) % 12;
   // 0 = se patenta en su propio mes (el caso normal, no se controla).
   // 1-3 = se patenta despues; mas que eso es una referencia vieja del comentario.
   if (distancia < 1 || distancia > 3) {
-    return { aplica: false, motivo: distancia === 0 ? "se patenta en el mismo mes" : "mes del comentario fuera de rango" };
+    return {
+      aplica: false, esFinDeMes, sinMes: false,
+      motivo: distancia === 0 ? "se patenta en el mismo mes" : "mes del comentario fuera de rango",
+    };
   }
-  return { aplica: true, motivo: `se patenta ${distancia} mes(es) despues` };
+  return { aplica: true, esFinDeMes, sinMes: false, motivo: `se patenta ${distancia} mes(es) despues` };
 }
 
 // Suma dias habiles BANCARIOS (lun-vie, sin feriados) a una fecha.
@@ -1044,7 +1129,12 @@ async function pruebaDirigida(env: Env, tel: string) {
     "Cancelación $55.707.000 con fecha 10/09, 5 días hábiles más tarde del tope (03/09)",
     "PRUEBA (no es una PV real)",
   ]);
-  return { prueba: true, destino: tel, fecha_no_habil: a, vencido_impago: b, plazo_excedido: c };
+  const d = await enviarTemplate(env, TEMPLATES[TIPO_SIN_MES], tel, [
+    "Fer", "PV 09999/1",
+    "Cancelación $30.000.000 con fecha 08/09, 4 días hábiles más tarde del tope (02/09)",
+    "PRUEBA (no es una PV real)",
+  ]);
+  return { prueba: true, destino: tel, fecha_no_habil: a, vencido_impago: b, plazo_excedido: c, plazo_sin_mes: d };
 }
 
 async function listarTemplates(env: Env) {
@@ -1066,6 +1156,11 @@ const CUERPOS: Record<string, { header: string; body: string; ejemplo: string[] 
     header: "Pago vencido sin cobrar",
     body: "Hola {{1}}, en la {{2}} hay pagos que ya pasaron su fecha y todavía no figuran cobrados: {{3}}. Vendedor: {{4}}. Por favor verificá con el cliente y actualizá la fecha de pago en la PV si se reprogramó.",
     ejemplo: ["Jorge", "PV 08114/1", "Financiación BBVA $17.000.000, venció el 13/08 (hace 5 días)", "Fazzini Jorge"],
+  },
+  [TIPO_SIN_MES]: {
+    header: "Falta el mes de patentamiento en la PV",
+    body: "Hola {{1}}, en la {{2}} hay pagos con fecha posterior al tope de 5 días hábiles, pero la PV no aclara en qué mes se patenta, así que el control no puede confirmar si corresponde reclamarla: {{3}}. Vendedor: {{4}}. Revisá la PV y completá el comentario con el mes de patentamiento.",
+    ejemplo: ["Fer", "PV 08124/1", "Cancelación $30.000.000 con fecha 08/09, 4 días hábiles más tarde del tope (02/09)", "Loisi Antonio"],
   },
   [TIPO_PLAZO]: {
     header: "Fecha de cobro fuera de plazo",
