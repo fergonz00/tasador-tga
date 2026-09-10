@@ -652,6 +652,34 @@ Cadencia:** el script local a las **9:00 AR** (tarea de Windows) y el cron `mark
 
 **Dos cosas que el chequeo NO mira y quedaron para preguntarle a Nadia Vera (Simpli):** la columna `new_car_trims.currency` esta **vacia en las 38 filas** (dato preexistente, el feed no la toca — si su importador la valida es la misma bomba que el precio vacio), y las columnas de imagenes/brochure estan vacias en todas. No se metieron como alerta porque, al estar siempre vacias, avisarian todos los dias hasta que se resuelvan.
 
+## `sync-marketshell` — el sync a Shell dejo de depender de la PC de Fer (10/09/2026)
+
+**El problema:** el PATCH al Directus de Simpli lo hacia solo `marketshell-feed/sync_simpli.py`, en la PC de Fer. PC apagada = Shell congelado. Ademas el trigger horario de Apps Script que refresca la planilla **se salteaba entre 3 y 7 horas por dia** (8 avisos seguidos: 3,3,3,3,7,3,4,5 h), y no era cuota: una corrida tarda 5,5 s.
+
+**El agujero que eso abria:** el catalogo sale de la PLANILLA (`modo=chequeo` lee `Copia de importNewVehicle` -> VLOOKUP -> "Hoja 1", que escribe `aplicarFeed`), **no del portal de precios**. Con la planilla frenada, el sync publicaba precios viejos en Shell y logueaba **"0 a corregir"**: se veia sano estando ciego. Es la leccion del 01/09 un nivel mas abajo.
+
+**⭐ POR QUE SE PUDO MOVER A LA NUBE, SI EL 01/09 SE DIJO QUE NO:** el **429 es del PORTAL PUBLICO** (`marketshell.shell.com.ar`), **no del Directus**, que es otro host. Confirmado el 10/09 con una funcion de prueba: `POST /auth/login` y una lectura autenticada de `cars_versions` dan **200 desde Supabase Edge**. **Pista falsa a no repetir:** `/server/ping` y `/collections` dan 403 de Cloudflare **tambien desde la red de la oficina** — es por ruta, no por IP.
+
+**Piezas:**
+- Edge **`sync-marketshell`** (`--no-verify-jwt`, gate `x-stock-secret` = `STOCK_NOTIF_SECRET`).
+- **pg_cron jobid 28 `marketshell-sync-horario`, `12 * * * *`** (a los :12 de cada hora).
+- Tabla **`marketshell_sync`**: una fila por corrida, con el detalle en `jsonb`. Es el historial que antes solo existia en un `.log` de la PC.
+- Secrets nuevos: `SIMPLI_URL` / `SIMPLI_USER` / `SIMPLI_PASS`.
+
+**⭐ EL ORDEN IMPORTA — primero `modo=aplicar`, despues `modo=chequeo`.** La Edge **refresca la planilla ella misma** antes de leerla, en vez de confiar en el trigger de Apps Script. Efecto lateral bueno: `aplicarFeed` sella `ultimaCorridaOK`, asi que **`horas_sin_correr` ya no pasa de 1 y el aviso diario "el feed dejo de actualizarse" deja de salir** — que era el sintoma original.
+
+**Guardia (`MAX_HORAS_CATALOGO = 2`):** si el catalogo viene vacio, con `horas_sin_correr >= 2` o con `desfasadas > 0`, **no publica nada** y deja la fila con `abortado`. Antes que pisar Shell con precios viejos, no tocar.
+
+**⚠️ El web app de Apps Script devuelve 404 con el HTML de error de Google de forma intermitente** cuando se lo llama seguido (se vio probando esto). Por eso `feed()` reintenta 3 veces con backoff **y rechaza un 200 que traiga HTML** — si no, el `JSON.parse` de `chequeo` explota con un error mucho menos claro.
+
+**Lo que NO hace a proposito:** colgar de su publicacion un modelo que Shell no muestra (el `--publicar` del script). Sumar un auto al feed de un tercero es una decision: se sigue haciendo a mano con `python sync_simpli.py --publicar`.
+
+**Que queda en la PC de Fer:** `chequeo_portal.py` (9:00), porque leer el portal publico **si** exige la red de la oficina. La tarea "MarketShell - sync Simpli" quedo prendida como respaldo (es idempotente: solo escribe si hay diferencia).
+
+**⭐ Como se probo la escritura, y por que el dry no alcanzaba:** un `dry` con 0 cambios **nunca ejecuta un PATCH**, asi que no prueba nada. Se rompio a proposito el `currency` de "Virtus MSI MT G1 MY26" (campo que Shell no publica, y una unidad con stock 0: sin impacto en lo publicado) y se corrio la Edge en modo real: detecto 1, aplico 1, y `currency` volvio a `ARS`. Ver [[reference_test_debe_poder_fallar]].
+
+**Probar:** `{"dry":true}` (corre todo, no hace PATCH) - `{}` (real). **Mirar `ok` y `abortado`, no solo dos campos sueltos**: una corrida puede abortar y devolver igual `planilla_refrescada: true`.
+
 ## Puente con ArgenDreams — TGA tasa los usados VW de ellos (`sync-argendreams`)
 
 **El acuerdo (Fer con ArgenDreams, 24/08/2026):** ArgenDreams vende BYD y recibe usados de todas las marcas, que reparte entre 8 reventas. Lo que es **Volkswagen lo tasa TGA**. Por ahora solo VW; más adelante puede abrirse a más marcas (constante `MARCAS` en la función).
