@@ -411,12 +411,42 @@ Si hay que cargar a mano, tiene que ser **.xlsx** vía File → Import → Repla
 
 ## Control de fechas de pago de las PVs (`notify-pv-fecha-no-habil`)
 
-Dos controles sobre la forma de pago que el vendedor carga en la PV, los dos avisando por WhatsApp a los mismos destinatarios. Pedidos por Fer el 18/08/2026.
+Tres controles sobre la forma de pago que el vendedor carga en la PV, los tres avisando por WhatsApp a los mismos destinatarios. Los dos primeros los pidió Fer el 18/08/2026; el de plazo, el 10/09/2026.
 
 | tipo | qué detecta | cuándo avisa |
 |---|---|---|
 | `fecha_no_habil` | la fecha de pago cae **sábado, domingo o feriado** | a los ~15 min de cargada (20 min de gracia) |
+| `plazo_excedido` | la fecha de pago cae **más allá de 5 días hábiles desde la operación** | a los ~15 min de cargada (20 min de gracia) |
 | `vencido_impago` | pasó la fecha prometida y el pago **no figura cobrado** (o quedó saldo) | a los **3 días hábiles** del vencimiento (`PVFECHA_GRACIA_HABILES`) |
+
+### El plazo de cobro: 5 días hábiles desde la operación (`plazo_excedido`)
+
+**La regla, textual de Fer (10/09/2026):** *"cuando se vende algo a fin de mes nunca se puede poner una fecha de cobro en la 2da semana, salvo excepción dada de forma explícita y documentada. Si es el 30/09 el pago a más tardar es el 7/10, si es el 29/09 es el 06/10, y así sucesivamente."* El disparador fue una PV real: **08126/1, operación del 27/08 con la cancelación de $55,7 M puesta al 10/09** — el tope eran 5 días hábiles, o sea el 03/09.
+
+**Se mide contra `preventas.fecha` (la fecha de la OPERACIÓN), no contra la fecha de carga del renglón.** Si la PV no aparece en la ventana de lectura, cae a la fecha de carga: es más benigna (nunca es anterior a la de la PV), así que el fallback no puede inventar un incumplimiento. Los feriados cuentan: una PV del **09/10** tiene tope **19/10**, no el 16, porque el 12/10 es feriado.
+
+**No avisa si la plata ya entró.** Un renglón con fecha corrida pero `saldo` en 0 es letra muerta: no hay nada que corregir. Por eso de los **69 renglones fuera de plazo** de jun-sep 2026 sólo **11** son candidatos reales.
+
+**Volumen medido antes de encenderlo** (485 renglones con vencimiento, jun-sep 2026): **69 fuera de plazo = 14 %**, ~1 por día hábil. Por vendedor: Naddeo 26, Buena 15, Loisi 12, J. Castro 7, M. Castro 5, Bandiera 2, T.G. 2. **27 de los 69 se pasan por UN solo día hábil** — si ese ruido molesta, `PVPLAZO_TOLERANCIA=1` baja los avisos a ~42 sin tocar código.
+
+**La excepción es parte de la regla.** Fer la escribió como *"explícita y documentada"*, así que tiene endpoint propio y **exige las dos cosas** — sin `motivo` y `por` no entra:
+
+```
+{"excepcion":{"pv":"PV 08126/1","motivo":"el cliente cobra el aguinaldo el 12","por":"Daniel López"}}
+{"excepcion":{"detcashids":[12345],"motivo":"...","por":"..."}}
+```
+
+Deja la alerta en estado **`excepcion`** con `excepcion_motivo`, `excepcion_por` y `excepcion_at`, y deja de avisar. Queda auditable **quién habilitó cada cobro corrido** — que es justamente lo que hoy no se puede saber. Es distinto de `{"cerrar":[...]}`, que apaga sin dejar rastro de por qué.
+
+**Cierra sola** cuando corrigen la fecha a dentro del tope, cuando entra la plata, o cuando se anula la PV. **El tope se recalcula en cada corrida** en vez de confiar en el guardado: si corrigen la fecha de la PV, el tope se mueve con ella.
+
+**Columnas nuevas en `pv_fechas_alertas`:** `plazo_tope` (date, el tope calculado — el mensaje lo muestra para que el vendedor sepa qué fecha poner), `excepcion_motivo`, `excepcion_por`, `excepcion_at`. Estado nuevo: `excepcion`.
+
+**Arranque:** `PVPLAZO_DESDE` (default `2026-09-11`) — sólo PVs hechas de esa fecha en adelante, igual que `PVFECHA_DESDE`. Las anteriores quedan `historica` para no disparar ~10 mensajes el día que se enciende. Se corre otro corte sin redeploy con `?desde_plazo=YYYY-MM-DD`.
+
+**Env propios:** `PVPLAZO_HABILES` (default 5), `PVPLAZO_TOLERANCIA` (default 0), `PVPLAZO_DESDE`. Template Meta `pv_plazo_excedido` (es_AR, **UTILITY**, 4 vars como los otros dos).
+
+⚠️ **Un renglón puede disparar `plazo_excedido` y `fecha_no_habil` a la vez** (fecha corrida Y en sábado) y salen **dos mensajes** para la misma PV, uno por control. Es a propósito: son dos correcciones distintas. Si molesta, hay que priorizar uno en el armado de grupos.
 
 El de vencidos mira `detcash.saldo`: `0` = cobrado, `> 0` = falta. Avisa también los **cobros parciales**, diciendo cuánto falta de cuánto. **No usa el corte `PVFECHA_DESDE`** — una deuda vencida sigue viva sea de la PV que sea (decisión de Fer). Se cierra sola cuando entra la plata o cuando reprograman la fecha a futuro.
 

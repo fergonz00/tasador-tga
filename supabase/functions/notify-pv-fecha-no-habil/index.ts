@@ -1,6 +1,6 @@
 // Edge Function: notify-pv-fecha-no-habil
 //
-// Dos controles sobre la forma de pago que el vendedor carga en la PV, ambos
+// Tres controles sobre la forma de pago que el vendedor carga en la PV, todos
 // avisando por WhatsApp al vendedor + gerente + Monica Gerez + Fernando N. Gonzalez:
 //
 //   A) `fecha_no_habil`  — la fecha de pago cae sabado, domingo o feriado
@@ -9,6 +9,14 @@
 //                          (o quedo saldo). Avisa a los 3 DIAS HABILES del
 //                          vencimiento, para no pisar la demora normal de
 //                          acreditacion y de carga del recibo.
+//   C) `plazo_excedido`  — la fecha prometida cae MAS ALLA de los 5 dias habiles
+//                          posteriores a la operacion (regla de Fer, 10/09/2026:
+//                          "si la venta es el 30/09 el pago es a mas tardar el
+//                          7/10; si es el 29/09, el 6/10, y asi sucesivamente").
+//                          Se mide contra `preventas.fecha` (la fecha de la
+//                          OPERACION), no contra la fecha de carga del renglon.
+//                          Unica salida legitima: excepcion explicita y
+//                          documentada -> {"excepcion":{...}} (ver Modos).
 //
 // De donde sale el dato:
 //   Replica Oversoft (solo lectura) -> tabla `detcash`, filas con
@@ -48,6 +56,8 @@
 //   ?listar=1              -> lista los templates de la WABA (diagnostico)
 //   ?crear_template=1      -> da de alta los templates que falten en Meta
 //   {"cerrar":[detcashid]} -> cierra alertas a mano (deja de recordar)
+//   {"excepcion":{"pv":"PV 08126/1","motivo":"...","por":"Daniel Lopez"}}
+//                          -> autoriza un cobro fuera de plazo, documentado
 //
 // pg_cron (jobid 9): '*/10 16-23 * * *' = cada 10 min, 13 a 20 hora AR.
 //   SELECT cron.schedule(
@@ -65,9 +75,11 @@ const WABA_ID_DEFAULT = "1183788370595856"; // WABA "Tito Gonzalez | Tasador"
 
 const TIPO_FECHA = "fecha_no_habil";
 const TIPO_VENCIDO = "vencido_impago";
+const TIPO_PLAZO = "plazo_excedido";
 const TEMPLATES: Record<string, string> = {
   [TIPO_FECHA]: "pv_fecha_no_habil",
   [TIPO_VENCIDO]: "pv_pago_vencido",
+  [TIPO_PLAZO]: "pv_plazo_excedido",
 };
 
 // Renglones de la PV: los carga el vendedor con origen VTOKM.
@@ -105,6 +117,20 @@ const TOLERANCIA_SALDO = Number(Deno.env.get("PVFECHA_TOLERANCIA_SALDO") ?? "500
 const TOLERANCIA_PCT = Number(Deno.env.get("PVFECHA_TOLERANCIA_PCT") ?? "0.001");
 const estaCobrado = (importe: unknown, saldo: unknown) =>
   Number(saldo) <= Math.max(TOLERANCIA_SALDO, Math.abs(Number(importe)) * TOLERANCIA_PCT);
+
+// ── Control C: plazo maximo de cobro ────────────────────────────────────────
+// La operacion se cobra dentro de los N dias habiles POSTERIORES a la fecha de
+// la PV. Con 5 (el default, regla de Fer): PV del 30/09 -> tope 07/10.
+const PLAZO_HABILES = Number(Deno.env.get("PVPLAZO_HABILES") ?? "5");
+// Colchon opcional ANTES de avisar, en dias habiles. Default 0 = la regla se
+// aplica tal cual. Medido sobre 485 renglones (jun-sep 2026): 69 fuera de plazo
+// (14%), de los cuales 27 se pasan por UN solo dia habil. Si ese volumen molesta,
+// subir a 1 por env y los avisos bajan a ~42, sin tocar codigo ni redeployar.
+const PLAZO_TOLERANCIA = Number(Deno.env.get("PVPLAZO_TOLERANCIA") ?? "0");
+// Corte de arranque del control de PLAZO: solo PVs hechas de esta fecha en
+// adelante. Las anteriores quedan `historica` (registradas, sin avisar) para no
+// disparar decenas de mensajes por operaciones ya cerradas el dia que se enciende.
+const PLAZO_DESDE = (Deno.env.get("PVPLAZO_DESDE") ?? "2026-09-11").slice(0, 10);
 
 // Corte de arranque del control de FECHAS: corre sobre las PREVENTAS HECHAS A
 // PARTIR de esta fecha (Fer, 18/08/2026: "lo viejo ya esta"). Lo de PVs
@@ -168,6 +194,11 @@ Deno.serve(async (req: Request) => {
     const cerrar = body["cerrar"];
     if (Array.isArray(cerrar) && cerrar.length) return json(await cerrarAMano(env, cerrar));
 
+    // La UNICA salida legitima de un pago fuera de plazo que no se corrige.
+    // Queda asentado quien la autorizo y por que: sin `motivo` y `por` no entra.
+    const exc = body["excepcion"] as Record<string, unknown> | undefined;
+    if (exc && typeof exc === "object") return json(await registrarExcepcion(env, exc));
+
     const solo = String(par("solo") ?? "").trim();
     if (solo) return json(await pruebaDirigida(env, solo.replace(/^\+/, "").replace(/[\s-]/g, "")));
 
@@ -177,7 +208,8 @@ Deno.serve(async (req: Request) => {
       forzar: flag("forzar"),
       dias: Number(par("dias") ?? VENTANA_DIAS) || VENTANA_DIAS,
       desde: String(par("desde") ?? DESDE).slice(0, 10),
-      tipos: tipo ? [tipo] : [TIPO_FECHA, TIPO_VENCIDO],
+      desdePlazo: String(par("desde_plazo") ?? PLAZO_DESDE).slice(0, 10),
+      tipos: tipo ? [tipo] : [TIPO_FECHA, TIPO_VENCIDO, TIPO_PLAZO],
     }));
   } catch (e) {
     console.error("notify-pv-fecha-no-habil:", e);
@@ -200,6 +232,7 @@ type Alerta = {
   detcashid: number; tipo: string; referencia: string; motivo: string | null;
   importe: number | null; saldo_pendiente: number | null; importe_cobrado: number | null;
   vencimiento: string;
+  plazo_tope: string | null;
   dia_texto: string | null; vendedorid: number | null; vendedor_nombre: string | null;
   fecha_pv: string | null; estado: string; ultimo_aviso_dia: string | null; avisos: number;
 };
@@ -210,7 +243,7 @@ type PV = { vendedorid: number; vendedor: string; fecha: string; anulada: boolea
 
 async function procesar(
   env: Env,
-  opts: { dry: boolean; forzar: boolean; dias: number; desde: string; tipos: string[] },
+  opts: { dry: boolean; forzar: boolean; dias: number; desde: string; desdePlazo: string; tipos: string[] },
 ) {
   const ahora = new Date();
   const hoyAR = fechaAR(ahora);
@@ -226,8 +259,14 @@ async function procesar(
   // Los importes negativos son contra-asientos de anulacion, no promesas de pago.
   const aCobrar = renglones.filter((r) => r.vencimiento && Number(r.importe) > 0);
 
+  // Las PVs se leen ANTES de armar los candidatos porque el control de plazo
+  // necesita la fecha de la operacion. `preventasDe` hace una lectura unica y
+  // filtra en memoria, asi que pasarle todas las referencias no cuesta una query
+  // mas que pasarle solo las de los candidatos.
+  const pvs = await preventasDe(env, [...new Set(aCobrar.map((r) => r.referencia))], opts.dias);
+
   // ── Candidatos de cada control ────────────────────────────────────────────
-  const candidatos: { tipo: string; r: Renglon; texto: string }[] = [];
+  const candidatos: { tipo: string; r: Renglon; texto: string; tope?: string }[] = [];
   if (opts.tipos.includes(TIPO_FECHA)) {
     for (const r of aCobrar) {
       const { noHabil, texto } = esNoHabil(r.vencimiento!, feriados);
@@ -242,9 +281,22 @@ async function procesar(
       candidatos.push({ tipo: TIPO_VENCIDO, r, texto: esNoHabil(r.vencimiento!, feriados).texto });
     }
   }
-
-  const refs = [...new Set(candidatos.map((c) => c.r.referencia))];
-  const pvs = await preventasDe(env, refs, opts.dias);
+  if (opts.tipos.includes(TIPO_PLAZO)) {
+    for (const r of aCobrar) {
+      // Si la plata YA entro, la fecha prometida es letra muerta: no hay nada
+      // que corregir y el aviso seria ruido puro.
+      if (estaCobrado(r.importe, r.saldo)) continue;
+      const pv = pvs.get(r.referencia);
+      // La regla se mide desde la fecha de la OPERACION. Si la PV no aparece en
+      // la ventana, se cae a la fecha de carga del renglon (mas benigna: nunca
+      // es anterior a la de la PV, asi que no inventa un incumplimiento).
+      const base = (pv?.fecha ?? r.fecha).slice(0, 10);
+      const tope = sumarHabiles(base, PLAZO_HABILES, feriados);
+      const limite = PLAZO_TOLERANCIA > 0 ? sumarHabiles(tope, PLAZO_TOLERANCIA, feriados) : tope;
+      if (r.vencimiento!.slice(0, 10) <= limite) continue;
+      candidatos.push({ tipo: TIPO_PLAZO, r, texto: esNoHabil(r.vencimiento!, feriados).texto, tope });
+    }
+  }
 
   const previas: Alerta[] = await sb(env, `pv_fechas_alertas?select=*&limit=20000`);
   const clave = (id: number | string, tipo: string) => `${id}|${tipo}`;
@@ -256,9 +308,11 @@ async function procesar(
     if (previasPorClave.has(clave(c.r.detcashid, c.tipo))) continue;
     const pv = pvs.get(c.r.referencia);
     if (pv?.anulada) continue; // PV anulada: no molestamos a nadie
-    // El corte de arranque solo aplica al control de fechas.
+    // Cada control tiene su propio corte de arranque; el de vencidos no usa
+    // ninguno (una deuda vencida sigue viva sea de la PV que sea).
     const fechaCorte = (pv?.fecha ?? c.r.fecha).slice(0, 10);
-    const historica = c.tipo === TIPO_FECHA && fechaCorte < opts.desde;
+    const historica = (c.tipo === TIPO_FECHA && fechaCorte < opts.desde) ||
+      (c.tipo === TIPO_PLAZO && fechaCorte < opts.desdePlazo);
     nuevas.push({
       detcashid: c.r.detcashid,
       tipo: c.tipo,
@@ -268,6 +322,7 @@ async function procesar(
       saldo_pendiente: c.r.saldo,
       importe_cobrado: Number(c.r.importe) - Number(c.r.saldo),
       vencimiento: c.r.vencimiento!.slice(0, 10),
+      plazo_tope: c.tope ?? null,
       dia_texto: c.texto,
       vendedorid: pv?.vendedorid ?? null,
       vendedor_nombre: pv?.vendedor ?? null,
@@ -303,9 +358,13 @@ async function procesar(
   const enHorario = opts.forzar ||
     (horaAR >= HORA_DESDE && horaAR < HORA_HASTA && !esNoHabilParaAvisar(hoyAR, feriados));
   const resumen = {
-    ok: true, hoy: hoyAR, hora_ar: horaAR, dry: opts.dry, desde: opts.desde, tipos: opts.tipos,
+    ok: true, hoy: hoyAR, hora_ar: horaAR, dry: opts.dry, desde: opts.desde, desde_plazo: opts.desdePlazo, tipos: opts.tipos,
     renglones_leidos: renglones.length,
-    candidatos: { fecha_no_habil: candidatos.filter((c) => c.tipo === TIPO_FECHA).length, vencido_impago: candidatos.filter((c) => c.tipo === TIPO_VENCIDO).length },
+    candidatos: {
+      fecha_no_habil: candidatos.filter((c) => c.tipo === TIPO_FECHA).length,
+      vencido_impago: candidatos.filter((c) => c.tipo === TIPO_VENCIDO).length,
+      plazo_excedido: candidatos.filter((c) => c.tipo === TIPO_PLAZO).length,
+    },
     alertas_nuevas: nuevas.length,
     historicas: nuevas.filter((n) => n.estado === "historica").length,
     cerradas: cerradas.length, detalle_cerradas: cerradas,
@@ -319,7 +378,7 @@ async function procesar(
   // ── Envio: 1 mensaje por PV y por tipo ────────────────────────────────────
   const grupos = new Map<string, Alerta[]>();
   for (const a of aAvisar) {
-    if (a.tipo === TIPO_FECHA && !opts.forzar && (a.avisos ?? 0) === 0) {
+    if ((a.tipo === TIPO_FECHA || a.tipo === TIPO_PLAZO) && !opts.forzar && (a.avisos ?? 0) === 0) {
       // Gracia corta: no avisar mientras el vendedor todavia esta cargando la PV.
       const r = renglones.find((x) => x.detcashid === Number(a.detcashid));
       if (r && esDeHoy(r.fecha, hoyAR) && minutosDesde(r.fecha) < GRACIA_MIN) continue;
@@ -341,7 +400,7 @@ async function procesar(
     const vendedorNombre = lista.find((a) => a.vendedor_nombre)?.vendedor_nombre ?? "sin identificar";
     const detalle = recortar(
       lista.sort((a, b) => a.vencimiento.localeCompare(b.vencimiento))
-        .map((a) => (tipo === TIPO_FECHA ? lineaFecha(a) : lineaVencido(a, hoyAR)))
+        .map((a) => tipo === TIPO_FECHA ? lineaFecha(a) : tipo === TIPO_PLAZO ? lineaPlazo(a, feriados) : lineaVencido(a, hoyAR))
         .join(" · "),
       700,
     );
@@ -394,7 +453,10 @@ async function revisarAbiertas(
   env: Env, abiertas: Alerta[], renglones: Renglon[], pvs: Map<string, PV>,
   feriados: Map<string, string>, hoyAR: string, dry: boolean,
 ) {
-  if (!abiertas.length) return [];
+  // Devuelve la MISMA forma que el camino largo: con `return []` el destructuring
+  // de `{ cerradas, refrescadas }` daba undefined y la corrida se caia en
+  // `cerradas.map` justo cuando no quedaba ninguna alerta abierta.
+  if (!abiertas.length) return { cerradas: [], refrescadas: [] };
 
   const porId = new Map(renglones.map((r) => [r.detcashid, r]));
   const faltantes = [...new Set(abiertas.map((a) => Number(a.detcashid)).filter((id) => !porId.has(id)))];
@@ -419,7 +481,18 @@ async function revisarAbiertas(
 
     if (pv?.anulada) motivoCierre = "PV anulada";
     else if (!r) motivoCierre = "renglon ya no existe";
-    else if (a.tipo === TIPO_VENCIDO) {
+    else if (a.tipo === TIPO_PLAZO) {
+      // Se recalcula el tope en vez de confiar en el guardado: si corrigieron la
+      // FECHA DE LA PV, el tope se mueve con ella.
+      const base = (pv?.fecha ?? r.fecha).slice(0, 10);
+      const tope = sumarHabiles(base, PLAZO_HABILES, feriados);
+      const limite = PLAZO_TOLERANCIA > 0 ? sumarHabiles(tope, PLAZO_TOLERANCIA, feriados) : tope;
+      if (estaCobrado(r.importe, r.saldo)) motivoCierre = "pago cobrado";
+      else if (r.vencimiento && r.vencimiento.slice(0, 10) <= limite) {
+        motivoCierre = "fecha corregida dentro del plazo";
+        nuevaFecha = r.vencimiento.slice(0, 10);
+      }
+    } else if (a.tipo === TIPO_VENCIDO) {
       if (estaCobrado(r.importe, r.saldo)) motivoCierre = "pago cobrado";
       else if (r.vencimiento && sumarHabiles(r.vencimiento.slice(0, 10), GRACIA_HABILES, feriados) > hoyAR) {
         motivoCierre = "fecha reprogramada a futuro";
@@ -502,6 +575,16 @@ async function refrescar(
 
 const lineaFecha = (a: Alerta) =>
   `${nombreMotivo(a.motivo)} ${pesos(a.importe)} con fecha ${a.dia_texto} ${ddmm(a.vencimiento)}`;
+
+// Muestra la fecha cargada contra el tope, y de cuanto es el desvio: sin el
+// tope a la vista el vendedor no sabe que fecha poner.
+function lineaPlazo(a: Alerta, feriados: Map<string, string>) {
+  const tope = String(a.plazo_tope ?? "").slice(0, 10);
+  if (!tope) return `${nombreMotivo(a.motivo)} ${pesos(a.importe)} con fecha ${ddmm(a.vencimiento)}`;
+  const exceso = habilesEntre(tope, a.vencimiento.slice(0, 10), feriados);
+  return `${nombreMotivo(a.motivo)} ${pesos(a.importe)} con fecha ${ddmm(a.vencimiento)}, ` +
+    `${exceso} ${exceso === 1 ? "día hábil" : "días hábiles"} más tarde del tope (${ddmm(tope)})`;
+}
 
 function lineaVencido(a: Alerta, hoyAR: string) {
   const dias = diasEntre(a.vencimiento, hoyAR);
@@ -591,6 +674,20 @@ function sumarHabiles(iso: string, n: number, feriados: Map<string, string>) {
   return f;
 }
 
+// Dias habiles bancarios ENTRE dos fechas (excluye la de arranque, incluye la
+// de llegada). Es la inversa de sumarHabiles: mide de cuanto fue el desvio.
+function habilesEntre(desde: string, hasta: string, feriados: Map<string, string>) {
+  let f = desde.slice(0, 10);
+  const fin = hasta.slice(0, 10);
+  let n = 0, guarda = 0;
+  while (f < fin && guarda++ < 400) {
+    f = isoMasDias(f, 1);
+    const dow = diaSemana(f);
+    if (dow !== 0 && dow !== 6 && !feriados.has(f)) n++;
+  }
+  return n;
+}
+
 const diaSemana = (iso: string) => new Date(`${iso.slice(0, 10)}T12:00:00Z`).getUTCDay();
 const fechaAR = (d: Date) => new Date(d.getTime() - 3 * 3600_000).toISOString().slice(0, 10);
 const isoMasDias = (iso: string, dias: number) =>
@@ -631,6 +728,45 @@ async function preventasDe(env: Env, refs: string[], dias: number) {
     });
   }
   return out;
+}
+
+// Excepcion explicita y documentada al plazo de cobro (Fer, 10/09/2026: "salvo
+// excepcion dada de forma explicita y documentada"). Deja de avisar y la fila
+// guarda el motivo y quien la autorizo, para que despues se pueda auditar quien
+// habilito cada cobro corrido.
+//   {"excepcion":{"detcashids":[123,124],"motivo":"...","por":"Daniel Lopez"}}
+// o, mas comodo, por PV entera:
+//   {"excepcion":{"pv":"PV 08126/1","motivo":"...","por":"Daniel Lopez"}}
+async function registrarExcepcion(env: Env, exc: Record<string, unknown>) {
+  const motivo = String(exc.motivo ?? "").trim();
+  const por = String(exc.por ?? "").trim();
+  if (!motivo || !por) {
+    return { error: "la excepcion necesita `motivo` (por que se autoriza) y `por` (quien la autoriza)" };
+  }
+  const ids = Array.isArray(exc.detcashids) ? exc.detcashids.map(Number).filter(Number.isFinite) : [];
+  const pv = String(exc.pv ?? "").trim();
+  if (!ids.length && !pv) return { error: "indicar `detcashids` o `pv`" };
+
+  const filtro = ids.length
+    ? `detcashid=in.(${ids.join(",")})`
+    : `referencia=eq.${encodeURIComponent(pv)}`;
+  const afectadas = await sb(
+    env,
+    `pv_fechas_alertas?${filtro}&tipo=eq.${TIPO_PLAZO}&estado=eq.abierta&select=detcashid,referencia,motivo,importe,vencimiento,plazo_tope`,
+  );
+  if (!afectadas.length) return { excepciones: 0, detalle: "no hay alertas de plazo abiertas para eso" };
+
+  await sb(env, `pv_fechas_alertas?${filtro}&tipo=eq.${TIPO_PLAZO}&estado=eq.abierta`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      estado: "excepcion",
+      excepcion_motivo: motivo,
+      excepcion_por: por,
+      excepcion_at: new Date().toISOString(),
+      corregido_at: new Date().toISOString(),
+    }),
+  });
+  return { excepciones: afectadas.length, autorizada_por: por, motivo, renglones: afectadas };
 }
 
 async function cerrarAMano(env: Env, ids: unknown[]) {
@@ -684,7 +820,12 @@ async function pruebaDirigida(env: Env, tel: string) {
     "Financiación BBVA $17.000.000, venció el 13/08 (hace 5 días) · Cancelación: faltan $3.757.095 de $20.809.600, venció el 13/08 (hace 5 días)",
     "PRUEBA (no es una PV real)",
   ]);
-  return { prueba: true, destino: tel, fecha_no_habil: a, vencido_impago: b };
+  const c = await enviarTemplate(env, TEMPLATES[TIPO_PLAZO], tel, [
+    "Fer", "PV 09999/1",
+    "Cancelación $55.707.000 con fecha 10/09, 5 días hábiles más tarde del tope (03/09)",
+    "PRUEBA (no es una PV real)",
+  ]);
+  return { prueba: true, destino: tel, fecha_no_habil: a, vencido_impago: b, plazo_excedido: c };
 }
 
 async function listarTemplates(env: Env) {
@@ -706,6 +847,11 @@ const CUERPOS: Record<string, { header: string; body: string; ejemplo: string[] 
     header: "Pago vencido sin cobrar",
     body: "Hola {{1}}, en la {{2}} hay pagos que ya pasaron su fecha y todavía no figuran cobrados: {{3}}. Vendedor: {{4}}. Por favor verificá con el cliente y actualizá la fecha de pago en la PV si se reprogramó.",
     ejemplo: ["Jorge", "PV 08114/1", "Financiación BBVA $17.000.000, venció el 13/08 (hace 5 días)", "Fazzini Jorge"],
+  },
+  [TIPO_PLAZO]: {
+    header: "Fecha de cobro fuera de plazo",
+    body: "Hola {{1}}, en la {{2}} hay pagos con fecha posterior al plazo máximo de 5 días hábiles desde la operación: {{3}}. Vendedor: {{4}}. Salvo excepción autorizada y documentada, corregí la fecha de cobro en la PV para que caiga dentro del tope.",
+    ejemplo: ["Gisela", "PV 08126/1", "Cancelación $55.707.000 con fecha 10/09, 5 días hábiles más tarde del tope (03/09)", "Buena Gisela"],
   },
 };
 
