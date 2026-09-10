@@ -38,7 +38,7 @@
 // eso TAMBIEN se avisa. Si no, un chequeo roto se veria igual que "todo bien".
 //
 // Destinatarios: usuarios de `tasador_usuarios` cuyo `usuario` este en
-// MARKETSHELL_DESTINATARIOS (default fngonzalez,nvera), activos y con
+// MARKETSHELL_DESTINATARIOS (default fngonzalez), activos y con
 // telefono_wa. Dedup por telefono (Nadia tiene dos cuentas con el mismo numero).
 //
 // Probar sin mandar nada:
@@ -62,8 +62,11 @@ const TEMPLATE_NAME = "marketshell_feed_alerta";
 // un cambio de precios que no paso. Preferible que no salga el aviso y quede el
 // error registrado en `marketshell_avisos` a que salga diciendo otra cosa.
 
-// Fer + Nadia Vera. Ines Alonso salio el 01/09/2026 por pedido de Fer.
-const DESTINATARIOS_DEFAULT = "fngonzalez,nvera";
+// Solo Fer. Ines Alonso salio el 01/09/2026 y Nadia Vera (Simpli) el
+// 10/09/2026: desde que el portal se escribe por API (sync_simpli.py) Simpli ya
+// no interviene, y lo que mas avisa este chequeo -- el feed frenado -- es un
+// problema nuestro que ella no puede resolver.
+const DESTINATARIOS_DEFAULT = "fngonzalez";
 
 // Cuantos problemas entran en el parametro {{3}}. Meta corta el body largo y
 // el detalle completo esta en la planilla igual.
