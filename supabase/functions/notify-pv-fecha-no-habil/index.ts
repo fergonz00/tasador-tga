@@ -58,6 +58,9 @@
 //   {"cerrar":[detcashid]} -> cierra alertas a mano (deja de recordar)
 //   {"excepcion":{"pv":"PV 08126/1","motivo":"...","por":"Daniel Lopez"}}
 //                          -> autoriza un cobro fuera de plazo, documentado
+//   {"comunicado":{"template":"pv_control_plazo_cobro"}}
+//                          -> manda un comunicado unitario a los vendedores.
+//                             Sin `confirmar:true` solo dice a quien iria.
 //
 // pg_cron (jobid 9): '*/10 16-23 * * *' = cada 10 min, 13 a 20 hora AR.
 //   SELECT cron.schedule(
@@ -198,6 +201,9 @@ Deno.serve(async (req: Request) => {
     // Queda asentado quien la autorizo y por que: sin `motivo` y `por` no entra.
     const exc = body["excepcion"] as Record<string, unknown> | undefined;
     if (exc && typeof exc === "object") return json(await registrarExcepcion(env, exc));
+
+    const com = body["comunicado"] as Record<string, unknown> | undefined;
+    if (com && typeof com === "object") return json(await comunicado(env, com));
 
     const solo = String(par("solo") ?? "").trim();
     if (solo) return json(await pruebaDirigida(env, solo.replace(/^\+/, "").replace(/[\s-]/g, "")));
@@ -728,6 +734,75 @@ async function preventasDe(env: Env, refs: string[], dias: number) {
     });
   }
   return out;
+}
+
+// Comunicado unitario a los vendedores (la regla del plazo, y cualquier otro que
+// haga falta despues). No es parte del cron: se dispara a mano una sola vez.
+//
+//   {"comunicado":{"template":"pv_control_plazo_cobro"}}              -> a quien iria
+//   {"comunicado":{"template":"...","solo":"5491122334455"}}       -> prueba a 1 numero
+//   {"comunicado":{"template":"...","confirmar":true}}                -> lo manda
+//
+// Manda a los vendedores de `pv_vendedores_map` (TODOS, incluida la cuenta de la
+// casa: la regla es para la persona, no para la PV) mas los fijos, que se enteran
+// de que salio. `pv_comunicados` tiene PK (template, usuario), asi que reenviar
+// por error no duplica: los ya avisados se saltean salvo `reenviar:true`.
+async function comunicado(env: Env, com: Record<string, unknown>) {
+  const template = String(com.template ?? "").trim();
+  if (!template) return { error: "falta `template`" };
+
+  const aprobado = ((await listarTemplates(env)).templates ?? [])
+    .find((t: { name: string }) => t.name === template);
+  if (!aprobado) return { error: `el template ${template} no existe en la WABA` };
+  // Un template MARKETING se acepta y NO se entrega al que no acepto marketing,
+  // y el envio igual devuelve message id: mejor frenar aca que creer que salio.
+  if (aprobado.status !== "APPROVED") return { error: `el template ${template} esta en ${aprobado.status}, todavia no se puede mandar` };
+  if (aprobado.category !== "UTILITY") {
+    return { error: `el template ${template} quedo en ${aprobado.category}: no se entrega. Usar una variante que Meta clasifique UTILITY` };
+  }
+
+  const padron = await padronUsuarios(env);
+  const solo = String(com.solo ?? "").replace(/^\+/, "").replace(/[\s-]/g, "");
+  if (solo) {
+    const r = await enviarTemplate(env, template, solo, ["Fer"]);
+    return { prueba: true, template, destino: solo, resultado: r };
+  }
+
+  const usuarios = [...new Set([...padron.porVendedor.values(), ...padron.fijos])];
+  const yaAvisados = new Set(
+    (await sb(env, `pv_comunicados?template=eq.${encodeURIComponent(template)}&select=usuario`))
+      .map((c: { usuario: string }) => c.usuario),
+  );
+  const reenviar = com.reenviar === true;
+  const destinos = usuarios
+    .map((u) => padron.porUsuario.get(u))
+    .filter((u): u is Usuario => !!u && (reenviar || !yaAvisados.has(u.usuario)));
+
+  if (com.confirmar !== true) {
+    return {
+      dry: true, template, categoria: aprobado.category,
+      iria_a: destinos.map((d) => d.nombre),
+      ya_avisados: [...yaAvisados],
+      detalle: "sin `confirmar:true` no se manda nada",
+    };
+  }
+
+  const enviados: unknown[] = [];
+  const errores: unknown[] = [];
+  for (const d of destinos) {
+    const r = await enviarTemplate(env, template, d.telefono_wa, [primerNombre(d.nombre)]);
+    if (!r.ok) { errores.push({ destinatario: d.nombre, error: r.error }); continue; }
+    enviados.push(d.nombre);
+    await sb(env, "pv_comunicados?on_conflict=template,usuario", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify([{
+        template, usuario: d.usuario, nombre: d.nombre,
+        telefono: d.telefono_wa, meta_id: r.meta_id ?? null,
+      }]),
+    });
+  }
+  return { template, enviados, errores };
 }
 
 // Excepcion explicita y documentada al plazo de cobro (Fer, 10/09/2026: "salvo
