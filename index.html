@@ -1032,8 +1032,12 @@ async function login() {
   if (!user || !pass) return;
 
   try {
-    const data = await sbFetch(`tasador_usuarios?usuario=eq.${user}&clave=eq.${pass}&activo=eq.true`);
-    if (data.length === 0) {
+    // Login server-side (bcrypt) via RPC: la anon key ya no lee ni compara la clave.
+    const data = await sbFetch('rpc/login_tasador', {
+      method: 'POST',
+      body: JSON.stringify({ p_usuario: user, p_clave: pass })
+    });
+    if (!Array.isArray(data) || data.length === 0) {
       document.getElementById('loginError').style.display = 'block';
       return;
     }
