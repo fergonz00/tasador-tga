@@ -592,7 +592,6 @@ input, select, textarea { font-family: var(--font); }
       <button id="btnAgenda" onclick="abrirAgenda()" style="background:var(--vw-blue-light); color:white; font-size:13px; padding:8px 14px">📅 Agenda</button>
       <button id="btnPresencial" onclick="abrirTasacionPresencial()" style="background:#EA580C; color:white; font-size:13px; padding:8px 14px">📋 Cliente presencial</button>
       <button id="btnCambiarModo" onclick="cambiarModo()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">Cambiar de modo</button>
-      <button id="btnUsuarios" onclick="abrirUsuarios()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">👥 Usuarios</button>
       <button id="btnNotif" onclick="abrirNotif()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">🔔 Notificaciones</button>
       <button onclick="logout()">Salir</button>
     </div>
@@ -1212,10 +1211,7 @@ function selectMode(mode) {
   const btnCambiar = document.getElementById('btnCambiarModo');
   btnCambiar.classList.toggle('hidden', currentUser.rolesArr.length <= 1);
 
-  // El botón "Usuarios" solo se muestra a superadmins (fngonzalez, mlubrano) en modo admin.
-  const btnUsuarios = document.getElementById('btnUsuarios');
-  // Gestion de usuarios UNIFICADA en el portal: aca queda oculta siempre.
-  btnUsuarios.classList.add('hidden');
+  // Gestión de usuarios: unificada en el portal. Esta app ya no tiene solapa Usuarios.
 
   // Notificaciones: solo visible para superadmins (fngonzalez, mlubrano) en modo admin.
   const btnNotif = document.getElementById('btnNotif');
@@ -1263,7 +1259,6 @@ function logout() {
   document.getElementById('tasadorFisicoView').classList.add('hidden');
   document.getElementById('fisicoInspeccionView').classList.add('hidden');
   document.getElementById('btnCambiarModo').classList.add('hidden');
-  document.getElementById('btnUsuarios').classList.add('hidden');
   document.getElementById('btnNotif').classList.add('hidden');
 }
 
