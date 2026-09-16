@@ -1055,6 +1055,7 @@ async function login() {
 
     // Si es primer login o el admin le reseteó la clave, forzamos cambio antes de entrar.
     if (currentUser.debe_cambiar_clave) {
+      _provPass = pass; // la clave provisoria con la que entró, para validar el cambio
       mostrarModalCambioClave();
       return;
     }
@@ -1093,6 +1094,7 @@ function _continuarLogin() {
   }
 }
 
+let _provPass = ''; // clave provisoria capturada en el login, para el cambio forzado
 function mostrarModalCambioClave() {
   const modal = document.createElement('div');
   modal.id = 'cambioClaveModal';
@@ -1138,15 +1140,17 @@ async function confirmarCambioClave() {
   const v = validarClaveUsuario(c1);
   if (!v.ok) return mostrarErr(v.msg);
   if (c1 !== c2) return mostrarErr('Las claves no coinciden');
-  if (c1 === (currentUser.clave || '')) return mostrarErr('La nueva clave tiene que ser distinta a la provisoria');
+  if (c1 === _provPass) return mostrarErr('La nueva clave tiene que ser distinta a la provisoria');
 
   try {
     showLoading('Guardando clave...');
-    await sbFetch(`tasador_usuarios?id=eq.${currentUser.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ clave: c1, debe_cambiar_clave: false })
+    // Cambio via funcion de servidor: valida la clave actual (la provisoria) y guarda
+    // el hash en la tabla cerrada. No escribe texto plano.
+    await sbFetch('rpc/cambiar_clave', {
+      method: 'POST',
+      body: JSON.stringify({ p_usuario: currentUser.usuario, p_clave_actual: _provPass, p_clave_nueva: c1 })
     });
-    currentUser.clave = c1;
+    _provPass = '';
     currentUser.debe_cambiar_clave = false;
     hideLoading();
     cerrarModalCambioClave();
@@ -1210,7 +1214,8 @@ function selectMode(mode) {
 
   // El botón "Usuarios" solo se muestra a superadmins (fngonzalez, mlubrano) en modo admin.
   const btnUsuarios = document.getElementById('btnUsuarios');
-  btnUsuarios.classList.toggle('hidden', !(mode === 'admin' && _esSuperadmin()));
+  // Gestion de usuarios UNIFICADA en el portal: aca queda oculta siempre.
+  btnUsuarios.classList.add('hidden');
 
   // Notificaciones: solo visible para superadmins (fngonzalez, mlubrano) en modo admin.
   const btnNotif = document.getElementById('btnNotif');
