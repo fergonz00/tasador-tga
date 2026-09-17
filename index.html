@@ -592,6 +592,7 @@ input, select, textarea { font-family: var(--font); }
       <button id="btnAgenda" onclick="abrirAgenda()" style="background:var(--vw-blue-light); color:white; font-size:13px; padding:8px 14px">📅 Agenda</button>
       <button id="btnPresencial" onclick="abrirTasacionPresencial()" style="background:#EA580C; color:white; font-size:13px; padding:8px 14px">📋 Cliente presencial</button>
       <button id="btnCambiarModo" onclick="cambiarModo()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">Cambiar de modo</button>
+      <button id="btnArreglos" onclick="abrirArreglos()" class="hidden" style="background:#7C3AED; color:white; font-size:13px; padding:8px 14px">🔧 Arreglos</button>
       <button id="btnNotif" onclick="abrirNotif()" class="hidden" style="background:var(--vw-grey-1); color:var(--vw-grey-4); font-size:13px; padding:8px 14px">🔔 Notificaciones</button>
       <button onclick="logout()">Salir</button>
     </div>
@@ -660,6 +661,28 @@ input, select, textarea { font-family: var(--font); }
         </div>
       </div>
       <div id="fisicoInspBody" style="padding: 16px"></div>
+    </div>
+  </div>
+
+  <!-- ======== ARREGLOS DE USADOS (Jorge + Fer) ======== -->
+  <div id="arreglosView" class="hidden">
+    <div class="admin-container">
+      <div style="padding:16px; background:white; border-bottom:1px solid var(--vw-grey-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0; font-size:20px; color:var(--vw-blue)">🔧 Arreglos de usados</h2>
+          <div style="font-size:13px; color:var(--vw-grey-4); margin-top:2px">Anotá qué se le arregló a cada unidad y cuánto salió. Se compara solo contra lo que estimaste en la tasación.</div>
+        </div>
+        <button onclick="cerrarArreglos()" style="padding:8px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">← Volver</button>
+      </div>
+      <div class="admin-tabs" style="margin:0">
+        <button class="active" onclick="showArreglosTab('stock', this)">En stock</button>
+        <button onclick="showArreglosTab('vendidas', this)">Vendidas (90 días)</button>
+        <button onclick="showArreglosTab('todas', this)">Todas</button>
+      </div>
+      <div style="padding:12px 16px 0 16px">
+        <input type="text" id="arreglosBuscador" placeholder="Buscar por patente, marca o modelo..." oninput="onArreglosFiltroChange()" style="width:100%; padding:10px 14px; border:1px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:var(--sans)">
+      </div>
+      <div id="arreglosList" style="padding:12px 16px 16px 16px"></div>
     </div>
   </div>
 
@@ -1212,7 +1235,7 @@ function mostrarModeSelect() {
 
 // Lista canónica de TODAS las vistas tipo "página" (mutuamente excluyentes).
 // Cualquier vista nueva tiene que sumarse acá.
-const ALL_VIEWS = ['vendedorView', 'adminView', 'tasadorFisicoView', 'fisicoInspeccionView', 'notifView', 'usuariosView', 'agendaView'];
+const ALL_VIEWS = ['vendedorView', 'adminView', 'tasadorFisicoView', 'fisicoInspeccionView', 'notifView', 'usuariosView', 'agendaView', 'arreglosView'];
 
 function mostrarSoloVista(viewId) {
   ALL_VIEWS.forEach(id => {
@@ -1245,6 +1268,12 @@ function selectMode(mode) {
   // Notificaciones: solo visible para superadmins (fngonzalez, mlubrano) en modo admin.
   const btnNotif = document.getElementById('btnNotif');
   btnNotif.classList.toggle('hidden', !(mode === 'admin' && _esSuperadmin()));
+
+  // Arreglos de usados: Jorge (que es quien los manda a hacer) y Fer. El botón
+  // acompaña en cualquier modo — Jorge entra como tasador físico y Fer como
+  // admin, y la Edge vuelve a chequear el permiso server-side.
+  const btnArreglos = document.getElementById('btnArreglos');
+  if (btnArreglos) btnArreglos.classList.toggle('hidden', !_puedeArreglos());
 
   // Mostrar la vista del modo y ocultar todas las demás (incluyendo overlays).
   const viewByMode = { admin: 'adminView', vendedor: 'vendedorView', tasador_fisico: 'tasadorFisicoView' };
@@ -1289,6 +1318,8 @@ function logout() {
   document.getElementById('fisicoInspeccionView').classList.add('hidden');
   document.getElementById('btnCambiarModo').classList.add('hidden');
   document.getElementById('btnNotif').classList.add('hidden');
+  const btnArr = document.getElementById('btnArreglos');
+  if (btnArr) btnArr.classList.add('hidden');
 }
 
 // Sesión sin firma o vencida: login con el motivo a la vista. Lo llaman tanto el
@@ -8039,6 +8070,335 @@ function getSharedCookie() {
 }
 function clearSharedCookie() {
   document.cookie = SHARED_COOKIE + '=; path=/; domain=' + SHARED_DOMAIN + '; max-age=0; Secure; SameSite=Lax';
+}
+
+// ============ ARREGLOS DE USADOS ============
+// Lo que se le arregló de verdad a cada usado que entró, con su costo, contra lo
+// que se había estimado en la tasación. Pedido de Fer (16/09/2026): los gastos de
+// una tasación son siempre un estimado — Jorge mismo cuenta que con el Gol le
+// erró por 150 lucas — y esto es lo que lo confirma o lo corrige.
+//
+// Todo pasa por la Edge `usados-arreglos`: la lista de unidades sale de Oversoft
+// (key que no puede viajar al navegador) y la escritura está acotada a Jorge y a
+// Fer. La Edge valida la firma de sesión y vuelve a chequear el permiso.
+const ARREGLOS_USUARIOS = ['jfazzini', 'fngonzalez'];
+let arreglosData = [];
+let arreglosFiltroTexto = '';
+let arreglosFiltroTab = 'stock';
+let arreglosVistaAnterior = null;
+let arreglosEditandoId = null;   // id del arreglo que está en modo edición
+let arreglosDetalleAbierto = {}; // usadoid -> mostrar el desglose del estimado
+
+function _puedeArreglos() {
+  return !!(currentUser && ARREGLOS_USUARIOS.includes(currentUser.usuario));
+}
+
+async function _arreglosFetch(payload) {
+  const sess = _waSession();
+  if (!sess) { mostrarLoginVencido(); throw new Error('Sesión vencida'); }
+  const res = await fetch(SUPABASE_URL + '/functions/v1/usados-arreglos', {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: { ...sess, nombre: currentUser && currentUser.nombre }, ...payload })
+  });
+  // 401 = firma vencida (no es un error de datos): hay que volver a loguearse.
+  if (res.status === 401) { mostrarLoginVencido(); throw new Error('Sesión vencida: volvé a entrar.'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+async function abrirArreglos() {
+  if (!_puedeArreglos()) { showToast('No autorizado'); return; }
+  arreglosVistaAnterior = ALL_VIEWS.find(id => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  });
+  mostrarSoloVista('arreglosView');
+  await loadArreglos();
+}
+
+function cerrarArreglos() {
+  mostrarSoloVista(arreglosVistaAnterior || (currentMode === 'admin' ? 'adminView' : 'tasadorFisicoView'));
+  arreglosVistaAnterior = null;
+}
+
+function showArreglosTab(tab, btn) {
+  document.querySelectorAll('#arreglosView .admin-tabs button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  arreglosFiltroTab = tab || 'stock';
+  renderArreglosList();
+}
+
+function onArreglosFiltroChange() {
+  const b = document.getElementById('arreglosBuscador');
+  arreglosFiltroTexto = b ? b.value.trim().toUpperCase() : '';
+  renderArreglosList();
+}
+
+async function loadArreglos() {
+  const list = document.getElementById('arreglosList');
+  list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Cargando...</div>';
+  try {
+    const data = await _arreglosFetch({ accion: 'listar' });
+    arreglosData = data.unidades || [];
+    renderArreglosList();
+  } catch (e) {
+    console.error('loadArreglos:', e);
+    list.innerHTML = '<div style="text-align:center; padding:40px; color:#c00">' + _escapeHtmlUsr(e.message || 'Error al cargar') + '</div>';
+  }
+}
+
+// Desglose del estimado que quedó en la inspección: los puntos marcados sobre la
+// silueta con costo + los ítems del checklist con costo. Las etiquetas salen de
+// INSP_GRUPOS / TIPOS_DANIO, que son las mismas que usa el formulario — por eso
+// se arma acá y no en la Edge (allá quedarían viejas al primer cambio).
+function _arreglosEstimado(af) {
+  if (!af || typeof af !== 'object') return null;
+  const lineas = [];
+  const marcadores = Array.isArray(af.marcadores) ? af.marcadores : [];
+  marcadores.forEach((m, i) => {
+    const costo = Number(m.costo) || 0;
+    if (costo <= 0) return;
+    const tipo = (TIPOS_DANIO.find(t => t.key === m.tipo) || {}).label || m.tipo || 'Daño';
+    lineas.push({ label: (i + 1) + '. ' + tipo + (m.nota ? ' — ' + m.nota : ''), costo });
+  });
+  const items = af.items || {};
+  INSP_GRUPOS.forEach(g => {
+    const grupo = items[g.key] || {};
+    g.items.forEach(it => {
+      const cel = grupo[it.key] || {};
+      const costo = Number(cel.costo) || 0;
+      if (costo <= 0) return;
+      lineas.push({ label: g.titulo + ' · ' + it.label + (cel.obs ? ' — ' + cel.obs : ''), costo });
+    });
+  });
+  const suma = lineas.reduce((s, l) => s + l.costo, 0);
+  // Manda `total_arreglos` (lo que quedó guardado al cerrar la inspección), igual
+  // que la ficha del portal; si no cuadra con el detalle, se avisa en vez de
+  // elegir uno por nosotros.
+  const guardado = af.total_arreglos != null ? Math.round(Number(af.total_arreglos)) : null;
+  return {
+    total: guardado != null ? guardado : Math.round(suma),
+    lineas,
+    descuadre: guardado != null && Math.round(guardado) !== Math.round(suma)
+  };
+}
+
+function renderArreglosList() {
+  const list = document.getElementById('arreglosList');
+  let data = (arreglosData || []).slice();
+
+  if (arreglosFiltroTab === 'stock') data = data.filter(u => !u.vendido);
+  else if (arreglosFiltroTab === 'vendidas') data = data.filter(u => u.vendido);
+
+  if (arreglosFiltroTexto) {
+    const q = arreglosFiltroTexto;
+    data = data.filter(u =>
+      String(u.patente || '').toUpperCase().includes(q) ||
+      String(u.unidad || '').toUpperCase().includes(q)
+    );
+  }
+
+  if (!data.length) {
+    list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">No hay unidades en esta vista.</div>';
+    return;
+  }
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  list.innerHTML = data.map(u => {
+    const est = _arreglosEstimado(u.analisis_fisico);
+    const real = Number(u.total_real) || 0;
+    const estTotal = est ? est.total : null;
+
+    const chips = [];
+    if (u.vendido) chips.push('<span style="background:#FEE2E2; color:#991B1B; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700">VENDIDO' + (u.fecha_venta ? ' ' + _fechaCorta(u.fecha_venta) : '') + '</span>');
+    else if (u.estado === 'a_recibir') chips.push('<span style="background:#FEF3C7; color:#92400E; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700">A RECIBIR</span>');
+    else chips.push('<span style="background:#DCFCE7; color:#166534; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700">EN STOCK</span>');
+    if (u.enreparacion) chips.push('<span style="background:#DBEAFE; color:#1E40AF; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700">🔧 EN PREPARACIÓN</span>');
+
+    // Desvío: solo tiene sentido contra un estimado mayor a cero.
+    let desvioHTML = '<div style="font-size:12px; color:var(--vw-grey-3)">—</div>';
+    if (real > 0 && estTotal) {
+      const d = real - estTotal;
+      const pct = Math.round((d / estTotal) * 100);
+      const color = d > 0 ? '#B91C1C' : (d < 0 ? '#166534' : 'var(--vw-grey-4)');
+      const signo = d > 0 ? '+' : '';
+      desvioHTML = '<div style="font-family:var(--mono); font-weight:700; font-size:18px; color:' + color + '">' + signo + '$ ' + formatNum(d) + '</div>' +
+        '<div style="font-size:11px; color:' + color + '">' + signo + pct + '% vs. lo estimado</div>';
+    } else if (real > 0 && !estTotal) {
+      desvioHTML = '<div style="font-size:12px; color:#B91C1C; font-weight:600">No estaba estimado</div>';
+    } else if (real === 0 && estTotal) {
+      desvioHTML = '<div style="font-size:12px; color:var(--vw-grey-3)">Todavía sin arreglos cargados</div>';
+    }
+
+    const detalleAbierto = !!arreglosDetalleAbierto[u.usadoid];
+    let estimadoHTML;
+    if (!est) {
+      estimadoHTML = '<div style="font-size:12px; color:#92400E">Sin inspección física cargada' + (u.patente ? '' : ' (y sin patente para cruzar)') + '</div>';
+    } else {
+      estimadoHTML = '<div style="font-family:var(--mono); font-weight:700; font-size:18px; color:#5B21B6">$ ' + formatNum(est.total) + '</div>' +
+        (est.lineas.length
+          ? '<button onclick="toggleArregloDetalle(' + u.usadoid + ')" style="margin-top:2px; background:none; border:none; padding:0; color:var(--vw-blue); font-size:11px; font-weight:600; cursor:pointer; text-decoration:underline">' + (detalleAbierto ? 'ocultar detalle' : 'ver detalle (' + est.lineas.length + ')') + '</button>'
+          : '<div style="font-size:11px; color:var(--vw-grey-3)">sin desglose</div>') +
+        (est.descuadre ? '<div style="font-size:11px; color:#B45309">⚠ el detalle no suma el total guardado</div>' : '');
+    }
+
+    const detalleHTML = (detalleAbierto && est)
+      ? '<div style="margin:0 0 10px 0; padding:10px 12px; background:#F5F3FF; border-radius:8px">' +
+          '<div style="font-size:11px; font-weight:700; color:#5B21B6; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px">Lo que estimaste en la tasación</div>' +
+          est.lineas.map(l =>
+            '<div style="display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:3px 0; border-bottom:1px dashed #DDD6FE">' +
+              '<span>' + _escapeHtmlUsr(l.label) + '</span>' +
+              '<span style="font-family:var(--mono); white-space:nowrap">$ ' + formatNum(l.costo) + '</span>' +
+            '</div>').join('') +
+        '</div>'
+      : '';
+
+    const filas = (u.arreglos || []).map(a => {
+      if (arreglosEditandoId === a.id) {
+        return '<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:6px 0; border-bottom:1px solid var(--vw-grey-1)">' +
+          '<input type="date" id="edFecha_' + a.id + '" value="' + _escapeHtmlUsr(String(a.fecha || '').slice(0, 10)) + '" style="padding:6px 8px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px">' +
+          '<input type="text" id="edDesc_' + a.id + '" value="' + _escapeHtmlUsr(a.descripcion) + '" style="flex:1; min-width:160px; padding:6px 8px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px">' +
+          '<input type="number" id="edCosto_' + a.id + '" value="' + (Number(a.costo) || 0) + '" step="1000" min="0" style="width:120px; padding:6px 8px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono)">' +
+          '<button onclick="guardarArregloEdicion(\'' + a.id + '\')" style="padding:6px 10px; background:var(--vw-blue); color:white; border:none; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer">Guardar</button>' +
+          '<button onclick="cancelarArregloEdicion()" style="padding:6px 10px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer">Cancelar</button>' +
+        '</div>';
+      }
+      return '<div style="display:flex; justify-content:space-between; gap:10px; align-items:center; font-size:13px; padding:6px 0; border-bottom:1px solid var(--vw-grey-1)">' +
+        '<div style="flex:1; min-width:0">' +
+          '<span style="font-family:var(--mono); color:var(--vw-grey-4); font-size:12px">' + _fechaCorta(a.fecha) + '</span> ' +
+          _escapeHtmlUsr(a.descripcion) +
+          (a.cargado_por ? '<span style="font-size:11px; color:var(--vw-grey-3)"> · ' + _escapeHtmlUsr(a.cargado_por) + '</span>' : '') +
+        '</div>' +
+        '<div style="font-family:var(--mono); font-weight:600; white-space:nowrap">$ ' + formatNum(a.costo) + '</div>' +
+        '<button onclick="editarArreglo(\'' + a.id + '\')" title="Editar" style="background:none; border:none; cursor:pointer; font-size:14px; padding:2px 4px">✏️</button>' +
+        '<button onclick="borrarArreglo(\'' + a.id + '\')" title="Borrar" style="background:none; border:none; cursor:pointer; font-size:14px; padding:2px 4px">🗑️</button>' +
+      '</div>';
+    }).join('');
+
+    const subt = [
+      u.patente || 'sin patente',
+      u.km ? formatNum(u.km) + ' km' : null,
+      u.color || null,
+      u.fecha_ingreso ? 'ingresó ' + _fechaCorta(u.fecha_ingreso) : 'todavía no ingresó'
+    ].filter(Boolean).join(' · ');
+
+    return '<div style="background:white; border-radius:10px; box-shadow:var(--shadow); padding:14px; margin-bottom:12px">' +
+      '<div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start">' +
+        '<div style="min-width:0">' +
+          '<div style="font-weight:700; font-size:15px; color:var(--vw-blue)">' + _escapeHtmlUsr(u.unidad) + '</div>' +
+          '<div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">' + _escapeHtmlUsr(subt) + '</div>' +
+        '</div>' +
+        '<div style="display:flex; gap:6px; flex-wrap:wrap">' + chips.join('') + '</div>' +
+      '</div>' +
+      '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin:12px 0">' +
+        '<div style="padding:10px; background:#FAF5FF; border-radius:8px">' +
+          '<div style="font-size:10px; font-weight:700; color:#5B21B6; text-transform:uppercase; letter-spacing:0.5px">Estimado en la tasación</div>' +
+          estimadoHTML +
+        '</div>' +
+        '<div style="padding:10px; background:var(--vw-grey-1); border-radius:8px">' +
+          '<div style="font-size:10px; font-weight:700; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">Gastado de verdad</div>' +
+          '<div style="font-family:var(--mono); font-weight:700; font-size:18px; color:var(--vw-blue)">$ ' + formatNum(real) + '</div>' +
+          '<div style="font-size:11px; color:var(--vw-grey-3)">' + (u.arreglos || []).length + ' arreglo(s)</div>' +
+        '</div>' +
+        '<div style="padding:10px; background:var(--vw-grey-1); border-radius:8px">' +
+          '<div style="font-size:10px; font-weight:700; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">Desvío</div>' +
+          desvioHTML +
+        '</div>' +
+      '</div>' +
+      detalleHTML +
+      (filas ? '<div style="margin-bottom:10px">' + filas + '</div>' : '<div style="font-size:13px; color:var(--vw-grey-3); font-style:italic; margin-bottom:10px">Todavía no se cargó ningún arreglo.</div>') +
+      '<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding-top:8px; border-top:1px solid var(--vw-grey-1)">' +
+        '<input type="date" id="nvFecha_' + u.usadoid + '" value="' + hoy + '" style="padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px">' +
+        '<input type="text" id="nvDesc_' + u.usadoid + '" placeholder="Qué se arregló" style="flex:1; min-width:180px; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px">' +
+        '<input type="number" id="nvCosto_' + u.usadoid + '" placeholder="Cuánto salió" step="1000" min="0" style="width:140px; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono)">' +
+        '<button onclick="agregarArreglo(' + u.usadoid + ')" style="padding:8px 14px; background:#7C3AED; color:white; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer">+ Agregar</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function _fechaCorta(f) {
+  const s = String(f || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '—';
+  const [a, m, d] = s.split('-');
+  return d + '/' + m + '/' + a.slice(2);
+}
+
+function toggleArregloDetalle(usadoid) {
+  arreglosDetalleAbierto[usadoid] = !arreglosDetalleAbierto[usadoid];
+  renderArreglosList();
+}
+
+async function agregarArreglo(usadoid) {
+  const u = (arreglosData || []).find(x => x.usadoid === usadoid);
+  const desc = (document.getElementById('nvDesc_' + usadoid).value || '').trim();
+  const costoRaw = document.getElementById('nvCosto_' + usadoid).value;
+  const fecha = document.getElementById('nvFecha_' + usadoid).value;
+  if (!desc) { showToast('Poné qué se arregló'); return; }
+  const costo = Number(costoRaw);
+  if (costoRaw === '' || !isFinite(costo) || costo < 0) { showToast('Poné cuánto salió'); return; }
+  if (!fecha) { showToast('Poné la fecha'); return; }
+  try {
+    showLoading('Guardando...');
+    await _arreglosFetch({ accion: 'agregar', usadoid, patente: u && u.patente, descripcion: desc, costo, fecha });
+    await loadArreglos();
+    hideLoading();
+    showToast('Arreglo cargado');
+  } catch (e) {
+    hideLoading();
+    console.error('agregarArreglo:', e);
+    showToast(e.message || 'No se pudo guardar');
+  }
+}
+
+function editarArreglo(id) {
+  arreglosEditandoId = id;
+  renderArreglosList();
+}
+
+function cancelarArregloEdicion() {
+  arreglosEditandoId = null;
+  renderArreglosList();
+}
+
+async function guardarArregloEdicion(id) {
+  const desc = (document.getElementById('edDesc_' + id).value || '').trim();
+  const costoRaw = document.getElementById('edCosto_' + id).value;
+  const fecha = document.getElementById('edFecha_' + id).value;
+  if (!desc) { showToast('Poné qué se arregló'); return; }
+  const costo = Number(costoRaw);
+  if (costoRaw === '' || !isFinite(costo) || costo < 0) { showToast('Costo inválido'); return; }
+  if (!fecha) { showToast('Poné la fecha'); return; }
+  try {
+    showLoading('Guardando...');
+    await _arreglosFetch({ accion: 'editar', id, descripcion: desc, costo, fecha });
+    arreglosEditandoId = null;
+    await loadArreglos();
+    hideLoading();
+    showToast('Arreglo actualizado');
+  } catch (e) {
+    hideLoading();
+    console.error('guardarArregloEdicion:', e);
+    showToast(e.message || 'No se pudo guardar');
+  }
+}
+
+async function borrarArreglo(id) {
+  if (!confirm('¿Borrar este arreglo?')) return;
+  try {
+    showLoading('Borrando...');
+    await _arreglosFetch({ accion: 'borrar', id });
+    if (arreglosEditandoId === id) arreglosEditandoId = null;
+    await loadArreglos();
+    hideLoading();
+    showToast('Arreglo borrado');
+  } catch (e) {
+    hideLoading();
+    console.error('borrarArreglo:', e);
+    showToast(e.message || 'No se pudo borrar');
+  }
 }
 
 // ---- Firma de sesión (la emite login_tasador, la valida db-proxy/wa-send) ----
