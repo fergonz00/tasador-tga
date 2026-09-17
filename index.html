@@ -670,7 +670,8 @@ input, select, textarea { font-family: var(--font); }
       <div style="padding:16px; background:white; border-bottom:1px solid var(--vw-grey-2); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap">
         <div>
           <h2 style="margin:0; font-size:20px; color:var(--vw-blue)">🔧 Arreglos de usados</h2>
-          <div style="font-size:13px; color:var(--vw-grey-4); margin-top:2px">Anotá qué se le arregló a cada unidad y cuánto salió. Se compara solo contra lo que estimaste en la tasación.</div>
+          <div style="font-size:13px; color:var(--vw-grey-4); margin-top:2px">Anotá qué se le arregló a cada unidad y cuánto salió. Se compara contra lo que estimaste en la tasación.</div>
+          <div style="font-size:12px; color:#B45309; margin-top:4px; font-weight:600">⚠ El costo va <u>SIN IVA</u> (neto). Al lado te muestro cuánto da con IVA para que lo compares con la factura.</div>
         </div>
         <button onclick="cerrarArreglos()" style="padding:8px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">← Volver</button>
       </div>
@@ -8260,7 +8261,8 @@ function renderArreglosList() {
         return '<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:6px 0; border-bottom:1px solid var(--vw-grey-1)">' +
           '<input type="date" id="edFecha_' + a.id + '" value="' + _escapeHtmlUsr(String(a.fecha || '').slice(0, 10)) + '" style="padding:6px 8px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px">' +
           '<input type="text" id="edDesc_' + a.id + '" value="' + _escapeHtmlUsr(a.descripcion) + '" style="flex:1; min-width:160px; padding:6px 8px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px">' +
-          '<input type="number" id="edCosto_' + a.id + '" value="' + (Number(a.costo) || 0) + '" step="1000" min="0" style="width:120px; padding:6px 8px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono)">' +
+          '<input type="number" id="edCosto_' + a.id + '" value="' + (Number(a.costo) || 0) + '" step="1000" min="0" oninput="_arregloIvaHint(\'ed\', \'' + a.id + '\')" title="Sin IVA" style="width:120px; padding:6px 8px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono)">' +
+          '<span id="edIva_' + a.id + '" style="font-size:11px; color:var(--vw-grey-4); white-space:nowrap">' + _conIvaTxt(a.costo) + '</span>' +
           '<button onclick="guardarArregloEdicion(\'' + a.id + '\')" style="padding:6px 10px; background:var(--vw-blue); color:white; border:none; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer">Guardar</button>' +
           '<button onclick="cancelarArregloEdicion()" style="padding:6px 10px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer">Cancelar</button>' +
         '</div>';
@@ -8298,7 +8300,7 @@ function renderArreglosList() {
           estimadoHTML +
         '</div>' +
         '<div style="padding:10px; background:var(--vw-grey-1); border-radius:8px">' +
-          '<div style="font-size:10px; font-weight:700; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">Gastado de verdad</div>' +
+          '<div style="font-size:10px; font-weight:700; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">Gastado de verdad (sin IVA)</div>' +
           '<div style="font-family:var(--mono); font-weight:700; font-size:18px; color:var(--vw-blue)">$ ' + formatNum(real) + '</div>' +
           '<div style="font-size:11px; color:var(--vw-grey-3)">' + (u.arreglos || []).length + ' arreglo(s)</div>' +
         '</div>' +
@@ -8312,11 +8314,31 @@ function renderArreglosList() {
       '<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding-top:8px; border-top:1px solid var(--vw-grey-1)">' +
         '<input type="date" id="nvFecha_' + u.usadoid + '" value="' + hoy + '" style="padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px">' +
         '<input type="text" id="nvDesc_' + u.usadoid + '" placeholder="Qué se arregló" style="flex:1; min-width:180px; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px">' +
-        '<input type="number" id="nvCosto_' + u.usadoid + '" placeholder="Cuánto salió" step="1000" min="0" style="width:140px; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono)">' +
+        '<input type="number" id="nvCosto_' + u.usadoid + '" placeholder="Cuánto salió (sin IVA)" step="1000" min="0" oninput="_arregloIvaHint(\'nv\', ' + u.usadoid + ')" style="width:160px; padding:8px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; font-family:var(--mono)">' +
+        '<span id="nvIva_' + u.usadoid + '" style="font-size:11px; color:var(--vw-grey-4); white-space:nowrap"></span>' +
         '<button onclick="agregarArreglo(' + u.usadoid + ')" style="padding:8px 14px; background:#7C3AED; color:white; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer">+ Agregar</button>' +
       '</div>' +
     '</div>';
   }).join('');
+}
+
+// El costo de un arreglo se guarda SIEMPRE NETO (sin IVA): es la única forma de
+// que sume con el costo de toma de Oversoft, que en un usado tomado a un
+// particular no tiene IVA. Como la factura del taller sí viene con IVA, al lado
+// del input se muestra el equivalente con IVA para que Jorge lo pueda cotejar
+// contra el papel que tiene en la mano, sin hacer la cuenta.
+const IVA_ARREGLOS = 1.21;
+
+function _conIvaTxt(neto) {
+  const n = Number(neto);
+  return (isFinite(n) && n > 0) ? 'c/IVA $ ' + formatNum(n * IVA_ARREGLOS) : '';
+}
+
+function _arregloIvaHint(pref, key) {
+  const inp = document.getElementById(pref + 'Costo_' + key);
+  const out = document.getElementById(pref + 'Iva_' + key);
+  if (!inp || !out) return;
+  out.textContent = inp.value === '' ? '' : _conIvaTxt(inp.value);
 }
 
 function _fechaCorta(f) {
