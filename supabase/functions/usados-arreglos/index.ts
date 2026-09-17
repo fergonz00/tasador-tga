@@ -37,6 +37,15 @@ const CORS_HEADERS = {
 // Fer, el unico que ademas los mira contra el margen. Decision de Fer 17/09/2026.
 const EDITORES = new Set(["jfazzini", "fngonzalez"]);
 
+// El costo se GUARDA siempre neto en `costo`: es el que suma al costo de toma de
+// Oversoft, que en un usado tomado a un particular no tiene IVA. Jorge elige en
+// la pantalla si lo que tipea es neto o el total de la factura; lo tipeado queda
+// tal cual en `costo_ingresado` para que al editar vea su propio numero y no uno
+// dividido. La conversion la hace la Edge, no el navegador.
+const IVA = 1.21;
+const netear = (monto: number, ivaIncluido: boolean) =>
+  Math.round((ivaIncluido ? monto / IVA : monto) * 100) / 100;
+
 // Mismo corte de antiguedad que /usados y usados-disponibles.
 const ANTIGUEDAD_MAX_MESES = 18;
 // Ventana en la que una unidad ya vendida se sigue mostrando (facturas que llegan tarde).
@@ -166,6 +175,7 @@ Deno.serve(async (req) => {
       if (!descripcion) return json({ ok: false, error: "Falta decir que se arreglo" }, 400);
       if (!Number.isFinite(costo) || costo < 0) return json({ ok: false, error: "Costo invalido" }, 400);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return json({ ok: false, error: "Fecha invalida" }, 400);
+      const ivaIncluido = body?.iva_incluido === true;
       const row = await rest(W, SUPA_KEY, "/usados_arreglos", {
         method: "POST",
         headers: { Prefer: "return=representation" },
@@ -173,7 +183,9 @@ Deno.serve(async (req) => {
           usadoid,
           patente: String(body?.patente || "").trim().toUpperCase() || null,
           descripcion,
-          costo: Math.round(costo * 100) / 100,
+          costo: netear(costo, ivaIncluido),
+          costo_ingresado: Math.round(costo * 100) / 100,
+          iva_incluido: ivaIncluido,
           fecha,
           cargado_por: autor,
         }),
@@ -194,7 +206,21 @@ Deno.serve(async (req) => {
       if (body?.costo !== undefined) {
         const c = Number(body.costo);
         if (!Number.isFinite(c) || c < 0) return json({ ok: false, error: "Costo invalido" }, 400);
-        patch.costo = Math.round(c * 100) / 100;
+        // Si el que edita no manda el flag, vale el que ya tenia la fila: cambiarlo
+        // a `false` por omision convertiria un bruto en neto sin que nadie lo pida.
+        let ivaIncluido: boolean;
+        if (typeof body.iva_incluido === "boolean") {
+          ivaIncluido = body.iva_incluido;
+        } else {
+          const prev = await rest(
+            W, SUPA_KEY,
+            `/usados_arreglos?id=eq.${encodeURIComponent(id)}&select=iva_incluido&limit=1`,
+          );
+          ivaIncluido = prev?.[0]?.iva_incluido === true;
+        }
+        patch.costo = netear(c, ivaIncluido);
+        patch.costo_ingresado = Math.round(c * 100) / 100;
+        patch.iva_incluido = ivaIncluido;
       }
       if (body?.fecha !== undefined) {
         const f = String(body.fecha || "").slice(0, 10);
