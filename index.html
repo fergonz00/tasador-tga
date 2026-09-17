@@ -854,6 +854,13 @@ async function sbFetch(path, options = {}) {
         prefer: options.prefer || 'return=representation'
       })
     });
+    // 401 = el proxy no aceptó la firma (vencida, o sesión guardada de antes del
+    // token). No es un error de datos: hay que volver a loguearse, y avisarlo una
+    // sola vez en vez de pintar "Error al cargar" en cada solapa.
+    if (res.status === 401) {
+      if (typeof mostrarLoginVencido === 'function') mostrarLoginVencido();
+      throw new Error('Sesión vencida: volvé a entrar.');
+    }
     if (!res.ok) { const t = await res.text(); throw new Error(t); }
     if (res.status === 204) return null;
     const txt = await res.text();
@@ -1062,6 +1069,7 @@ async function login() {
       return;
     }
     currentUser = data[0];
+    currentUser.session_usuario = currentUser.usuario; // dueño de la firma recién emitida
     // Calculamos el array de roles. Fallback al campo 'rol' singular para retrocompat.
     currentUser.rolesArr = (Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
       ? currentUser.roles
@@ -1281,6 +1289,17 @@ function logout() {
   document.getElementById('fisicoInspeccionView').classList.add('hidden');
   document.getElementById('btnCambiarModo').classList.add('hidden');
   document.getElementById('btnNotif').classList.add('hidden');
+}
+
+// Sesión sin firma o vencida: login con el motivo a la vista. Lo llaman tanto el
+// arranque como cualquier lectura que el proxy rechace por firma (401).
+function mostrarLoginVencido(motivo) {
+  logout();
+  const errEl = document.getElementById('loginError');
+  if (errEl) {
+    errEl.textContent = motivo || 'Tu sesión venció. Volvé a entrar con tu usuario y contraseña.';
+    errEl.style.display = 'block';
+  }
 }
 
 // ============ VENDEDOR TABS ============
@@ -4868,12 +4887,17 @@ function renderInspeccionDetalleInline(t, af) {
 // Si faltan, se saltea sin error (no rompe el flujo principal).
 // Sesión firmada del operador (para autorizar el envío server-side).
 function _waSession() {
-  if (currentUser && currentUser.session_sig) {
-    return { usuario: currentUser.usuario, session_exp: currentUser.session_exp, session_sig: currentUser.session_sig };
-  }
+  // `session_usuario` es el dueño de la firma (el operador real si hay
+  // impersonación). Mandar `usuario` cuando son distintos rompe el HMAC.
+  const desde = (u) => ({
+    usuario: u.session_usuario || u.usuario,
+    session_exp: u.session_exp,
+    session_sig: u.session_sig,
+  });
+  if (firmaVigente(currentUser)) return desde(currentUser);
   try {
     const c = getSharedCookie();
-    if (c && c.session_sig) return { usuario: c.usuario, session_exp: c.session_exp, session_sig: c.session_sig };
+    if (firmaVigente(c)) return desde(c);
   } catch (e) {}
   return null;
 }
@@ -8017,6 +8041,16 @@ function clearSharedCookie() {
   document.cookie = SHARED_COOKIE + '=; path=/; domain=' + SHARED_DOMAIN + '; max-age=0; Secure; SameSite=Lax';
 }
 
+// ---- Firma de sesión (la emite login_tasador, la valida db-proxy/wa-send) ----
+// La firma es HMAC sobre "<usuario>.<exp>": va atada al usuario al que se le
+// emitió, que es `session_usuario`. Cuando un superadmin impersona, `usuario`
+// cambia pero `session_usuario` sigue siendo el operador real: autorizamos como
+// él y sólo cambia la identidad con la que se navega.
+function firmaVigente(u) {
+  if (!u || !u.session_sig || !u.session_exp) return false;
+  return Number(u.session_exp) > Math.floor(Date.now() / 1000);
+}
+
 function guardarSesion() {
   if (!currentUser) return;
   try {
@@ -8050,6 +8084,13 @@ async function restaurarSesion() {
     }
 
     if (!s || !s.user || !s.user.id) return false;
+    // Sin firma vigente no podemos leer nada por db-proxy: la sesión es inservible.
+    // La tiramos y mostramos el login con el motivo, en vez de dejar entrar a un
+    // panel que después muere con "Error al cargar" en cada solapa.
+    if (!firmaVigente(s.user)) {
+      mostrarLoginVencido(); // ya limpia la sesión y la cookie
+      return false;
+    }
     currentUser = s.user;
     // Por si la sesión guardada es vieja y no trae rolesArr (retrocompat).
     if (!Array.isArray(currentUser.rolesArr)) {
