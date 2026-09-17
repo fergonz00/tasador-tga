@@ -4845,18 +4845,28 @@ function renderInspeccionDetalleInline(t, af) {
 // CallMeBot requiere apikey emitida por el bot al receptor (cada usuario tiene la suya).
 // Esperamos que la fila del usuario en tasador_usuarios tenga telefono_wa + callmebot_key.
 // Si faltan, se saltea sin error (no rompe el flujo principal).
+// Sesión firmada del operador (para autorizar el envío server-side).
+function _waSession() {
+  if (currentUser && currentUser.session_sig) {
+    return { usuario: currentUser.usuario, session_exp: currentUser.session_exp, session_sig: currentUser.session_sig };
+  }
+  try {
+    const c = getSharedCookie();
+    if (c && c.session_sig) return { usuario: c.usuario, session_exp: c.session_exp, session_sig: c.session_sig };
+  } catch (e) {}
+  return null;
+}
+
+// El envío pasa por la Edge Function wa-send: la callmebot_key ya no se lee ni
+// viaja al navegador (queda protegida server-side).
 async function enviarWhatsAppA(usuarioId, mensaje) {
   if (!usuarioId || !mensaje) return;
   try {
-    const data = await sbFetch(`tasador_usuarios?id=eq.${usuarioId}&select=telefono_wa,callmebot_key,usuario`);
-    if (!data || data.length === 0) return;
-    const u = data[0];
-    if (!u.telefono_wa || !u.callmebot_key) {
-      console.log(`Usuario ${u.usuario || usuarioId} sin WhatsApp configurado, no se envía notificación.`);
-      return;
-    }
-    const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(u.telefono_wa)}&text=${encodeURIComponent(mensaje)}&apikey=${encodeURIComponent(u.callmebot_key)}`;
-    await fetch(url);
+    await fetch(SUPABASE_URL + '/functions/v1/wa-send', {
+      method: 'POST',
+      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: _waSession(), usuarioId: usuarioId, mensaje: mensaje })
+    });
   } catch(e) {
     console.log('WhatsApp notification error:', e);
   }
@@ -4867,20 +4877,11 @@ async function enviarWhatsAppA(usuarioId, mensaje) {
 async function enviarWhatsAppARol(rol, mensaje) {
   if (!rol || !mensaje) return;
   try {
-    const data = await sbFetch(`tasador_usuarios?select=id,usuario,telefono_wa,callmebot_key,roles,rol`);
-    if (!data || data.length === 0) return;
-    const usuarios = data.filter(u => {
-      const arr = Array.isArray(u.roles) && u.roles.length > 0 ? u.roles : (u.rol ? [u.rol] : []);
-      return arr.includes(rol);
+    await fetch(SUPABASE_URL + '/functions/v1/wa-send', {
+      method: 'POST',
+      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: _waSession(), rol: rol, mensaje: mensaje })
     });
-    await Promise.all(usuarios.map(u => {
-      if (!u.telefono_wa || !u.callmebot_key) {
-        console.log(`Usuario ${u.usuario} (rol ${rol}) sin WhatsApp configurado.`);
-        return null;
-      }
-      const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(u.telefono_wa)}&text=${encodeURIComponent(mensaje)}&apikey=${encodeURIComponent(u.callmebot_key)}`;
-      return fetch(url).catch(e => console.log('WA error a ' + u.usuario + ':', e));
-    }));
   } catch(e) {
     console.log('WhatsApp role notification error:', e);
   }
