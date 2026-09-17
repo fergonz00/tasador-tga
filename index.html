@@ -837,7 +837,28 @@ let fisicoFiltroEstadoVal = 'pendientes'; // 'pendientes' | 'inspeccionadas' | '
 let fisicoTasacionActual = null;
 
 // ============ SUPABASE HELPERS ============
+// Tablas internas con RLS: van por el proxy firmado (db-proxy) con la sesión
+// del operador (via _waSession, que resiste la impersonación). El resto directo.
+const _TABLAS_PROXY = ['tasaciones','notificaciones_config','consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas'];
 async function sbFetch(path, options = {}) {
+  const tabla = (String(path).match(/^([a-zA-Z0-9_]+)/) || [])[1];
+  if (_TABLAS_PROXY.includes(tabla)) {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/db-proxy', {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session: _waSession(),
+        path: path,
+        method: (options.method || 'GET').toUpperCase(),
+        body: options.body,
+        prefer: options.prefer || 'return=representation'
+      })
+    });
+    if (!res.ok) { const t = await res.text(); throw new Error(t); }
+    if (res.status === 204) return null;
+    const txt = await res.text();
+    return txt ? JSON.parse(txt) : null;
+  }
   const url = SUPABASE_URL + '/rest/v1/' + path;
   const headers = {
     'apikey': SUPABASE_KEY,
