@@ -59,6 +59,30 @@ Deno.serve(async (req: Request) => {
       name: TEMPLATE_NAME, language: META_LANGUAGE, category: "UTILITY", components: TEMPLATE_COMPONENTS,
     }));
   }
+  // alta de las plantillas de control: {"crear_template": "fedpat_control_carga"}
+  if (typeof body?.crear_template === "string" && EXTRA[body.crear_template]) {
+    return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN, {
+      name: body.crear_template, language: META_LANGUAGE, category: "UTILITY", components: EXTRA[body.crear_template],
+    }));
+  }
+  // aviso de control: {"aviso": {"template": "...", "params": [...], "para": ["Fer"]}}
+  // El primer parámetro ({{1}}) es siempre el nombre de quien lo recibe.
+  if (body?.aviso) {
+    const a = body.aviso;
+    if (!EXTRA[a.template]) return json({ error: "template no permitido" }, 400);
+    let dest: { nombre: string; telefono: string }[] = await sb(SUPABASE_URL, SERVICE_KEY,
+      "fedpat_avisos_destinatarios?activo=eq.true&select=nombre,telefono");
+    const para: string[] = Array.isArray(a.para) ? a.para.map((x: string) => x.toLowerCase()) : [];
+    if (para.length) dest = dest.filter((d) => para.some((p) => d.nombre.toLowerCase().startsWith(p)));
+    if (body?.solo) dest = [{ nombre: "equipo", telefono: String(body.solo).replace(/\D/g, "") }];
+    const out: any[] = [];
+    for (const d of dest) {
+      const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
+      const params = [nombre, ...(a.params || []).map((p: string) => recortar(sinPuntoFinal(limpiar(p)), 600))];
+      out.push({ a: d.nombre, ...(await postMeta(WA_PHONE_ID, WA_TOKEN, String(d.telefono).replace(/\D/g, ""), a.template, params)) });
+    }
+    return json({ ok: true, resultados: out });
+  }
   if (body?.listar === true) {
     const res = await fetch(
       `${META_API_URL}/${WABA_ID}/message_templates?fields=name,status,category,components&limit=200`,
@@ -187,6 +211,24 @@ const TEMPLATE_COMPONENTS = [{
     "Ofertamos $ 513.427,94 sin IVA (5U0-807-221-J GRU), con stock NUESTRO, entrega prometida 22/09/2026. Siniestro en CAPITAL - ZONA CABA 2",
   ]] },
 }];
+
+// Plantillas de control (UTILITY): un registro propio + qué hacer.
+const EXTRA: Record<string, unknown[]> = {
+  // a Fer, si un día hábil la carga automática no terminó bien
+  fedpat_control_carga: [{
+    type: "BODY",
+    text: "Hola {{1}}, la carga automática de ofertas de Federación Patronal de hoy no terminó bien: {{2}}. " +
+      "Los pedidos que vencen hoy no se van a ofertar solos hasta que se resuelva; el detalle está en el registro de corridas.",
+    example: { body_text: [["Fer", "a las 07:30 no corrió (la PC estaba apagada o ETKA no respondió)"]] },
+  }],
+  // a German (y quien corresponda), con pedidos sin elegir en la bandeja
+  fedpat_bandeja_pendiente: [{
+    type: "BODY",
+    text: "Hola {{1}}, en la bandeja de Repuestos hay {{2}} de Federación Patronal esperando que elijas la pieza. {{3}}. " +
+      "Si no se eligen antes del vencimiento, no se ofertan. Se eligen en el portal de Repuestos.",
+    example: { body_text: [["German", "7 pedidos", "URGENTE: 3 vencen hoy (Gol Trend óptica DD, Polo paragolpes trasero, Taos moldura)"]] },
+  }],
+};
 
 async function postJson(url: string, token: string, payload: unknown) {
   const res = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
