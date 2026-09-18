@@ -324,6 +324,11 @@ async function procesar(
   const candidatos: { tipo: string; r: Renglon; texto: string; tope?: string }[] = [];
   if (opts.tipos.includes(TIPO_FECHA)) {
     for (const r of aCobrar) {
+      // Si la plata YA entro, la fecha que quedo cargada es letra muerta: no hay
+      // nada que corregir y el aviso seria ruido. Mismo criterio que los otros
+      // tres controles. (PV 08138/1: una seña cobrada entera venia avisando
+      // 12 veces por estar fechada un sabado.)
+      if (estaCobrado(r.importe, r.saldo)) continue;
       const { noHabil, texto } = esNoHabil(r.vencimiento!, feriados);
       if (noHabil) candidatos.push({ tipo: TIPO_FECHA, r, texto });
     }
@@ -597,7 +602,9 @@ async function revisarAbiertas(
         nuevaFecha = r.vencimiento.slice(0, 10);
       }
     } else {
-      if (r.vencimiento && !esNoHabil(r.vencimiento, feriados).noHabil) {
+      // Cobrada = no hay nada que corregir, aunque la fecha siga siendo sabado.
+      if (estaCobrado(r.importe, r.saldo)) motivoCierre = "pago cobrado";
+      else if (r.vencimiento && !esNoHabil(r.vencimiento, feriados).noHabil) {
         motivoCierre = "fecha corregida";
         nuevaFecha = r.vencimiento.slice(0, 10);
       } else if (todos.some((x) => x.referencia === a.referencia && x.motivo === r.motivo && Math.abs(x.importe + r.importe) < 1 && x.importe < 0)) {
