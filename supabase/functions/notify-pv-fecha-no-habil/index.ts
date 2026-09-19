@@ -333,9 +333,15 @@ async function procesar(
       if (noHabil) candidatos.push({ tipo: TIPO_FECHA, r, texto });
     }
   }
+  // PVs cuyo auto ya se retiro: el reclamo de pago vencido deja de tener sentido
+  // (Fer, 19/09/2026: "cuando ya retiro el auto obviamente que no aparezca mas").
+  const retiradas = opts.tipos.includes(TIPO_VENCIDO)
+    ? await pvsRetiradas(env, aCobrar.filter((r) => !estaCobrado(r.importe, r.saldo)).map((r) => r.referencia))
+    : new Set<string>();
   if (opts.tipos.includes(TIPO_VENCIDO)) {
     for (const r of aCobrar) {
       if (estaCobrado(r.importe, r.saldo)) continue; // ya cobrado
+      if (retiradas.has(r.referencia)) continue; // el auto ya se entrego
       // Recien se reclama pasados GRACIA_HABILES dias habiles del vencimiento.
       if (sumarHabiles(r.vencimiento!.slice(0, 10), GRACIA_HABILES, feriados) > hoyAR) continue;
       candidatos.push({ tipo: TIPO_VENCIDO, r, texto: esNoHabil(r.vencimiento!, feriados).texto });
@@ -422,7 +428,13 @@ async function procesar(
     ...previas.filter((a) => a.estado === "abierta" && opts.tipos.includes(a.tipo)),
     ...(nuevas as unknown as Alerta[]).filter((a) => a.estado === "abierta"),
   ];
-  const { cerradas, refrescadas } = await revisarAbiertas(env, abiertas, renglones, pvs, feriados, hoyAR, opts.dry);
+  // Las alertas abiertas pueden ser de PVs que ya no estan en la ventana de
+  // lectura: se completa el set de retiradas con esas.
+  const faltanRetiro = abiertas
+    .filter((a) => a.tipo === TIPO_VENCIDO && !retiradas.has(a.referencia))
+    .map((a) => a.referencia);
+  for (const ref of await pvsRetiradas(env, faltanRetiro)) retiradas.add(ref);
+  const { cerradas, refrescadas } = await revisarAbiertas(env, abiertas, renglones, pvs, retiradas, feriados, hoyAR, opts.dry);
   const cerradasClaves = new Set(cerradas.map((c) => clave(c.detcashid, c.tipo)));
 
   // ── A quien le toca aviso ─────────────────────────────────────────────────
@@ -456,7 +468,11 @@ async function procesar(
 
   // ── Envio: 1 mensaje por PV y por tipo ────────────────────────────────────
   const grupos = new Map<string, Alerta[]>();
+  // Los vencidos no se reclaman los sabados (Fer, 19/09/2026). Los otros
+  // controles si salen: son correcciones de carga que el vendedor puede hacer.
+  const esSabado = diaSemana(hoyAR) === 6;
   for (const a of aAvisar) {
+    if (a.tipo === TIPO_VENCIDO && esSabado && !opts.forzar) continue;
     if (a.tipo !== TIPO_VENCIDO && !opts.forzar && (a.avisos ?? 0) === 0) {
       // Gracia corta: no avisar mientras el vendedor todavia esta cargando la PV.
       const r = renglones.find((x) => x.detcashid === Number(a.detcashid));
@@ -535,7 +551,7 @@ async function procesar(
 //      y una PV editada de 31,4 a 30,29 M). El objeto `a` se muta a proposito
 //      para que el mensaje de ESTA corrida ya salga con los numeros de hoy.
 async function revisarAbiertas(
-  env: Env, abiertas: Alerta[], renglones: Renglon[], pvs: Map<string, PV>,
+  env: Env, abiertas: Alerta[], renglones: Renglon[], pvs: Map<string, PV>, retiradas: Set<string>,
   feriados: Map<string, string>, hoyAR: string, dry: boolean,
 ) {
   // Devuelve la MISMA forma que el camino largo: con `return []` el destructuring
@@ -597,6 +613,7 @@ async function revisarAbiertas(
       }
     } else if (a.tipo === TIPO_VENCIDO) {
       if (estaCobrado(r.importe, r.saldo)) motivoCierre = "pago cobrado";
+      else if (retiradas.has(a.referencia)) motivoCierre = "unidad retirada";
       else if (r.vencimiento && sumarHabiles(r.vencimiento.slice(0, 10), GRACIA_HABILES, feriados) > hoyAR) {
         motivoCierre = "fecha reprogramada a futuro";
         nuevaFecha = r.vencimiento.slice(0, 10);
@@ -630,7 +647,7 @@ async function revisarAbiertas(
       await sb(env, `pv_fechas_alertas?detcashid=eq.${id}&tipo=eq.${a.tipo}`, {
         method: "PATCH",
         body: JSON.stringify({
-          estado: motivoCierre === "PV anulada" ? "anulada" : "corregida",
+          estado: motivoCierre === "PV anulada" ? "anulada" : motivoCierre === "unidad retirada" ? "retirada" : "corregida",
           corregido_at: new Date().toISOString(),
           vencimiento_corregido: nuevaFecha,
           saldo_pendiente: saldo,
@@ -931,6 +948,24 @@ async function preventasDe(env: Env, refs: string[], dias: number) {
       anulada: p.anulada === true,
       comentario: `${p.comentario ?? ""} ${p.comentarioaux ?? ""}`,
     });
+  }
+  return out;
+}
+
+// PVs cuyas unidades ya se entregaron TODAS (`entregada` + `fechasalida`, lo
+// mismo que usa notify-retiro-cliente; programar el turno NO es entregar).
+async function pvsRetiradas(env: Env, refs: string[]) {
+  const out = new Set<string>();
+  const unicas = [...new Set(refs.filter(Boolean))];
+  for (let i = 0; i < unicas.length; i += 80) {
+    const lote = unicas.slice(i, i + 80).map((r) => `"${r}"`).join(",");
+    const us = await ov(env, `unidades?preventa=in.(${encodeURIComponent(lote)})&select=preventa,entregada,fechasalida`);
+    const pendiente = new Set<string>();
+    for (const u of us) {
+      if (u.entregada === true && u.fechasalida) out.add(u.preventa);
+      else pendiente.add(u.preventa);
+    }
+    for (const p of pendiente) out.delete(p);
   }
   return out;
 }
