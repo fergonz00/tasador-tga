@@ -69,7 +69,18 @@ Deno.serve(async (req: Request) => {
   // El primer parámetro ({{1}}) es siempre el nombre de quien lo recibe.
   if (body?.aviso) {
     const a = body.aviso;
-    if (!EXTRA[a.template]) return json({ error: "template no permitido" }, 400);
+    // `template` puede ser una lista: se usa la primera APROBADA y UTILITY. Una
+    // plantilla MARKETING Meta la acepta y no la entrega: nunca se usa.
+    const candidatas: string[] = (Array.isArray(a.template) ? a.template : [a.template]).filter((t: string) => EXTRA[t]);
+    if (!candidatas.length) return json({ error: "template no permitido" }, 400);
+    const lr = await fetch(`${META_API_URL}/${WABA_ID}/message_templates?fields=name,status,category&limit=200`,
+      { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+    const estado = new Map(((await lr.json())?.data ?? []).map((t: any) => [t.name, t]));
+    const usable = candidatas.find((t) => { const x: any = estado.get(t); return x && x.status === "APPROVED" && x.category === "UTILITY"; });
+    if (!usable) {
+      return json({ ok: false, error: "ninguna plantilla aprobada como UTILITY", candidatas: candidatas.map((t) => [t, estado.get(t)]) }, 409);
+    }
+    a.template = usable;
     let dest: { nombre: string; telefono: string }[] = await sb(SUPABASE_URL, SERVICE_KEY,
       "fedpat_avisos_destinatarios?activo=eq.true&select=nombre,telefono");
     const para: string[] = Array.isArray(a.para) ? a.para.map((x: string) => x.toLowerCase()) : [];
@@ -221,6 +232,27 @@ const EXTRA: Record<string, unknown[]> = {
     text: "Hola {{1}}, la carga automática de ofertas de Federación Patronal de hoy no terminó bien: {{2}}. " +
       "Los pedidos que vencen hoy no se van a ofertar solos hasta que se resuelva; el detalle está en el registro de corridas.",
     example: { body_text: [["Fer", "a las 07:30 no corrió (la PC estaba apagada o ETKA no respondió)"]] },
+  }],
+  // Recordatorio de la bandeja: la primera redacción (fedpat_bandeja_pendiente) Meta la
+  // clasificó MARKETING -> se acepta y NO se entrega. Estas tres están escritas como
+  // control de registros propios + qué hacer; se usa la primera que quede UTILITY.
+  fedpat_bandeja_control_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, hay {{2}} de Federación Patronal que todavía no tienen la pieza elegida: {{3}}. " +
+      "Mientras no se elija, esa licitación no se oferta y se pierde al vencer. Elegí la pieza o marcá no ofertar en la bandeja del portal de Repuestos.",
+    example: { body_text: [["German", "7 pedidos", "3 vencen hoy (Gol Trend óptica DD, Polo paragolpes trasero, Taos moldura)"]] },
+  }],
+  fedpat_bandeja_control_2: [{
+    type: "BODY",
+    text: "Hola {{1}}, el control de licitaciones de Federación Patronal encontró {{2}} sin pieza asignada. {{3}}. " +
+      "Hay que asignar la pieza correcta o descartarlos en el portal de Repuestos antes del vencimiento.",
+    example: { body_text: [["German", "7 pedidos", "El más próximo vence el 21/09"]] },
+  }],
+  fedpat_bandeja_control_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, quedan {{2}} de Federación Patronal pendientes de definir la pieza en el portal de Repuestos. {{3}}. " +
+      "Revisalos y elegí la opción correcta para que se carguen.",
+    example: { body_text: [["German", "7 pedidos", "3 vencen hoy"]] },
   }],
   // a German (y quien corresponda), con pedidos sin elegir en la bandeja
   fedpat_bandeja_pendiente: [{
