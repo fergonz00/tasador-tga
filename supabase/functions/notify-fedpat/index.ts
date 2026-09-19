@@ -89,7 +89,8 @@ Deno.serve(async (req: Request) => {
       { headers: { Authorization: `Bearer ${WA_TOKEN}` } },
     );
     const j = await res.json();
-    return json((j?.data ?? []).filter((t: any) => [TEMPLATE_NAME, TEMPLATE_FALLBACK].includes(t.name)));
+    return json((j?.data ?? []).filter((t: any) => [TEMPLATE_NAME, TEMPLATE_FALLBACK, ...Object.keys(EXTRA)].includes(t.name))
+      .map((t: any) => ({ name: t.name, status: t.status, category: t.category })));
   }
 
   const dry = body?.dry === true;
