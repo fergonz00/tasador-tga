@@ -2,8 +2,9 @@
 // Avisa por WhatsApp cuando ganamos una licitación de repuestos de Federación
 // Patronal, para que alguien prepare la pieza y la entregue en el plazo prometido.
 //
-// Pedido de Fer (18-sep-2026): Fer, Catalina, Maxi López, Juan Carlos Caputo y
-// Germán Orozco. Los destinatarios salen de `fedpat_avisos_destinatarios` (se
+// Pedido de Fer (18-sep-2026): Fer, Catalina, Maxi López y el celular de
+// Repuestos (el de Germán Orozco). 21-sep: Juan Carlos Caputo NO recibe ninguna
+// notificación automática en su celular privado. Los destinatarios salen de `fedpat_avisos_destinatarios` (se
 // editan ahí, sin tocar código).
 //
 // La dispara repuestos-tga/scripts/sync_fedpat.py (GitHub Actions, cada hora):
