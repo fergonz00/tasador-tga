@@ -264,6 +264,14 @@ const EXTRA: Record<string, unknown[]> = {
     example: { body_text: [["Juan Carlos", "PARAGOLPES DELANTERO para VW GOL 1.6 5 P. TREND L/13",
       "Ofertamos $ 513.427,94 sin IVA (5U0-807-221-J GRU), con stock NUESTRO, entrega prometida 22/09/2026"]] },
   }],
+  // a Fer, lunes a viernes a las 17: qué se cargó en el día (Fer, 21-09-2026)
+  fedpat_resumen_diario: [{
+    type: "BODY",
+    text: "Hola {{1}}, registro de las ofertas cargadas hoy en Federación Patronal: {{2}}. {{3}}. " +
+      "El detalle de cada oferta está en el portal de Repuestos.",
+    example: { body_text: [["Fer", "48 ofertas por $ 16.925.182 sin IVA (11 con stock nuestro y 37 de VW; 6 elegidas por German)",
+      "Bandeja: 80 pedidos sin elegir, 12 vencen hoy. Ganadas: ninguna todavía"]] },
+  }],
   // a German (y quien corresponda), con pedidos sin elegir en la bandeja
   fedpat_bandeja_pendiente: [{
     type: "BODY",
