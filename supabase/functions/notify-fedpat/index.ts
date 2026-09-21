@@ -254,6 +254,16 @@ const EXTRA: Record<string, unknown[]> = {
       "Revisalos y elegí la opción correcta para que se carguen.",
     example: { body_text: [["German", "7 pedidos", "3 vencen hoy"]] },
   }],
+  // licitación ganada vista en el historial de ofertas ("Aprobada = Sí"; German,
+  // 21-09-2026: en licitación eso es que nos la adjudicaron). Suele llegar antes
+  // que la orden SELF, que después avisa aparte con su número de orden.
+  fedpat_cotizacion_aprobada: [{
+    type: "BODY",
+    text: "Hola {{1}}, Federación Patronal aprobó una cotización que cargamos en una licitación: {{2}}. {{3}}. " +
+      "Hay que preparar la pieza para entregarla en el plazo prometido; el detalle está en el portal de Repuestos.",
+    example: { body_text: [["Juan Carlos", "PARAGOLPES DELANTERO para VW GOL 1.6 5 P. TREND L/13",
+      "Ofertamos $ 513.427,94 sin IVA (5U0-807-221-J GRU), con stock NUESTRO, entrega prometida 22/09/2026"]] },
+  }],
   // a German (y quien corresponda), con pedidos sin elegir en la bandeja
   fedpat_bandeja_pendiente: [{
     type: "BODY",
