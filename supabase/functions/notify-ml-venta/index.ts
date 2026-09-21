@@ -35,12 +35,22 @@
 //
 // La columna `desde` de los destinatarios deja a alguien en pausa hasta una
 // fecha (Catalina, de vacaciones hasta el 28-sep-2026).
+//
+// Preguntas sin responder (Fer, 21-sep-2026: "cuando pasen 2 hs y no respondio
+// le avise x whatsapp y luego a las 6 hs y luego cada 6hs hasta q responda.
+// siempre en dias y horarios habiles"): con `tipo: "pregunta_recordatorio"`
+// avisa a rubro `pregunta_recordatorio` (Nadia) y, con `escalar: true` (desde
+// las 6 hs), también a `pregunta_escalada` (Fer). Template
+// `ml_pregunta_sin_responder` ({{1}} nombre, {{2}} aviso, {{3}} hace cuánto,
+// {{4}} la pregunta). El cálculo de horas hábiles vive en el portal
+// (src/lib/mlPreguntas.ts); acá `horas` llega ya armado ("2 horas hábiles").
 
 const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
 const TEMPLATE_NAME = "ml_venta_nueva";
 const TEMPLATE_PREGUNTA = "ml_pregunta_nueva";
 const TEMPLATE_SALDO = "mp_saldo_para_transferir";
+const TEMPLATE_RECORDATORIO = "ml_pregunta_sin_responder";
 const TEMPLATE_FALLBACK = "precios_actualizados";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 
@@ -73,9 +83,12 @@ Deno.serve(async (req: Request) => {
 
   const esPregunta = body?.tipo === "pregunta";
   const esSaldo = body?.tipo === "saldo_mp";
-  const template = esSaldo ? TEMPLATE_SALDO : esPregunta ? TEMPLATE_PREGUNTA : TEMPLATE_NAME;
+  const esRecordatorio = body?.tipo === "pregunta_recordatorio";
+  const template = esRecordatorio ? TEMPLATE_RECORDATORIO : esSaldo ? TEMPLATE_SALDO
+    : esPregunta ? TEMPLATE_PREGUNTA : TEMPLATE_NAME;
   if (body?.crear_template === true) {
-    const components = esSaldo ? TEMPLATE_SALDO_COMPONENTS : esPregunta ? TEMPLATE_PREGUNTA_COMPONENTS : TEMPLATE_COMPONENTS;
+    const components = esRecordatorio ? TEMPLATE_RECORDATORIO_COMPONENTS : esSaldo ? TEMPLATE_SALDO_COMPONENTS
+      : esPregunta ? TEMPLATE_PREGUNTA_COMPONENTS : TEMPLATE_COMPONENTS;
     return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN,
       { name: template, language: META_LANGUAGE, category: "UTILITY", components }));
   }
@@ -90,7 +103,12 @@ Deno.serve(async (req: Request) => {
   const producto = limpiar(body?.producto);
   const detalle = limpiar(body?.detalle);
   if (!producto || !detalle) return json({ error: "faltan producto y detalle" }, 400);
-  const rubro = esSaldo ? "saldo_mp" : esPregunta ? "pregunta" : ["repuesto", "accesorio"].includes(body?.rubro) ? body.rubro : null;
+  const horas = limpiar(body?.horas);
+  if (esRecordatorio && !horas) return json({ error: "falta horas" }, 400);
+  const rubro = esRecordatorio
+    ? (body?.escalar === true ? "pregunta_recordatorio,pregunta_escalada" : "pregunta_recordatorio")
+    : esSaldo ? "saldo_mp" : esPregunta ? "pregunta"
+    : ["repuesto", "accesorio"].includes(body?.rubro) ? body.rubro : null;
 
   // Prueba: manda solo a un teléfono.
   const solo = String(body?.solo || "").replace(/\D/g, "");
@@ -101,7 +119,7 @@ Deno.serve(async (req: Request) => {
     // Venta sin rubro: a los dos grupos de ventas (no a los de preguntas).
     // `desde`: en pausa hasta esa fecha (hoy en hora argentina).
     const hoy = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
-    const filtro = (rubro ? `&rubro=eq.${rubro}` : "&rubro=in.(repuesto,accesorio)") +
+    const filtro = (rubro ? `&rubro=in.(${rubro})` : "&rubro=in.(repuesto,accesorio)") +
       `&or=(desde.is.null,desde.lte.${hoy})`;
     try {
       destinatarios = await sb(
@@ -121,7 +139,9 @@ Deno.serve(async (req: Request) => {
     if (!tel || vistos.has(tel)) continue; // Fer y Catalina están en los dos grupos
     vistos.add(tel);
     const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
-    const r = esSaldo
+    const r = esRecordatorio
+      ? await enviarRecordatorio(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, horas, detalle)
+      : esSaldo
       ? await enviarSaldo(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
       : esPregunta
       ? await enviarPregunta(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
@@ -155,6 +175,21 @@ async function enviarPregunta(
   const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
   if (!noExiste) return { ...propio, template: TEMPLATE_PREGUNTA };
   const texto = recortar(`❓ PREGUNTA EN MERCADO LIBRE sobre ${aviso}: "${pregunta}" — entrá a Mercado Libre, Preguntas, y respondela.`, 900);
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
+  return { ...fb, template: TEMPLATE_FALLBACK };
+}
+
+// producto = el aviso (titulo · MLA), horas = "2 horas hábiles", detalle = la pregunta.
+async function enviarRecordatorio(
+  phoneId: string, token: string, tel: string, nombre: string, aviso: string, horas: string, pregunta: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_RECORDATORIO,
+    [nombre, recortar(aviso, 200), horas, recortar(pregunta, 600)]);
+  if (propio.ok) return { ...propio, template: TEMPLATE_RECORDATORIO };
+  const code = propio.error?.code;
+  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+  if (!noExiste) return { ...propio, template: TEMPLATE_RECORDATORIO };
+  const texto = recortar(`⏰ PREGUNTA SIN RESPONDER EN MERCADO LIBRE hace ${horas}, sobre ${aviso}: "${pregunta}" — entrá a Mercado Libre, Preguntas, y respondela.`, 900);
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
   return { ...fb, template: TEMPLATE_FALLBACK };
 }
@@ -224,6 +259,23 @@ const TEMPLATE_PREGUNTA_COMPONENTS = [
       body_text: [[
         "Nadia",
         "Filtro De Aceite Original Vw 04E115561T · MLA3968577738",
+        "Hola, le sirve a un Polo 2019 1.6 MSI?",
+      ]],
+    },
+  },
+];
+
+// {{1}} primer nombre · {{2}} el aviso · {{3}} hace cuánto · {{4}} la pregunta.
+const TEMPLATE_RECORDATORIO_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! La pregunta de Mercado Libre sobre {{2}} sigue sin responder hace {{3}}.\n\nPregunta: {{4}}\n\nEntra a la cuenta de Mercado Libre, en Preguntas, y respondela. El control se repite cada 6 horas habiles hasta que tenga respuesta.",
+    example: {
+      body_text: [[
+        "Nadia",
+        "Filtro De Aceite Original Vw 04E115561T · MLA3968577738",
+        "2 horas habiles",
         "Hola, le sirve a un Polo 2019 1.6 MSI?",
       ]],
     },
