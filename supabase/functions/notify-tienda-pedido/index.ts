@@ -20,7 +20,9 @@
 
 const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
-const TEMPLATE_NAME = "tienda_pedido_nuevo";
+// "tienda_pedido_nuevo" quedo aprobada con el texto de la de ML (se clono mal) y como MARKETING,
+// que Meta no siempre entrega: se reemplaza por esta, UTILITY y con el texto de la tienda (21-09-2026).
+const TEMPLATE_NAME = "tienda_pedido_web";
 const TEMPLATE_FALLBACK = "precios_actualizados";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 
@@ -169,7 +171,7 @@ async function enviar(
   if (!noExiste) return { ...propio, template: TEMPLATE_NAME };
 
   const texto = recortar(
-    `🛒 Mercado Libre: corregi los precios, pero quedaron ${cantidad} cosas para revisar — ${detalle} — detalle en precios.titogonzalez.online/ml-tienda`,
+    `🛒 PEDIDO DE LA TIENDA DE REPUESTOS: ${cantidad} — ${detalle} — ya está en el CRM, área Repuestos.`,
     900,
   );
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
@@ -215,7 +217,7 @@ const TEMPLATE_COMPONENTS = [
   {
     type: "BODY",
     text:
-      "Hola {{1}}! Revise los precios de Mercado Libre y corregi lo que hacia falta, pero quedaron {{2}} cosas que necesitan que alguien las mire.\n\n{{3}}\n\nEl detalle completo esta en precios.titogonzalez.online/ml-tienda",
+      "Hola {{1}}! Entró un pedido en la tienda de repuestos (tienda.baratito.com.ar): {{2}}.\n\n{{3}}\n\nYa está cargado en el CRM, área Repuestos. Contactá al cliente y registrá ahí cómo se cerró.",
     example: {
       body_text: [[
         "German",
