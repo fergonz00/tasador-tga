@@ -26,11 +26,21 @@
 // responda"): con `tipo: "pregunta"` avisa a los destinatarios de rubro
 // `pregunta` con el template `ml_pregunta_nueva` ({{1}} nombre, {{2}} aviso,
 // {{3}} la pregunta), y el mismo fallback.
+//
+// Saldo de Mercado Pago (Fer, 21-sep-2026: "cuando la cuenta tenga mas de
+// 100.000 pesos para que nos acordemos de transferir la plata de mercadopago
+// al santander"): con `tipo: "saldo_mp"` avisa a los de rubro `saldo_mp` con el
+// template `mp_saldo_para_transferir` ({{1}} nombre, {{2}} saldo, {{3}} tope).
+// Lo dispara el cron diario del portal (/api/cron/mp-saldo).
+//
+// La columna `desde` de los destinatarios deja a alguien en pausa hasta una
+// fecha (Catalina, de vacaciones hasta el 28-sep-2026).
 
 const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
 const TEMPLATE_NAME = "ml_venta_nueva";
 const TEMPLATE_PREGUNTA = "ml_pregunta_nueva";
+const TEMPLATE_SALDO = "mp_saldo_para_transferir";
 const TEMPLATE_FALLBACK = "precios_actualizados";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 
@@ -62,14 +72,16 @@ Deno.serve(async (req: Request) => {
   try { body = await req.json(); } catch { /* body opcional */ }
 
   const esPregunta = body?.tipo === "pregunta";
+  const esSaldo = body?.tipo === "saldo_mp";
+  const template = esSaldo ? TEMPLATE_SALDO : esPregunta ? TEMPLATE_PREGUNTA : TEMPLATE_NAME;
   if (body?.crear_template === true) {
-    return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN, esPregunta
-      ? { name: TEMPLATE_PREGUNTA, language: META_LANGUAGE, category: "UTILITY", components: TEMPLATE_PREGUNTA_COMPONENTS }
-      : { name: TEMPLATE_NAME, language: META_LANGUAGE, category: "UTILITY", components: TEMPLATE_COMPONENTS }));
+    const components = esSaldo ? TEMPLATE_SALDO_COMPONENTS : esPregunta ? TEMPLATE_PREGUNTA_COMPONENTS : TEMPLATE_COMPONENTS;
+    return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN,
+      { name: template, language: META_LANGUAGE, category: "UTILITY", components }));
   }
   if (body?.listar === true) {
     const res = await fetch(
-      `${META_API_URL}/${WABA_ID}/message_templates?fields=name,status,category&name=${esPregunta ? TEMPLATE_PREGUNTA : TEMPLATE_NAME}`,
+      `${META_API_URL}/${WABA_ID}/message_templates?fields=name,status,category&name=${template}`,
       { headers: { Authorization: `Bearer ${WA_TOKEN}` } },
     );
     return json(await res.json());
@@ -78,7 +90,7 @@ Deno.serve(async (req: Request) => {
   const producto = limpiar(body?.producto);
   const detalle = limpiar(body?.detalle);
   if (!producto || !detalle) return json({ error: "faltan producto y detalle" }, 400);
-  const rubro = esPregunta ? "pregunta" : ["repuesto", "accesorio"].includes(body?.rubro) ? body.rubro : null;
+  const rubro = esSaldo ? "saldo_mp" : esPregunta ? "pregunta" : ["repuesto", "accesorio"].includes(body?.rubro) ? body.rubro : null;
 
   // Prueba: manda solo a un teléfono.
   const solo = String(body?.solo || "").replace(/\D/g, "");
@@ -87,7 +99,10 @@ Deno.serve(async (req: Request) => {
     destinatarios = [{ nombre: "equipo", telefono: solo }];
   } else {
     // Venta sin rubro: a los dos grupos de ventas (no a los de preguntas).
-    const filtro = rubro ? `&rubro=eq.${rubro}` : "&rubro=in.(repuesto,accesorio)";
+    // `desde`: en pausa hasta esa fecha (hoy en hora argentina).
+    const hoy = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+    const filtro = (rubro ? `&rubro=eq.${rubro}` : "&rubro=in.(repuesto,accesorio)") +
+      `&or=(desde.is.null,desde.lte.${hoy})`;
     try {
       destinatarios = await sb(
         SUPABASE_URL, SERVICE_KEY,
@@ -106,7 +121,9 @@ Deno.serve(async (req: Request) => {
     if (!tel || vistos.has(tel)) continue; // Fer y Catalina están en los dos grupos
     vistos.add(tel);
     const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
-    const r = esPregunta
+    const r = esSaldo
+      ? await enviarSaldo(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
+      : esPregunta
       ? await enviarPregunta(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
       : await enviar(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle);
     if (r.ok) enviados.push({ destinatario: d.nombre, template: r.template, meta_id: r.meta_id });
@@ -138,6 +155,20 @@ async function enviarPregunta(
   const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
   if (!noExiste) return { ...propio, template: TEMPLATE_PREGUNTA };
   const texto = recortar(`❓ PREGUNTA EN MERCADO LIBRE sobre ${aviso}: "${pregunta}" — entrá a Mercado Libre, Preguntas, y respondela.`, 900);
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
+  return { ...fb, template: TEMPLATE_FALLBACK };
+}
+
+// producto = el saldo ($ formateado), detalle = el tope.
+async function enviarSaldo(
+  phoneId: string, token: string, tel: string, nombre: string, saldo: string, tope: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_SALDO, [nombre, saldo, tope]);
+  if (propio.ok) return { ...propio, template: TEMPLATE_SALDO };
+  const code = propio.error?.code;
+  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+  if (!noExiste) return { ...propio, template: TEMPLATE_SALDO };
+  const texto = `💰 SALDO EN MERCADO PAGO: hay ${saldo} disponibles (tope ${tope}) — hay que transferirlos al Santander.`;
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
   return { ...fb, template: TEMPLATE_FALLBACK };
 }
@@ -196,6 +227,16 @@ const TEMPLATE_PREGUNTA_COMPONENTS = [
         "Hola, le sirve a un Polo 2019 1.6 MSI?",
       ]],
     },
+  },
+];
+
+// {{1}} primer nombre · {{2}} saldo disponible · {{3}} tope.
+const TEMPLATE_SALDO_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! La cuenta de Mercado Pago de la empresa tiene {{2}} de saldo disponible, por encima del tope de {{3}}.\n\nHay que transferirlo a la cuenta del Santander desde Mercado Pago, en Transferir. El control se repite una vez por dia mientras el saldo siga arriba del tope.",
+    example: { body_text: [["Fer", "$15.444.606", "$100.000"]] },
   },
 ];
 
