@@ -273,6 +273,28 @@ const EXTRA: Record<string, unknown[]> = {
     example: { body_text: [["Fer", "48 ofertas por $ 16.925.182 sin IVA (11 con stock nuestro y 37 de VW; 6 elegidas por German)",
       "Bandeja: 80 pedidos sin elegir, 12 vencen hoy. Ganadas: ninguna todavía"]] },
   }],
+  // fedpat_resumen_diario quedó MARKETING (21-09): no se entrega. Estas tres, como
+  // control de registros propios; se usa la primera que quede UTILITY.
+  fedpat_resumen_control_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, control de cierre del día de las licitaciones de Federación Patronal: {{2}}. {{3}}. " +
+      "Si algún dato no coincide, revisalo en el portal de Repuestos.",
+    example: { body_text: [["Fer", "48 ofertas por $ 16.925.182 sin IVA (11 con stock nuestro y 37 de VW; 6 elegidas por German)",
+      "Bandeja: 80 pedidos sin elegir, 12 vencen hoy. Ganadas: ninguna todavía"]] },
+  }],
+  fedpat_resumen_control_2: [{
+    type: "BODY",
+    text: "Hola {{1}}, estado de las ofertas cargadas hoy con nuestro usuario de proveedor de Federación Patronal: {{2}}. {{3}}. " +
+      "El detalle de cada una está en el portal de Repuestos.",
+    example: { body_text: [["Fer", "48 ofertas por $ 16.925.182 sin IVA (11 con stock nuestro y 37 de VW)",
+      "Bandeja: 80 pedidos sin elegir. Ganadas: ninguna todavía"]] },
+  }],
+  fedpat_resumen_control_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, quedaron registradas hoy estas operaciones en el portal de proveedores de Federación Patronal: {{2}}. {{3}}. " +
+      "Verificalas en el portal de Repuestos.",
+    example: { body_text: [["Fer", "48 ofertas por $ 16.925.182 sin IVA", "Bandeja: 80 pedidos sin elegir"]] },
+  }],
   // a German (y quien corresponda), con pedidos sin elegir en la bandeja
   fedpat_bandeja_pendiente: [{
     type: "BODY",
