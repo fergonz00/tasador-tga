@@ -4156,6 +4156,19 @@ function renderAnalisisIAAdmin(t) {
   const estado = t.analisis_ia_estado;
   const tasId = t.id;
 
+  // El análisis lo dispara el navegador del vendedor al enviar; si cerró la app o se
+  // cortó la conexión, queda 'pendiente' para siempre. Pasados 3 min ofrecemos relanzarlo.
+  const trabado = estado === 'pendiente' && (Date.now() - new Date(t.created_at).getTime()) > 3 * 60 * 1000;
+  if (trabado) {
+    return `
+      <div style="margin-top:16px; padding:16px; background:#F3F4F6; border-radius:8px; text-align:center; color:var(--vw-grey-4); font-size:13px">
+        <div style="font-weight:600; margin-bottom:4px">ANÁLISIS IA</div>
+        <div style="margin-bottom:10px">El análisis quedó trabado (el vendedor cerró la app antes de que termine).</div>
+        <button onclick="event.stopPropagation(); reanalizarFotos('${tasId}')" style="padding:8px 14px; background:var(--vw-blue); color:white; border-radius:6px; font-weight:600; font-size:13px">Analizar ahora</button>
+      </div>
+    `;
+  }
+
   if (estado === 'pendiente') {
     return `
       <div style="margin-top:16px; padding:16px; background:#F3F4F6; border-radius:8px; text-align:center; color:var(--vw-grey-4); font-size:13px">
