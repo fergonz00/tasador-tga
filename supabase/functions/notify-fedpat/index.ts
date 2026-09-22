@@ -82,10 +82,14 @@ Deno.serve(async (req: Request) => {
       return json({ ok: false, error: "ninguna plantilla aprobada como UTILITY", candidatas: candidatas.map((t) => [t, estado.get(t)]) }, 409);
     }
     a.template = usable;
+    // `lista`: de qué tabla salen los destinatarios. "compras" = control semanal de
+    // compras de repuestos (repuestos-tga/scripts/sync_compras.py).
+    const tabla = a.lista === "compras" ? "compras_avisos_destinatarios" : "fedpat_avisos_destinatarios";
     let dest: { nombre: string; telefono: string }[] = await sb(SUPABASE_URL, SERVICE_KEY,
-      "fedpat_avisos_destinatarios?activo=eq.true&select=nombre,telefono");
+      `${tabla}?activo=eq.true&select=nombre,telefono`);
+    // `para` compara contra la PRIMERA palabra del nombre ("Fer" no es "Fernando")
     const para: string[] = Array.isArray(a.para) ? a.para.map((x: string) => x.toLowerCase()) : [];
-    if (para.length) dest = dest.filter((d) => para.some((p) => d.nombre.toLowerCase().startsWith(p)));
+    if (para.length) dest = dest.filter((d) => para.includes(d.nombre.toLowerCase().split(/\s+/)[0]));
     if (body?.solo) dest = [{ nombre: "equipo", telefono: String(body.solo).replace(/\D/g, "") }];
     const out: any[] = [];
     for (const d of dest) {
@@ -294,6 +298,28 @@ const EXTRA: Record<string, unknown[]> = {
     text: "Hola {{1}}, quedaron registradas hoy estas operaciones en el portal de proveedores de Federación Patronal: {{2}}. {{3}}. " +
       "Verificalas en el portal de Repuestos.",
     example: { body_text: [["Fer", "48 ofertas por $ 16.925.182 sin IVA", "Bandeja: 80 pedidos sin elegir"]] },
+  }],
+  // Control semanal de compras de repuestos (lunes, semana anterior). Tres
+  // redacciones como control de registros propios; se usa la primera UTILITY.
+  compras_control_semanal_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, control semanal de las compras de repuestos y accesorios registradas en Oversoft, {{2}}. {{3}}. " +
+      "Los motivos se cargan y se revisan en la solapa Compras del portal de Repuestos.",
+    example: { body_text: [["Fer", "semana del 14/09 al 20/09: 47 renglones por $ 39.400.000 sin IVA; 28 justificados, 2 esperando uso y 17 a explicar ($ 13.300.000)",
+      "Sin respuesta de Maxi: 17 por $ 13.300.000. Respuestas que no cierran con los datos: 0; marcadas como que no convencen: 0"]] },
+  }],
+  compras_control_semanal_2: [{
+    type: "BODY",
+    text: "Hola {{1}}, este es el registro de compras de repuestos de la {{2}}. {{3}}. " +
+      "El detalle de cada compra está en la solapa Compras del portal de Repuestos.",
+    example: { body_text: [["Fer", "semana del 14/09 al 20/09: 47 renglones por $ 39.400.000 sin IVA; 17 a explicar",
+      "Sin respuesta: 17 por $ 13.300.000"]] },
+  }],
+  compras_control_semanal_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, quedó cerrado el control de compras de repuestos de la {{2}}. {{3}}. " +
+      "Verificalo en la solapa Compras del portal de Repuestos.",
+    example: { body_text: [["Fer", "semana del 14/09 al 20/09: 47 renglones por $ 39.400.000 sin IVA", "Sin respuesta: 17"]] },
   }],
   // a German (y quien corresponda), con pedidos sin elegir en la bandeja
   fedpat_bandeja_pendiente: [{
