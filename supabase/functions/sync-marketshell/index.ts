@@ -13,12 +13,18 @@
 // devuelven 403 de Cloudflare, pero TAMBIEN desde la red de la oficina — es
 // por ruta, no por IP. `/items/...` y `/flows/trigger/...` pasan de todos lados.
 //
-// ⭐ EL ORDEN IMPORTA — primero `modo=aplicar`, despues `modo=chequeo`:
-// el catalogo sale de la PLANILLA (Hoja 1, que escribe `aplicarFeed`), no del
-// portal de precios. Si la planilla esta vieja, este sync publica precios
-// viejos y reporta "0 a corregir": se ve sano estando ciego. Por eso refresca
-// la planilla el mismo antes de leerla, en vez de confiar en el trigger horario
-// de Apps Script, que se salteaba entre 3 y 7 horas por dia.
+// ⭐ 22/09/2026 — EL CATALOGO SALE DEL API DE PRECIOS, NO DE LA PLANILLA.
+// Hasta ese dia venia del Apps Script (`modo=chequeo`, que lee la planilla),
+// refrescada antes con `modo=aplicar`. Todo Shell dependia asi del web app de
+// Google, que cada tanto devuelve su pagina de error HTML durante HORAS (el
+// 22/09 de 00:12 a 09:12 AR): el guardia hacia bien en no publicar, pero Shell
+// quedaba congelado por un problema ajeno. La planilla ya no publica nada
+// (Shell se escribe por Directus desde el 08/09), asi que salio del camino:
+// se lee directo `precios.titogonzalez.online/api/public/ofertas`, la misma
+// fuente de la que la planilla copiaba. El refresco de la planilla quedo AL
+// FINAL, como cortesia para Simpli: si Google falla se anota y no cambia nada.
+// Matcheo con el mismo `_norm` del Apps Script. Verificado el 22/09: 38/38
+// versiones de Simpli matchean y 0 diferencias contra lo publicado.
 //
 // Lo que NO hace, a proposito: colgar de su publicacion un modelo que Shell no
 // muestra (el `--publicar` del script). Sumar un auto al feed de un tercero es
@@ -28,7 +34,7 @@
 // Gate: header `x-stock-secret`.
 
 const TOLERANCIA = 100; // la plataforma redondea el importe a ~7 digitos
-const MAX_HORAS_CATALOGO = 2; // mas viejo que esto y no se publica nada
+const API_PRECIOS = "https://precios.titogonzalez.online/api/public/ofertas";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -38,14 +44,16 @@ const GATE = Deno.env.get("STOCK_NOTIF_SECRET");
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
-// Mismo criterio que el feed: sin acentos, sin "VW "/"Nuevo ", sin dobles
-// espacios, minuscula.
+// El `_norm` del Apps Script del feed: sin acentos, sin "VW "/"Nuevo ", solo
+// letras y numeros. Asi "VW Nuevo Polo ..." (portal de precios) y "Polo ..."
+// (version de Simpli) dan la misma clave.
 function norm(s: unknown): string {
   return String(s ?? "")
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/^\s*(vw|volkswagen)\s+/i, "")
-    .replace(/\bnuevo[as]?\s+/gi, "")
-    .replace(/\s+/g, " ").trim().toLowerCase();
+    .toLowerCase()
+    .replace(/^\s*(vw|volkswagen)\s+/, "")
+    .replace(/\bnuevo[as]?\s+/g, "")
+    .replace(/[^a-z0-9]+/g, "");
 }
 
 const plata = (n: number) => "$" + Math.round(n).toLocaleString("es-AR");
@@ -62,7 +70,7 @@ async function feed(url: string, token: string, modo: string, intentos = 3) {
     try {
       const r = await fetch(
         url + "?token=" + encodeURIComponent(token) + "&modo=" + modo,
-        { headers: { "User-Agent": UA } },
+        { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(25000) },
       );
       const txt = await r.text();
       if (!r.ok) {
@@ -78,6 +86,41 @@ async function feed(url: string, token: string, modo: string, intentos = 3) {
     if (i < intentos) await new Promise((r) => setTimeout(r, 2000 * i));
   }
   throw new Error("feed modo=" + modo + " fallo " + intentos + " veces - " + ultimo);
+}
+
+type Item = { modelo: string; precio: number | null; stock: number };
+
+// Catalogo {modelo, precio, stock} directo del portal de precios. Precio =
+// `oferta_fyf` (el contado de baratito, lo mismo que copiaba la planilla);
+// stock = `stock` (OJO: `stock_disponible` es booleano). Se reintenta: un hipo
+// suelto de Vercel no tiene que costar una hora de publicacion.
+async function catalogo(intentos = 3): Promise<Item[]> {
+  let ultimo = "";
+  for (let i = 1; i <= intentos; i++) {
+    try {
+      const r = await fetch(API_PRECIOS, {
+        headers: { "User-Agent": UA, Accept: "application/json" },
+        signal: AbortSignal.timeout(20000),
+      });
+      const txt = await r.text();
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = JSON.parse(txt);
+      if (!j.ok) throw new Error("el portal dijo: " + (j.error ?? "?"));
+      const ms = (j.modelos ?? []) as Array<Record<string, unknown>>;
+      if (!ms.length) throw new Error("el portal devolvio 0 modelos");
+      return ms.map((m) => {
+        const p = Math.round(Number(m.oferta_fyf) || 0);
+        const st = Number(m.stock) || 0;
+        // Precio 0/vacio NO se publica (saldria como precio 0): queda null y se
+        // deja el que haya. El stock va siempre.
+        return { modelo: String(m.modelo), precio: p > 0 ? p : null, stock: st > 0 ? st : 0 };
+      });
+    } catch (e) {
+      ultimo = String(e).slice(0, 150);
+    }
+    if (i < intentos) await new Promise((r) => setTimeout(r, 3000 * i));
+  }
+  throw new Error("API de precios fallo " + intentos + " veces - " + ultimo);
 }
 
 class Simpli {
@@ -174,45 +217,10 @@ Deno.serve(async (req) => {
   const out: Record<string, unknown> = { dry, origen: "edge" };
 
   try {
-    // 1) Refrescar la planilla NOSOTROS. Es el paso que reemplaza al trigger
-    //    horario de Apps Script, que se salteaba horas todos los dias. Si
-    //    fallara, el chequeo de abajo lo caza por `horas_sin_correr`.
-    //    `feed()` ya reintenta solo. Si aun asi falla no se corta aca: el
-    //    guardia de abajo decide con `horas_sin_correr`, que es lo que de
-    //    verdad dice si el catalogo sirve para publicar.
-    try {
-      await feed(MS_URL, MS_TOKEN, "aplicar");
-      out.planilla_refrescada = true;
-    } catch (e) {
-      out.planilla_refrescada = false;
-      out.error_aplicar = String(e).slice(0, 300);
-    }
-
-    // 2) Catalogo ya conciliado contra el portal de precios (no se duplica el
-    //    matcheo aca: lo hace el Apps Script).
-    const chk = JSON.parse(await feed(MS_URL, MS_TOKEN, "chequeo"));
-    const cat = (chk.catalogo ?? []) as Array<Record<string, number | string>>;
+    // 1) Catalogo del portal de precios. Si no se puede leer, tira y no se
+    //    publica nada: Shell se queda con lo ultimo, que estaba bien.
+    const cat = await catalogo();
     out.catalogo = cat.length;
-    out.horas_sin_correr = chk.horas_sin_correr;
-    out.desfasadas = chk.desfasadas;
-
-    // 3) Guardia: antes que publicar precios viejos, no publicar nada.
-    let abortado: string | null = null;
-    if (!cat.length) {
-      abortado = "el feed no devolvio catalogo";
-    } else if ((chk.horas_sin_correr ?? 0) >= MAX_HORAS_CATALOGO) {
-      abortado = "la planilla no se actualiza hace " + chk.horas_sin_correr +
-        " h: no publico para no pisar Shell con precios viejos";
-    } else if ((chk.desfasadas ?? 0) > 0) {
-      abortado = chk.desfasadas +
-        " modelo(s) de la planilla no coinciden con el portal de precios";
-    }
-    if (abortado) {
-      out.ok = false;
-      out.abortado = abortado;
-      await registrar({ ok: false, abortado, a_corregir: 0, aplicados: 0, detalle: out });
-      return Response.json(out, { status: 200 });
-    }
 
     const porNombre = new Map(cat.map((c) => [norm(c.modelo), c]));
 
@@ -249,8 +257,8 @@ Deno.serve(async (req) => {
 
       const campos: Record<string, unknown> = {};
       const det: string[] = [];
-      const precio = c.precio as number | null;
-      const stock = c.stock as number | null;
+      const precio = c.precio;
+      const stock = c.stock;
       if (precio != null && Math.abs(((v.amount as number) ?? 0) - precio) > TOLERANCIA) {
         campos.amount = Math.round(precio);
         det.push("precio " + plata((v.amount as number) ?? 0) + " -> " + plata(campos.amount as number));
@@ -295,6 +303,19 @@ Deno.serve(async (req) => {
     out.cargados_sin_publicar = sinPublicar;
     out.errores = errores;
     out.ok = errores.length === 0;
+
+    // 2) Recien ahora, y sin que cuente para el resultado: refrescar la planilla
+    //    de Simpli. Ya no publica nada, pero es lo que ellos miran. Si el web
+    //    app de Google esta caido se anota y listo.
+    if (!dry) {
+      try {
+        await feed(MS_URL, MS_TOKEN, "aplicar", 2);
+        out.planilla_refrescada = true;
+      } catch (e) {
+        out.planilla_refrescada = false;
+        out.error_planilla = String(e).slice(0, 300);
+      }
+    }
 
     await registrar({
       ok: out.ok,

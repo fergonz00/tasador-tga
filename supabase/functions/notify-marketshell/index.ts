@@ -5,9 +5,10 @@
 // dia si hay algo que no esta ok".
 //
 // Que mira — DOS COSAS, desde el 01/09/2026:
-//   1. La planilla de Grupo Simpli ("Copia de Shell2"), via el Apps Script del
-//      feed en `?modo=chequeo` (marketshell-feed/live/Chequeo.js). Eso detecta
-//      lo que rompe la importacion (precio vacio, #ERROR!, feed frenado).
+//   1. Que el sync (`sync-marketshell`) este publicando: ultima corrida OK en
+//      `marketshell_sync` hace menos de MAX_HORAS_SYNC. Hasta el 22/09/2026 aca
+//      se miraba la planilla via Apps Script; se saco porque la planilla ya no
+//      publica nada y el web app de Google se cae a ratos (ver estadoSync).
 //   2. ⭐ LO QUE SHELL REALMENTE PUBLICA. `marketshell.shell.com.ar` es una app
 //      SvelteKit que trae los autos ya renderizados en el HTML (el array `cars`
 //      con `name` / `unified_amount` / `stock`). Se compara auto por auto contra
@@ -106,8 +107,6 @@ Deno.serve(async (req: Request) => {
   const WA_PHONE_ID = Deno.env.get("WA_TASADOR_PHONE_ID");
   const WA_TOKEN = Deno.env.get("WA_TASADOR_TOKEN");
   const STOCK_SECRET = Deno.env.get("STOCK_NOTIF_SECRET");
-  const MS_URL = Deno.env.get("MARKETSHELL_URL");
-  const MS_TOKEN = Deno.env.get("MARKETSHELL_TOKEN");
   const PORTAL_URL = Deno.env.get("MARKETSHELL_PORTAL_URL") ??
     "https://marketshell.shell.com.ar/autos?seller=tito%20gonzalez";
 
@@ -136,8 +135,6 @@ Deno.serve(async (req: Request) => {
   if (body?.crear_template === true) return json(await crearTemplate(WA_TOKEN));
   if (body?.borrar_template === true) return json(await borrarTemplate(WA_TOKEN));
 
-  if (!MS_URL || !MS_TOKEN) return json({ error: "MARKETSHELL_URL / MARKETSHELL_TOKEN missing" }, 500);
-
   const url = new URL(req.url);
   const dry = body?.dry === true || url.searchParams.get("dry") === "1";
   const forzar = body?.forzar === true;
@@ -150,23 +147,20 @@ Deno.serve(async (req: Request) => {
 
   const hoy = fechaAR();
 
-  // --- 1) correr el chequeo -------------------------------------------------
+  // --- 1) ¿Shell se esta actualizando? --------------------------------------
+  // ⭐ 22/09/2026: ya NO se le pregunta al Apps Script por la planilla. La
+  // planilla no publica nada desde el 08/09 (Shell se escribe por Directus con
+  // `sync-marketshell`), y el web app de Google se cae a ratos durante horas:
+  // el 22/09 eso disparo "el feed no se actualiza hace 6 h" sin que Shell
+  // tuviera un solo precio mal. Lo que importa es si el SYNC publica, y eso
+  // queda en `marketshell_sync`.
   let chequeo: Chequeo;
-  try {
-    chequeo = simular ? chequeoSimulado() : await pedirChequeo(MS_URL, MS_TOKEN);
-  } catch (e) {
-    // No poder chequear TAMBIEN es "no esta ok": se avisa igual.
-    chequeo = {
-      ok: false,
-      criticos: 1,
-      avisos: 0,
-      resumen: "no se pudo revisar el feed",
-      problemas: [{
-        nivel: "critico",
-        codigo: "chequeo_inalcanzable",
-        texto: `No pude correr el chequeo del feed (${String(e)}). Hay que revisar la planilla a mano.`,
-      }],
-    };
+  if (simular) {
+    chequeo = chequeoSimulado();
+  } else {
+    chequeo = await estadoSync(SUPABASE_URL, SERVICE_KEY);
+    // El catalogo solo hace falta si esta Edge llega a leer Shell ella misma.
+    try { chequeo.catalogo = await catalogoPrecios(); } catch (_) { /* ver compararShell */ }
   }
 
   // --- 1.b) lo que Shell PUBLICA --------------------------------------------
@@ -229,7 +223,7 @@ Deno.serve(async (req: Request) => {
   if (chequeo.ok) {
     return json({
       hoy, ok: true, enviados: 0,
-      info: "la planilla y lo publicado en Shell coinciden, no se avisa nada",
+      info: "Shell se actualiza y lo publicado coincide, no se avisa nada",
       verificacion_portal: origenPortal,
       publicados: externos ? Number(body?.publicados ?? 0) : shell.autos.length,
       en_planilla: (chequeo.catalogo ?? []).length,
@@ -409,7 +403,6 @@ async function leerShell(portalUrl: string) {
   }
 }
 
-const _k = (v: string) => String(v || "").trim().toLowerCase();
 
 function plata(n: number): string {
   return "$" + Math.round(n).toLocaleString("es-AR");
@@ -432,11 +425,11 @@ function compararShell(
     return probs;
   }
 
-  const porNombre = new Map(shell.autos.map((a) => [_k(a.name), a]));
-  const enPlanilla = new Set(catalogo.map((c) => _k(c.modelo)));
+  const porNombre = new Map(shell.autos.map((a) => [norm(a.name), a]));
+  const enPlanilla = new Set(catalogo.map((c) => norm(c.modelo)));
 
   for (const c of catalogo) {
-    const a = porNombre.get(_k(c.modelo));
+    const a = porNombre.get(norm(c.modelo));
     if (!a) {
       // Solo importa si tiene unidades: no publicar un modelo sin stock da igual.
       if ((c.stock ?? 0) > 0) {
@@ -465,7 +458,7 @@ function compararShell(
   }
 
   for (const a of shell.autos) {
-    if (!enPlanilla.has(_k(a.name))) {
+    if (!enPlanilla.has(norm(a.name))) {
       probs.push({
         nivel: "critico",
         codigo: "shell_sobra",
@@ -498,6 +491,8 @@ function resumirTodo(problemas: Problema[]): string {
     portal_sin_verificar: "dias sin verificar lo que Shell publica",
     shell_conteo: "diferencia en el conteo del portal",
     portal_caido: "no se puede leer el portal de precios",
+    sync_caido: "Shell no recibe precios nuevos",
+    chequeo_inalcanzable: "no se pudo revisar el sync",
     feed_caido: "el feed dejo de actualizarse",
     desfasadas: "modelos con precio o stock viejo",
     precio_vacio: "modelos sin precio en Hoja 1",
@@ -515,16 +510,65 @@ function resumirTodo(problemas: Problema[]): string {
 }
 
 
-async function pedirChequeo(baseUrl: string, token: string): Promise<Chequeo> {
-  const url = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}&modo=chequeo`;
-  const res = await fetch(url, { redirect: "follow" });
-  const txt = await res.text();
-  if (!res.ok) throw new Error(`Apps Script HTTP ${res.status}`);
-  let j: Chequeo;
-  try { j = JSON.parse(txt); }
-  catch { throw new Error(`Apps Script no devolvio JSON: ${txt.slice(0, 200)}`); }
-  if (typeof j?.ok !== "boolean") throw new Error("Apps Script devolvio un JSON inesperado");
-  return j;
+// Horas sin una publicacion OK del sync a partir de las cuales se avisa. El sync
+// corre cada hora; 3 h = dos corridas perdidas seguidas, no un hipo suelto.
+const MAX_HORAS_SYNC = Number(Deno.env.get("MARKETSHELL_MAX_HORAS_SYNC") ?? 3);
+
+async function estadoSync(url: string, key: string): Promise<Chequeo> {
+  let filas: Array<Record<string, unknown>> = [];
+  try {
+    filas = await sb(url, key,
+      "marketshell_sync?select=corrida,ok,abortado,detalle&origen=eq.edge&or=(abortado.is.null,abortado.neq.dry-run)&order=corrida.desc&limit=48");
+  } catch (e) {
+    return {
+      ok: false, criticos: 1, avisos: 0, resumen: "no se pudo revisar el sync de Shell",
+      problemas: [{ nivel: "critico", codigo: "chequeo_inalcanzable",
+        texto: `No pude leer el historial del sync (${String(e).slice(0, 150)}).` }],
+    };
+  }
+  const buena = filas.find((f) => f.ok === true && !f.abortado);
+  const horas = buena ? Math.floor((Date.now() - new Date(String(buena.corrida)).getTime()) / 3600000) : null;
+  if (horas !== null && horas < MAX_HORAS_SYNC) return { ok: true, criticos: 0, avisos: 0, problemas: [] };
+
+  const ult = filas[0];
+  const motivo = ult
+    ? String(ult.abortado ?? (ult.detalle as Record<string, unknown>)?.error ?? "sin detalle").slice(0, 200)
+    : "el sync nunca corrio";
+  return {
+    ok: false, criticos: 1, avisos: 0,
+    resumen: "Shell no se actualiza",
+    problemas: [{
+      nivel: "critico", codigo: "sync_caido",
+      texto: (horas === null
+        ? "No hay ninguna publicacion OK en Shell en las ultimas 48 corridas"
+        : `Shell no recibe precios nuevos hace ${horas} h (el sync corre cada 1 h)`) +
+        `. Ultimo error: ${motivo}.`,
+    }],
+  };
+}
+
+// Mismo `_norm` que el Apps Script y que sync-marketshell.
+function norm(s: unknown): string {
+  return String(s ?? "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/^\s*(vw|volkswagen)\s+/, "")
+    .replace(/\bnuevo[as]?\s+/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+async function catalogoPrecios(): Promise<ItemCatalogo[]> {
+  const r = await fetch("https://precios.titogonzalez.online/api/public/ofertas", {
+    headers: { "User-Agent": UA_NAVEGADOR, Accept: "application/json" },
+    signal: AbortSignal.timeout(20000),
+  });
+  const j = await r.json();
+  if (!j?.ok || !j.modelos?.length) throw new Error("API de precios sin modelos");
+  return (j.modelos as Array<Record<string, unknown>>).map((m) => {
+    const p = Math.round(Number(m.oferta_fyf) || 0);
+    const st = Number(m.stock) || 0;
+    return { modelo: String(m.modelo), precio: p > 0 ? p : null, stock: st > 0 ? st : 0 };
+  });
 }
 
 // Solo para probar el texto del aviso sin romper nada en la planilla.
