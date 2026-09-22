@@ -56,7 +56,11 @@ const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 
-const TEMPLATE_NAME = "marketshell_feed_alerta";
+// 22/09/2026: template nuevo sin "Se corrige en la planilla de Grupo Simpli"
+// (la planilla ya no publica nada). Mientras Meta no lo apruebe, `enviar` cae
+// al viejo, que dice lo mismo salvo esa frase: el aviso nunca se pierde.
+const TEMPLATE_NAME = "marketshell_shell_alerta";
+const TEMPLATE_VIEJO = "marketshell_feed_alerta";
 // ⚠️ Sin fallback a proposito (misma decision que notify-feed): el unico
 // template de 1 parametro aprobado (`precios_actualizados`) cierra con "Se
 // actualizaron los valores en el portal de Tito Gonzalez", o sea que avisaria de
@@ -128,7 +132,8 @@ Deno.serve(async (req: Request) => {
     );
     const j = await res.json();
     return json({
-      templates: (j?.data ?? []).filter((t: { name: string }) => t.name === TEMPLATE_NAME),
+      templates: (j?.data ?? []).filter((t: { name: string }) =>
+        t.name === TEMPLATE_NAME || t.name === TEMPLATE_VIEJO),
       error: j?.error,
     });
   }
@@ -574,14 +579,14 @@ async function catalogoPrecios(): Promise<ItemCatalogo[]> {
 // Solo para probar el texto del aviso sin romper nada en la planilla.
 function chequeoSimulado(): Chequeo {
   const problemas: Problema[] = [
-    { nivel: "critico", codigo: "precio_vacio", texto: 'Hoja 1 f12 "Polo Track MSI MT" quedo SIN PRECIO. Una sola celda vacia hace que Simpli rechace el archivo entero.' },
-    { nivel: "aviso", codigo: "alta_pendiente", texto: '"Tera Comfort MSI AT" tiene 3 unidad(es) en baratito y no esta publicado en Shell.' },
+    { nivel: "critico", codigo: "sync_caido", texto: "Shell no recibe precios nuevos hace 4 h (el sync corre cada 1 h). Ultimo error: API de precios fallo 3 veces - HTTP 503." },
+    { nivel: "critico", codigo: "shell_falta", texto: '"Tera Comfort MSI AT" tiene 3 unidad(es) y NO esta publicado en Shell.' },
   ];
   return {
     ok: false, criticos: 1, avisos: 1, problemas,
     // Arranca con "PRUEBA" a proposito: este texto solo sale con {"simular":true}
     // y no tiene que poder confundirse con un aviso real.
-    resumen: "PRUEBA del aviso (esto es un ejemplo, el feed esta bien) - 1 modelo sin precio - 1 modelo con stock sin publicar",
+    resumen: "PRUEBA del aviso (esto es un ejemplo, Shell esta bien) - Shell no recibe precios nuevos - 1 modelo con stock sin publicar",
   };
 }
 
@@ -603,6 +608,17 @@ function fechaAR(d = new Date()): string {
 async function enviar(
   phoneId: string, token: string, tel: string,
   nombre: string, resumen: string, detalle: string,
+): Promise<{ ok: boolean; error?: string; id?: string; template?: string }> {
+  const r = await enviarCon(TEMPLATE_NAME, phoneId, token, tel, nombre, resumen, detalle);
+  if (r.ok) return { ...r, template: TEMPLATE_NAME };
+  // El nuevo todavia no esta aprobado (o Meta lo rechazo): va el viejo.
+  const v = await enviarCon(TEMPLATE_VIEJO, phoneId, token, tel, nombre, resumen, detalle);
+  return v.ok ? { ...v, template: TEMPLATE_VIEJO } : { ok: false, error: `${r.error} / viejo: ${v.error}` };
+}
+
+async function enviarCon(
+  template: string, phoneId: string, token: string, tel: string,
+  nombre: string, resumen: string, detalle: string,
 ): Promise<{ ok: boolean; error?: string; id?: string }> {
   const res = await fetch(`${META_API_URL}/${phoneId}/messages`, {
     method: "POST",
@@ -612,7 +628,7 @@ async function enviar(
       to: tel,
       type: "template",
       template: {
-        name: TEMPLATE_NAME,
+        name: template,
         language: { code: META_LANGUAGE },
         components: [{
           type: "body",
@@ -641,12 +657,12 @@ async function crearTemplate(token: string) {
       components: [
         {
           type: "BODY",
-          text: "Hola {{1}}, hay algo para revisar en el feed de MarketShell (Shell) de Tito Gonzalez: {{2}}. Detalle: {{3}}. Se corrige en la planilla de Grupo Simpli. Este control corre una vez por dia.",
+          text: "Hola {{1}}, hay algo para revisar en la publicacion de Tito Gonzalez en MarketShell (Shell): {{2}}. Detalle: {{3}}. Este control corre una vez por dia.",
           example: {
             body_text: [[
               "Fernando",
-              "1 modelos sin precio en Hoja 1 - 1 modelos con stock sin publicar",
-              'Hoja 1 f12 "Polo Track MSI MT" quedo SIN PRECIO, Simpli rechaza el archivo entero · "Tera Comfort MSI AT" tiene 3 unidades en baratito y no esta publicado en Shell',
+              "Shell no recibe precios nuevos",
+              "Shell no recibe precios nuevos hace 4 h (el sync corre cada 1 h). Ultimo error: API de precios fallo 3 veces - HTTP 503.",
             ]],
           },
         },
