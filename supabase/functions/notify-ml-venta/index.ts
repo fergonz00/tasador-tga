@@ -44,6 +44,15 @@
 // `ml_pregunta_sin_responder` ({{1}} nombre, {{2}} aviso, {{3}} hace cuánto,
 // {{4}} la pregunta). El cálculo de horas hábiles vive en el portal
 // (src/lib/mlPreguntas.ts); acá `horas` llega ya armado ("2 horas hábiles").
+//
+// Unidad del reparto que VW no facturó (Fer, 22-sep-2026: "cuando una quede
+// colgada necesito que me avisen x whatsapp asi la reclamo... el aviso que me
+// llegue solo 1 vez asi hago el reclamo no todo el tiempo"): con
+// `tipo: "reparto_sin_factura"` avisa a rubro `reparto_sin_factura` (Fer) con el
+// template `reparto_unidad_sin_factura` ({{1}} nombre, {{2}} la unidad,
+// {{3}} desde cuándo y qué pasó con el resto del reparto). Lo dispara el cron
+// del portal (/api/cron/reparto-sin-factura), que es el que cuenta los días
+// hábiles y el que se acuerda de no repetir el aviso.
 
 const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
@@ -51,6 +60,7 @@ const TEMPLATE_NAME = "ml_venta_nueva";
 const TEMPLATE_PREGUNTA = "ml_pregunta_nueva";
 const TEMPLATE_SALDO = "mp_saldo_para_transferir";
 const TEMPLATE_RECORDATORIO = "ml_pregunta_sin_responder";
+const TEMPLATE_REPARTO = "reparto_unidad_sin_factura";
 const TEMPLATE_FALLBACK = "precios_actualizados";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 
@@ -84,10 +94,13 @@ Deno.serve(async (req: Request) => {
   const esPregunta = body?.tipo === "pregunta";
   const esSaldo = body?.tipo === "saldo_mp";
   const esRecordatorio = body?.tipo === "pregunta_recordatorio";
-  const template = esRecordatorio ? TEMPLATE_RECORDATORIO : esSaldo ? TEMPLATE_SALDO
+  const esReparto = body?.tipo === "reparto_sin_factura";
+  const template = esReparto ? TEMPLATE_REPARTO
+    : esRecordatorio ? TEMPLATE_RECORDATORIO : esSaldo ? TEMPLATE_SALDO
     : esPregunta ? TEMPLATE_PREGUNTA : TEMPLATE_NAME;
   if (body?.crear_template === true) {
-    const components = esRecordatorio ? TEMPLATE_RECORDATORIO_COMPONENTS : esSaldo ? TEMPLATE_SALDO_COMPONENTS
+    const components = esReparto ? TEMPLATE_REPARTO_COMPONENTS
+      : esRecordatorio ? TEMPLATE_RECORDATORIO_COMPONENTS : esSaldo ? TEMPLATE_SALDO_COMPONENTS
       : esPregunta ? TEMPLATE_PREGUNTA_COMPONENTS : TEMPLATE_COMPONENTS;
     return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN,
       { name: template, language: META_LANGUAGE, category: "UTILITY", components }));
@@ -105,7 +118,8 @@ Deno.serve(async (req: Request) => {
   if (!producto || !detalle) return json({ error: "faltan producto y detalle" }, 400);
   const horas = limpiar(body?.horas);
   if (esRecordatorio && !horas) return json({ error: "falta horas" }, 400);
-  const rubro = esRecordatorio
+  const rubro = esReparto ? "reparto_sin_factura"
+    : esRecordatorio
     ? (body?.escalar === true ? "pregunta_recordatorio,pregunta_escalada" : "pregunta_recordatorio")
     : esSaldo ? "saldo_mp" : esPregunta ? "pregunta"
     : ["repuesto", "accesorio"].includes(body?.rubro) ? body.rubro : null;
@@ -139,7 +153,9 @@ Deno.serve(async (req: Request) => {
     if (!tel || vistos.has(tel)) continue; // Fer y Catalina están en los dos grupos
     vistos.add(tel);
     const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
-    const r = esRecordatorio
+    const r = esReparto
+      ? await enviarReparto(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
+      : esRecordatorio
       ? await enviarRecordatorio(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, horas, detalle)
       : esSaldo
       ? await enviarSaldo(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
@@ -190,6 +206,22 @@ async function enviarRecordatorio(
   const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
   if (!noExiste) return { ...propio, template: TEMPLATE_RECORDATORIO };
   const texto = recortar(`⏰ PREGUNTA SIN RESPONDER EN MERCADO LIBRE hace ${horas}, sobre ${aviso}: "${pregunta}" — entrá a Mercado Libre, Preguntas, y respondela.`, 900);
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
+  return { ...fb, template: TEMPLATE_FALLBACK };
+}
+
+// producto = la unidad (modelo · color · chasis), detalle = desde cuándo está
+// colgada y cómo viene el resto del reparto. Sale UNA sola vez por unidad: quien
+// lleva la cuenta es el portal (`reparto_sin_factura_avisos`), no esta función.
+async function enviarReparto(
+  phoneId: string, token: string, tel: string, nombre: string, unidad: string, detalle: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_REPARTO, [nombre, recortar(unidad, 200), recortar(detalle, 700)]);
+  if (propio.ok) return { ...propio, template: TEMPLATE_REPARTO };
+  const code = propio.error?.code;
+  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+  if (!noExiste) return { ...propio, template: TEMPLATE_REPARTO };
+  const texto = recortar(`🚩 UNIDAD DEL REPARTO SIN FACTURAR: ${unidad} — ${detalle} — hay que reclamársela a VW.`, 900);
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
   return { ...fb, template: TEMPLATE_FALLBACK };
 }
@@ -283,6 +315,25 @@ const TEMPLATE_RECORDATORIO_COMPONENTS = [
 ];
 
 // {{1}} primer nombre · {{2}} saldo disponible · {{3}} tope.
+// Redacción pensada para caer en UTILITY: una anomalía concreta de un registro
+// propio y qué hacer con ella. Ver reference_whatsapp_template_utility: las
+// palabras "novedad", "nueva", "circular" empujan el template a MARKETING, y un
+// template MARKETING se acepta por API pero no se entrega.
+const TEMPLATE_REPARTO_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! La unidad {{2}} figura comprada en el reparto de VW y todavia no tiene factura de VW cargada.\n\n{{3}}\n\nHay que reclamarsela a VW. Este control avisa una sola vez por unidad: si sigue sin facturarse no te va a volver a escribir.",
+    example: {
+      body_text: [[
+        "Fer",
+        "T-Cross Highline Bitono 200TSI AT G1 · Blanco Marfil / Negro Universal · chasis 9BWBH6BF9V4006259",
+        "Comprada el 18-09 (hace 3 dias habiles). De las 20 unidades de ese reparto, 19 ya tienen factura y esta no.",
+      ]],
+    },
+  },
+];
+
 const TEMPLATE_SALDO_COMPONENTS = [
   {
     type: "BODY",
