@@ -17,6 +17,13 @@
 //   rechaza los saltos de línea dentro de un parámetro). Mientras no esté
 //   aprobado, cae a `precios_actualizados` metiendo el aviso entero en {{1}}.
 //   El cuerpo va SIN TILDES, igual que `ml_tienda_precios`.
+//
+// - tipo "stock_fabrica" (control diario de accesorios a pedido, 22-sep-2026):
+//   template propio `ml_stock_fabrica` que separa lo que el control YA hizo solo
+//   (reactivar/pausar) de lo que necesita que alguien lo mire. Con el general
+//   llegaba "quedaron 39 cosas que necesitan que alguien las mire" cuando eran
+//   39 reactivaciones ya aplicadas. Params: {{1}} nombre · {{2}} resumen ·
+//   {{3}} detalle · {{4}} que hay que hacer. Sin aprobar, cae al general.
 
 const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
@@ -71,6 +78,9 @@ Deno.serve(async (req: Request) => {
   if (body?.crear_template === true) {
     return json(await crearTemplate(WA_TOKEN));
   }
+  if (body?.crear_template === "stock_fabrica") {
+    return json(await crearTemplate(WA_TOKEN, STOCK_FABRICA));
+  }
   // Editar el cuerpo de un template ya creado (pasar template_id). Meta sólo
   // deja editar los APPROVED/REJECTED: para uno PENDING hay que borrar y crear.
   if (body?.editar_template) {
@@ -78,6 +88,16 @@ Deno.serve(async (req: Request) => {
   }
   if (body?.borrar_template === true) {
     return json(await borrarTemplate(WA_TOKEN));
+  }
+
+  if (body?.tipo === "stock_fabrica") {
+    const p = [body?.resumen, body?.detalle, body?.accion]
+      .map((x) => String(x ?? "").replace(/\s+/g, " ").trim());
+    if (p.some((x) => !x)) return json({ error: "faltan resumen, detalle o accion" }, 400);
+    const env = { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN };
+    const solo = String(body?.solo || "").trim() || null;
+    return json(await procesar(env, "", "", solo, (tel, nombre) =>
+      enviarStockFabrica(WA_PHONE_ID, WA_TOKEN, tel, nombre, p, String(body?.cantidad ?? "0"))));
   }
 
   const cantidad = String(body?.cantidad ?? "").trim();
@@ -97,12 +117,23 @@ type Env = {
   WA_TOKEN: string;
 };
 
-async function procesar(env: Env, cantidad: string, detalle: string, solo: string | null) {
+type Envio = (tel: string, primerNombre: string) =>
+  Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }>;
+
+async function procesar(
+  env: Env,
+  cantidad: string,
+  detalle: string,
+  solo: string | null,
+  envio?: Envio,
+) {
   const { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN } = env;
+  const mandar: Envio = envio ??
+    ((tel, nombre) => enviar(WA_PHONE_ID, WA_TOKEN, tel, nombre, cantidad, detalle));
 
   if (solo) {
     const tel = solo.replace(/^\+/, "").replace(/\s|-/g, "");
-    const r = await enviar(WA_PHONE_ID, WA_TOKEN, tel, "equipo", cantidad, detalle);
+    const r = await mandar(tel, "equipo");
     return { prueba: true, destino: tel, ...r };
   }
 
@@ -137,7 +168,7 @@ async function procesar(env: Env, cantidad: string, detalle: string, solo: strin
   const errores: any[] = [];
   for (const d of destinatarios) {
     const primerNombre = (d.nombre.split(/\s+/)[0] || d.nombre || "").trim() || "equipo";
-    const r = await enviar(WA_PHONE_ID, WA_TOKEN, d.tel, primerNombre, cantidad, detalle);
+    const r = await mandar(d.tel, primerNombre);
     if (r.ok) enviados.push({ destinatario: d.nombre, template: r.template, meta_id: r.meta_id });
     else errores.push({ destinatario: d.nombre, error: r.error });
   }
@@ -174,6 +205,32 @@ async function enviar(
   );
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
   return { ...fb, template: TEMPLATE_FALLBACK };
+}
+
+/**
+ * Control de stock de fabrica: template propio. Mientras Meta no lo apruebe,
+ * cae al general con la cantidad de lo que hay que mirar (no de lo hecho).
+ */
+async function enviarStockFabrica(
+  phoneId: string,
+  token: string,
+  tel: string,
+  primerNombre: string,
+  [resumen, detalle, accion]: string[],
+  cantidadRevisar: string,
+) {
+  const propio = await postMeta(phoneId, token, tel, STOCK_FABRICA.name, [
+    primerNombre,
+    recortar(resumen, 300),
+    recortar(detalle, 700),
+    recortar(accion, 400),
+  ]);
+  if (propio.ok) return { ...propio, template: STOCK_FABRICA.name };
+  const code = propio.error?.code;
+  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+  if (!noExiste) return { ...propio, template: STOCK_FABRICA.name };
+  return await enviar(phoneId, token, tel, primerNombre, cantidadRevisar,
+    `Stock de fabrica: ${resumen}. ${detalle} -- ${accion}`);
 }
 
 async function postMeta(
@@ -226,12 +283,35 @@ const TEMPLATE_COMPONENTS = [
   },
 ];
 
-async function crearTemplate(token: string) {
+// {{1}} nombre · {{2}} resumen de lo hecho · {{3}} detalle · {{4}} que hacer.
+const STOCK_FABRICA = {
+  name: "ml_stock_fabrica",
+  components: [
+    {
+      type: "BODY",
+      text:
+        "Hola {{1}}! Revise en el POC de VW el stock de fabrica de los accesorios que vendemos a pedido en Mercado Libre: {{2}}.\n\nDetalle: {{3}}\n\n{{4}}\n\nEste control corre a las 8:30, 13 y 18 hs.",
+      example: {
+        body_text: [[
+          "Fer",
+          "reactive 2 avisos porque VW volvio a tener stock",
+          "Junta De Motor Tiguan (MLA3979759670); Sensor De Nivel De Aceite Tiguan (MLA3979733644)",
+          "No hace falta que hagas nada: ya quedo aplicado en Mercado Libre.",
+        ]],
+      },
+    },
+  ],
+};
+
+async function crearTemplate(
+  token: string,
+  t: { name: string; components: unknown } = { name: TEMPLATE_NAME, components: TEMPLATE_COMPONENTS },
+) {
   return await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, token, {
-    name: TEMPLATE_NAME,
+    name: t.name,
     language: META_LANGUAGE,
     category: "UTILITY",
-    components: TEMPLATE_COMPONENTS,
+    components: t.components,
   });
 }
 
