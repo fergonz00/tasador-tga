@@ -3003,6 +3003,59 @@ function _argdStat(label, valor, color) {
   </div>`;
 }
 
+// ---------------------------------------------------------------- KAVAK BOX -
+// Arriba y grande va el precio que trae solo el robot (proyecto kavak-cotizador):
+// es la oferta de VENTA SOLA de Kavak ("Inmediata"), NO la de permuta, que Kavak
+// muestra primera y marca como recomendada porque es más alta.
+// Abajo y chico, lo que cargó el vendedor a mano, que sigue siendo editable y
+// NUNCA se pisa: son dos números que conviven para poder compararlos.
+const KAVAK_AUTO_MOTIVO = {
+  revisar: 'el robot no quedó seguro de la versión',
+  sin_match: 'Kavak no tiene esta unidad',
+  ambiguo: 'Kavak no mostró la oferta de venta sola',
+  sesion_vencida: 'hay que renovar la sesión de Kavak',
+  error: 'falló la consulta'
+};
+
+function kavakBoxHTML(t, opts) {
+  opts = opts || {};
+  const auto = (t.precio_kavak_auto != null) ? Number(t.precio_kavak_auto) : null;
+  const manual = (t.precio_kavak != null) ? Number(t.precio_kavak) : null;
+  const claseTitulo = opts.claseTitulo || 'metodo';
+  const descRow = opts.descRow || (() => '');
+  const dis = opts.bloqueado ? 'disabled' : '';
+
+  const fecha = t.kavak_auto_at
+    ? new Date(t.kavak_auto_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' })
+    : '';
+  const versionAuto = [t.kavak_auto_modelo, t.kavak_auto_version].filter(Boolean).join(' · ');
+
+  const principal = (auto != null)
+    ? `<div class="valor" style="margin:3px 0">$ ${formatNum(Math.round(auto))}</div>
+       <div class="sub">venta sola${fecha ? ' · ' + fecha : ''}</div>
+       ${versionAuto ? `<div class="sub" style="font-size:9px; opacity:0.55">${versionAuto}</div>` : ''}`
+    : `<div class="valor" style="margin:3px 0; opacity:0.45">—</div>
+       <div class="sub">${KAVAK_AUTO_MOTIVO[t.kavak_auto_estado] || 'todavía no lo buscó el robot'}</div>`;
+
+  return `
+      <div class="precio-box kavak"${opts.estiloBox ? ` style="${opts.estiloBox}"` : ''}>
+        <div class="${claseTitulo}">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(automático)</span></div>
+        ${principal}
+        <div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15)">
+          <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; opacity:0.7">Lo cargó el vendedor${manual != null ? ` — $ ${formatNum(Math.round(manual))}` : ''}</div>
+          <div style="display:flex; align-items:center; gap:4px; margin-top:3px">
+            <span style="font-family:var(--mono); font-size:11px; font-weight:700">$</span>
+            <input type="number" id="kavak-${t.id}" value="${manual != null ? manual : ''}" placeholder="0" ${dis}
+              onclick="event.stopPropagation()"
+              onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
+              style="flex:1; min-width:56px; padding:2px 5px; font-family:var(--mono); font-weight:600; font-size:12px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
+            ${opts.bloqueado ? '' : `<button onclick="event.stopPropagation(); guardarKavak('${t.id}')" title="Guardar" style="padding:2px 6px; background:var(--vw-blue); color:white; border:none; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer">✓</button>`}
+          </div>
+        </div>
+        ${descRow(auto != null ? auto : manual)}
+      </div>`;
+}
+
 function renderArgdCard(t) {
   const equivSel = (t.equiv_0km_modelo && vwData.some(v => v.modelo === t.equiv_0km_modelo))
     ? t.equiv_0km_modelo : _argdEquivSugerido(t.modelo);
@@ -3102,18 +3155,7 @@ function renderArgdCard(t) {
           `).join('')}
         </div>`}
       </div>
-      <div class="precio-box kavak" style="flex:1; min-width:150px">
-        <div class="label">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(editable)</span></div>
-        <div style="display:flex; align-items:center; gap:4px; margin:4px 0">
-          <span style="font-family:var(--mono); font-weight:700">$</span>
-          <input type="number" id="kavak-${t.id}" value="${t.precio_kavak || ''}" placeholder="0" ${bloqueado ? 'disabled' : ''}
-            onclick="event.stopPropagation()"
-            onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
-            style="flex:1; min-width:70px; padding:3px 6px; font-family:var(--mono); font-weight:700; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
-          ${bloqueado ? '' : `<button onclick="event.stopPropagation(); guardarKavak('${t.id}')" title="Guardar" style="padding:3px 8px; background:var(--vw-blue); color:white; border:none; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer">✓</button>`}
-        </div>
-        <div class="sub">Precio compra directo</div>
-      </div>
+      ${kavakBoxHTML(t, { claseTitulo: 'label', bloqueado: bloqueado, estiloBox: 'flex:1; min-width:150px' })}
     </div>
 
     <div style="margin-top:10px">
@@ -3298,19 +3340,7 @@ function renderPreciosReferenciaHTML(t) {
           `).join('')}
         </div>
       </div>
-      <div class="precio-box kavak">
-        <div class="metodo">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(editable)</span></div>
-        <div style="display:flex; align-items:center; gap:4px; margin:4px 0">
-          <span style="font-family:var(--mono); font-weight:700">$</span>
-          <input type="number" id="kavak-${t.id}" value="${kavak || ''}" placeholder="0"
-            onclick="event.stopPropagation()"
-            onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
-            style="flex:1; min-width:80px; padding:3px 6px; font-family:var(--mono); font-weight:700; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
-          <button onclick="event.stopPropagation(); guardarKavak('${t.id}')" title="Guardar" style="padding:3px 8px; background:var(--vw-blue); color:white; border:none; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer">✓</button>
-        </div>
-        <div class="sub">Precio compra directo</div>
-        ${descRowHTML(kavak)}
-      </div>
+      ${kavakBoxHTML(t, { descRow: descRowHTML })}
     </div>
   `;
 }
@@ -3995,19 +4025,7 @@ function renderAdminCard(t) {
                 `).join('')}
               </div>
             </div>
-            <div class="precio-box kavak">
-              <div class="metodo">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(editable)</span></div>
-              <div style="display:flex; align-items:center; gap:4px; margin:4px 0">
-                <span style="font-family:var(--mono); font-weight:700">$</span>
-                <input type="number" id="kavak-${t.id}" value="${kavak || ''}" placeholder="0"
-                  onclick="event.stopPropagation()"
-                  onkeydown="if(event.key==='Enter'){event.stopPropagation(); guardarKavak('${t.id}');}"
-                  style="flex:1; min-width:80px; padding:3px 6px; font-family:var(--mono); font-weight:700; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:4px; text-align:right; box-sizing:border-box">
-                <button onclick="event.stopPropagation(); guardarKavak('${t.id}')" title="Guardar" style="padding:3px 8px; background:var(--vw-blue); color:white; border:none; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer">✓</button>
-              </div>
-              <div class="sub">Precio compra directo</div>
-              ${descRowHTML(kavak)}
-            </div>
+            ${kavakBoxHTML(t, { descRow: descRowHTML })}
           </div>
         `;
       })()}
@@ -7552,7 +7570,10 @@ function renderInspeccionFormulario(tas, prev) {
       const mon = tas.precio_cca_moneda || 'ARS';
       ccaBrutoARS = mon === 'USD' ? tas.precio_cca * cotiz : tas.precio_cca;
     }
-    const kavakStr = tas.precio_kavak ? '$ ' + formatNum(Math.round(tas.precio_kavak)) : '—';
+    // Manda el automático (oferta de venta sola de Kavak); si todavía no lo sacó
+    // el robot, cae al que cargó el vendedor.
+    const kavakRef = (tas.precio_kavak_auto != null) ? tas.precio_kavak_auto : tas.precio_kavak;
+    const kavakStr = kavakRef ? '$ ' + formatNum(Math.round(kavakRef)) : '—';
     const ccaStr = ccaBrutoARS ? '$ ' + formatNum(Math.round(ccaBrutoARS)) : '—';
     contextoHTML = `
       <div style="margin-bottom:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow); border-left:4px solid #EA580C">
