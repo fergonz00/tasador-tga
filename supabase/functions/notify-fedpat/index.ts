@@ -299,6 +299,28 @@ const EXTRA: Record<string, unknown[]> = {
       "Verificalas en el portal de Repuestos.",
     example: { body_text: [["Fer", "48 ofertas por $ 16.925.182 sin IVA", "Bandeja: 80 pedidos sin elegir"]] },
   }],
+  // Seguimiento de las licitaciones GANADAS (Fer, 24-09-2026): avisa cuando un
+  // paso del circuito se pasó de plazo (pedir la pieza, recibirla, entregarla,
+  // facturarla, cobrarla). Tres redacciones; se usa la primera UTILITY.
+  fedpat_seguimiento_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, control de las licitaciones ganadas de Federación Patronal: {{2}}. {{3}}. " +
+      "Registrá el paso en el portal de Repuestos cuando esté hecho.",
+    example: { body_text: [["Fer", "1 caso con un paso vencido",
+      "PARAGOLPES TRASERO (Suran, orden 6200316): entrega prometida 29/09 y todavía no figura entregada"]] },
+  }],
+  fedpat_seguimiento_2: [{
+    type: "BODY",
+    text: "Hola {{1}}, en el seguimiento de las piezas que ganamos por licitación en Federación Patronal figura {{2}}. {{3}}. " +
+      "Actualizá el estado en el portal de Repuestos.",
+    example: { body_text: [["Fer", "1 paso atrasado", "PARAGOLPES TRASERO (Suran): sin pedir a VW, la entrega es el 29/09"]] },
+  }],
+  fedpat_seguimiento_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, seguimiento de licitaciones ganadas: {{2}}. {{3}}. " +
+      "El detalle de cada caso está en el portal de Repuestos.",
+    example: { body_text: [["Fer", "1 caso demorado", "PARAGOLPES TRASERO (Suran): falta marcarla como entregada"]] },
+  }],
   // Control semanal de compras de repuestos (lunes, semana anterior). Tres
   // redacciones como control de registros propios; se usa la primera UTILITY.
   compras_control_semanal_1: [{
