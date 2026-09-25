@@ -3125,10 +3125,14 @@ function kavakBoxHTML(t, opts) {
 function renderArgdCard(t) {
   const equivGuardado = (t.equiv_0km_modelo && vwData.some(v => v.modelo === t.equiv_0km_modelo))
     ? t.equiv_0km_modelo : '';
-  const equivSel = equivGuardado || _argdEquivSugerido(t.modelo, t.version);
-  // Mientras no se guarde el precio, el 0km que se ve lo eligió el detector:
-  // se avisa para que Fer lo revise antes de cotizar.
-  const equivEsSugerido = !equivGuardado && !!equivSel;
+  // `_equivManual` se prende cuando Fer toca el selector: sin eso, elegir
+  // "— sin equivalente —" rebotaba y el detector volvía a poner su sugerencia.
+  const equivSel = t._equivManual
+    ? (t.equiv_0km_modelo || '')
+    : (equivGuardado || _argdEquivSugerido(t.modelo, t.version));
+  // Mientras no lo haya elegido una persona, el 0km que se ve lo puso el
+  // detector: se avisa para que Fer lo revise antes de cotizar.
+  const equivEsSugerido = !t._equivManual && !equivGuardado && !!equivSel;
   const c = _argdCalc(t, equivSel);
   const d = t.origen_datos || {};
 
@@ -3267,6 +3271,7 @@ function onArgdEquivChange(id) {
   if (!t) return;
   const sel = document.getElementById('argdEquiv-' + id);
   t.equiv_0km_modelo = sel ? sel.value : '';
+  t._equivManual = true;   // a partir de acá manda lo que eligió Fer, no el detector
   _argdReRender(t);
 }
 
