@@ -2157,17 +2157,23 @@ function calcAjusteKm(km, anio, modelo) {
   const kmEsperados = antiguedad * kmPorAnio;
   const ratio = km / kmEsperados;
 
-  if (ratio <= 0.15) return 12;
-  if (ratio <= 0.33) return 8;
-  if (ratio <= 0.50) return 5;
-  if (ratio <= 0.66) return 3;
-  if (ratio <= 0.90) return 1;
+  // Recalibrado 25-09-2026 contra el mercado: se midió Kavak (que sí pregunta el km)
+  // contra el CCA (que no lo mira) sobre 295 tasaciones, controlando por antigüedad.
+  // La tabla vieja estaba aplastada del lado de poco uso (+1% donde el mercado paga
+  // +12%) y era demasiado dura del lado de mucho uso (-12% donde el mercado baja -9%).
+  if (ratio <= 0.15) return 26;
+  if (ratio <= 0.33) return 22;
+  if (ratio <= 0.50) return 18;
+  if (ratio <= 0.66) return 14;
+  if (ratio <= 0.80) return 11;
+  if (ratio <= 0.90) return 8;
+  if (ratio <= 1.00) return 4;
   if (ratio <= 1.10) return 0;
-  if (ratio <= 1.33) return -3;
-  if (ratio <= 1.66) return -5;
-  if (ratio <= 2.00) return -8;
-  if (ratio <= 3.00) return -12;
-  return -18;
+  if (ratio <= 1.33) return -2;
+  if (ratio <= 1.66) return -3;
+  if (ratio <= 2.00) return -6;
+  if (ratio <= 3.00) return -9;
+  return -14;
 }
 
 function calcFormulaFG(marca, modelo, version, anio) {
