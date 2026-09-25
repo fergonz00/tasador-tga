@@ -767,6 +767,22 @@ Cadencia:** el script local a las **9:00 AR** (tarea de Windows) y el cron `mark
 
 **⚠️ `tasaciones.estado` tiene CHECK constraint.** Era `('pendiente','tasada','cerrada')` y hubo que ampliarlo con `'argendreams'` — sin eso el sync fallaba al insertar. Si mañana se agrega otro estado, ampliar el constraint primero.
 
+### El 0km equivalente se elige leyendo la versión (25/09/2026)
+
+`_argdEquivSugerido(modelo, version)` preselecciona el 0km de la planilla VW con el que se calcula la **Fórmula FG**. Antes agarraba **el más barato de la familia**, así que toda Amarok caía en `Trendline TDI MT 4X2`: una **Highline 4x2 AT** se tasaba con el 0km de la versión de entrada (~$17M menos de lista) y una 4x4 con el precio de una 4x2. Lo reportó Fer y era exactamente eso.
+
+Ahora puntea contra la versión que manda ArgenDreams (formato guía de usados: `D/C 2,0 TDi 180CV 4X2 HIGH G2 AT 2025`): **gama** (exacta +100, si no existe en el 0km gana la de nivel más cercano — Tiguan Allspace Highline → R-Line, no Life), **tracción** (±45, es lo que más mueve el precio en la Amarok), **motor** V6/TDI/TSI/MSI (±30) y **caja** AT/MT (±25). El más barato quedó **sólo como desempate**. Probado contra las 27 versiones VW distintas que pasaron por ArgenDreams: 21 con equivalente y 6 sin (Golf, Gol Trend, Up!, Suran, Sharan — discontinuados, correcto que no tengan).
+
+Sigue siendo **una sugerencia**: la card avisa "🤖 Lo eligió el detector leyendo <versión>" mientras no se haya guardado un precio, y el `<select>` se puede cambiar a mano. Lo que se guarda al cotizar es lo que quedó elegido.
+
+### Vigía del puente — `notify-argendreams-salud` (25/09/2026)
+
+Cierra el riesgo que estaba anotado como "sin mitigar": **el sync fallaba en silencio** y del lado de Fer eso se ve igual que "esta semana no entró ningún VW". Cron `*/15 * * * *` (jobid 30). Chequea 7 cosas: **cron** vivo (RPC `argd_cron_estado()`, que lee `cron.job_run_details`), **puente** de punta a punta (llama a `sync-argendreams?dry=1`, que corre las 4 pasadas sin escribir), **sin_espejar** (VW en reventas hace +20 min que no llegaron), **sin_aviso** (espejadas sin WhatsApp — importante porque el paso de aviso del sync sólo mira las últimas 24 h, así que una atascada más de un día no se avisa nunca más), **sin_push** (precio cargado que no llegó a ArgenDreams: el único que cuesta plata) y las **dos webs** (200 + página no vacía).
+
+**Calla cuando anda todo.** Avisa por WhatsApp reusando `notify-ml-excepciones` con `tipo: "resultado"` (template `control_automatico_resultado`), un solo mensaje por corrida con todo lo roto junto, y repite cada 6 h mientras siga roto. Cuando se arregla manda un único "volvió a andar", y sólo si antes había avisado. Estado en la tabla **`argd_salud`** (una fila por chequeo: `mal_desde`, `avisado_at`).
+
+**Probarlo:** `?dry=1` (corre todo, no manda ni escribe) · `?simular=puente` (da por roto ese chequeo y ejerce el camino de alerta de verdad — sin esto el vigía no se puede probar, porque mientras todo anda callar es lo mismo que estar muerto; la simulación **no** escribe en `argd_salud`) · `?forzar=1`. **Deployar con `--no-verify-jwt`.**
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)

@@ -2879,18 +2879,84 @@ function _esExterna(t) {
   return !!(t && t.origen && t.origen !== 'tga');
 }
 
-// Modelo 0km de la planilla VW para la Fórmula FG. Preselecciona por nombre
-// (usado "TAOS" → "VW Taos Comfortline...") y deja cambiarlo a mano, porque el
-// match automático no distingue versiones ni sabe qué hacer con un discontinuado.
-function _argdEquivSugerido(modeloUsado) {
+// Modelo 0km de la planilla VW para la Fórmula FG.
+//
+// La versión que manda ArgenDreams viene con el formato de la guía de usados
+// ("D/C 2,0 TDi 180CV 4X2 HIGH G2 AT 2025") y la planilla VW con el suyo
+// ("VW Amarok Highline TDI AT 4X2 G2 MY26"). Antes se preseleccionaba el más
+// barato de la familia, así que TODA Amarok caía en Trendline MT 4x2: una
+// Highline 4x2 AT quedaba tasada con el 0km de la versión de entrada.
+// Ahora se puntea gama + tracción + caja + motor leídos de la versión, y el más
+// barato queda sólo como desempate. Igual se puede cambiar a mano: es una
+// sugerencia, no sabe qué hacer con un discontinuado (Golf, Up!, Gol Trend).
+
+// Gamas ordenadas de mayor a menor. El nivel sirve cuando la gama exacta no
+// existe hoy en el 0km (ej: Tiguan Allspace Highline → sólo hay Life y R-Line):
+// en ese caso gana la de nivel más cercano.
+const _EQ_GAMAS = [
+  { nivel: 4, re: /BLACK\s*STYLE|\bHERO\b|\bEXTREME?\b|\bEXCLUSIVE\b|\bOUTFIT\b|\bGLI\b|\bGTI\b|R\s*-?\s*LINE/ },
+  { nivel: 3, re: /\bHIGH(LINE)?\b/ },
+  { nivel: 2, re: /\b(COMFORT|CONFORT)(LINE)?\b/ },
+  { nivel: 1, re: /\bTREND(LINE)?\b|\bSTART\b|\bLIFE\b|\bPOWER\b/ },
+  { nivel: 0, re: /\bSENSE\b|\bTRACK\b/ }
+];
+
+function _eqGama(txt) {
+  for (const g of _EQ_GAMAS) if (g.re.test(txt)) return g.nivel;
+  return null;
+}
+
+// Caja. Del lado del usado aparece como 6AT, TIPT, DSG, DQ, AUT; del lado VW
+// como "AT" o "MT" sueltos.
+function _eqCaja(txt) {
+  if (/\b\d?AT\b|\bAUT|\bDSG\d?\b|\bDQ\d*\b|\bTIPT|TRONIC|\bCVT\b/.test(txt)) return 'AT';
+  if (/\bMT\b|\bMANUAL\b/.test(txt)) return 'MT';
+  return null;
+}
+
+// Tracción: en la Amarok es lo que más mueve el precio, 4x4 y 4x2 no se mezclan.
+function _eqTraccion(txt) {
+  if (/4\s*X\s*4|4MOTION|\bAWD\b/.test(txt)) return '4X4';
+  if (/4\s*X\s*2/.test(txt)) return '4X2';
+  return null;
+}
+
+function _eqMotor(txt) {
+  if (/\bV6\b/.test(txt)) return 'V6';
+  if (/\bTDI\b/.test(txt)) return 'TDI';
+  if (/\bTSI\b/.test(txt)) return 'TSI';
+  if (/\bMSI\b/.test(txt)) return 'MSI';
+  return null;
+}
+
+function _argdEquivSugerido(modeloUsado, versionUsado) {
   if (!modeloUsado || !vwData.length) return '';
   const base = String(modeloUsado).toUpperCase().replace(/PICK\s*-?\s*UP/g, '').trim().split(' ')[0];
   if (!base || base.length < 3) return '';
-  const matches = vwData.filter(v => v.modelo.toUpperCase().includes(base));
-  if (!matches.length) return '';
-  // El más barato de los que matchean = la versión de entrada, que es el piso
-  // razonable cuando no sabemos la versión exacta.
-  return matches.reduce((min, v) => (v.precio_0km < min.precio_0km ? v : min), matches[0]).modelo;
+  const candidatos = vwData.filter(v => v.modelo.toUpperCase().includes(base));
+  if (!candidatos.length) return '';
+
+  const txt = (String(modeloUsado) + ' ' + String(versionUsado || '')).toUpperCase();
+  const gama = _eqGama(txt), caja = _eqCaja(txt), trac = _eqTraccion(txt), motor = _eqMotor(txt);
+
+  let mejor = null, mejorPts = -Infinity;
+  for (const v of candidatos) {
+    const m = v.modelo.toUpperCase();
+    let pts = 0;
+    const gv = _eqGama(m);
+    if (gama !== null && gv !== null) pts += (gama === gv) ? 100 : -18 * Math.abs(gama - gv);
+    const tv = _eqTraccion(m);
+    if (trac && tv) pts += (trac === tv) ? 45 : -45;
+    const mv = _eqMotor(m);
+    if (motor && mv) pts += (motor === mv) ? 30 : -30;
+    const cv = _eqCaja(m);
+    if (caja && cv) pts += (caja === cv) ? 25 : -25;
+    // Desempate: el más barato, que es el piso razonable.
+    if (pts > mejorPts || (pts === mejorPts && mejor && v.precio_0km < mejor.precio_0km)) {
+      mejor = v; mejorPts = pts;
+    }
+  }
+  return mejor ? mejor.modelo : '';
 }
 
 function _argdCalc(t, equivModelo) {
@@ -3057,8 +3123,12 @@ function kavakBoxHTML(t, opts) {
 }
 
 function renderArgdCard(t) {
-  const equivSel = (t.equiv_0km_modelo && vwData.some(v => v.modelo === t.equiv_0km_modelo))
-    ? t.equiv_0km_modelo : _argdEquivSugerido(t.modelo);
+  const equivGuardado = (t.equiv_0km_modelo && vwData.some(v => v.modelo === t.equiv_0km_modelo))
+    ? t.equiv_0km_modelo : '';
+  const equivSel = equivGuardado || _argdEquivSugerido(t.modelo, t.version);
+  // Mientras no se guarde el precio, el 0km que se ve lo eligió el detector:
+  // se avisa para que Fer lo revise antes de cotizar.
+  const equivEsSugerido = !equivGuardado && !!equivSel;
   const c = _argdCalc(t, equivSel);
   const d = t.origen_datos || {};
 
@@ -3165,6 +3235,7 @@ function renderArgdCard(t) {
         <option value="">— sin equivalente —</option>
         ${vwData.map(v => `<option value="${v.modelo}" ${v.modelo === equivSel ? 'selected' : ''}>${v.modelo}</option>`).join('')}
       </select>
+      ${equivEsSugerido ? `<div style="font-size:11px; color:var(--vw-grey-4); margin-top:4px">🤖 Lo eligió el detector leyendo <em>${t.version || 'la versión'}</em> — cambialo si no es el que corresponde.</div>` : ''}
     </div>
 
     ${resultadoHTML}
