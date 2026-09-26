@@ -815,6 +815,12 @@ const CALLMEBOT_KEY = '6552632';
 const TGA_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=1074000110';
 const PRECIOS_0KM_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQH_9OtgijB7xV7qZEHoogNXq8TE5gLxz4RNb2DvxbbQ1o2A_Be2my532IJF0nxpJCUkghJrEa3TeDw/pub?gid=647749443&single=true&output=csv';
 const FYF = 1110000;
+// Factor de toma de la Fórmula FG. Calibrado 26-09-2026 para que la FG de toma
+// caiga lo más cerca posible de lo que paga Kavak: con 0,83 la mediana de
+// FG_toma/Kavak da 1,004 sobre las 60 tasaciones que tienen las dos cargadas.
+// Antes había 0,88 en dos lugares y 0,86 en un tercero (con un comentario que
+// decía −14% al lado de un 0,86); por eso ahora es una sola constante.
+const FG_TOMA = 0.83;
 const DEFAULT_COTIZ = 1350;
 
 // Moneda de cada fila del CCA: viene de la columna `moneda` de la planilla
@@ -2157,23 +2163,26 @@ function calcAjusteKm(km, anio, modelo) {
   const kmEsperados = antiguedad * kmPorAnio;
   const ratio = km / kmEsperados;
 
-  // Recalibrado 25-09-2026 contra el mercado: se midió Kavak (que sí pregunta el km)
-  // contra el CCA (que no lo mira) sobre 295 tasaciones, controlando por antigüedad.
-  // La tabla vieja estaba aplastada del lado de poco uso (+1% donde el mercado paga
-  // +12%) y era demasiado dura del lado de mucho uso (-12% donde el mercado baja -9%).
-  if (ratio <= 0.15) return 26;
-  if (ratio <= 0.33) return 22;
-  if (ratio <= 0.50) return 18;
-  if (ratio <= 0.66) return 14;
-  if (ratio <= 0.80) return 11;
-  if (ratio <= 0.90) return 8;
-  if (ratio <= 1.00) return 4;
+  // Afinado 26-09-2026 CONTRA KAVAK, que es la referencia que manda. El test:
+  // FG_toma/Kavak tiene que dar parecido en todos los tramos de km; si se mueve,
+  // el ajuste está mal. Sin ajuste se movía 25 puntos, con la tabla vieja 13, con
+  // la del 25-09 (medida contra el CCA) 8, y con esta 3.
+  // ⚠️ Del lado de mucho kilometraje esto vuelve atrás lo del 25-09: medido contra
+  // el CCA parecía que castigábamos de más, pero contra Kavak es al revés. Vale la
+  // medición contra Kavak; el CCA trae sus propios supuestos adentro.
+  if (ratio <= 0.15) return 19;
+  if (ratio <= 0.33) return 16;
+  if (ratio <= 0.50) return 13;
+  if (ratio <= 0.66) return 10;
+  if (ratio <= 0.80) return 8;
+  if (ratio <= 0.90) return 6;
+  if (ratio <= 1.00) return 3;
   if (ratio <= 1.10) return 0;
-  if (ratio <= 1.33) return -2;
-  if (ratio <= 1.66) return -3;
-  if (ratio <= 2.00) return -6;
-  if (ratio <= 3.00) return -9;
-  return -14;
+  if (ratio <= 1.33) return -6;
+  if (ratio <= 1.66) return -9;
+  if (ratio <= 2.00) return -12;
+  if (ratio <= 3.00) return -16;
+  return -20;
 }
 
 function calcFormulaFG(marca, modelo, version, anio) {
@@ -2250,7 +2259,7 @@ async function submitTasacion() {
     let precioCcaToma = precioCca ? precioCca * (1 + ajusteKm/100) * 0.86 : null;
 
     let precioFormulaVw = fg ? fg.precioMercado : null;
-    let precioFormulaVwToma = precioFormulaVw ? precioFormulaVw * (1 + ajusteKm/100) * 0.88 : null;
+    let precioFormulaVwToma = precioFormulaVw ? precioFormulaVw * (1 + ajusteKm/100) * FG_TOMA : null;
     let precioVw0km = fg ? fg.precio0km : null; // en ARS (pesificado si era USD)
 
     // 0km consulta data (VW que compra el cliente)
@@ -2983,8 +2992,7 @@ function _argdCalc(t, equivModelo) {
     const anios = Math.max(0, 2026 - (t.anio || 2026));
     fgMercado = precio0km / 1.05 / Math.pow(1 + rotacion / 100, anios);
     fgAjustado = fgMercado * (1 + ajuste / 100);
-    // −14%, igual que renderAdminCard, que es la card con la que Fer decide.
-    fgToma = fgAjustado * 0.86;
+    fgToma = fgAjustado * FG_TOMA;
   }
   return { ajuste, rotacion, ccaBase, ccaToma, fgMercado, fgAjustado, fgToma, precio0km,
            ccaAjustado: ccaBase ? ccaBase * (1 + ajuste / 100) : null,
@@ -3381,7 +3389,7 @@ function renderPreciosReferenciaHTML(t) {
     vwMercado = t.precio_formula_vw || null;
   }
   const vwAjustado = vwMercado ? vwMercado * (1 + ajuste/100) : null;
-  const vwToma = vwAjustado ? vwAjustado * 0.88 : null;
+  const vwToma = vwAjustado ? vwAjustado * FG_TOMA : null;
 
   const kavak = t.precio_kavak || null;
 
