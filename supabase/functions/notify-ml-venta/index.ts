@@ -60,6 +60,7 @@ const TEMPLATE_NAME = "ml_venta_nueva";
 const TEMPLATE_PREGUNTA = "ml_pregunta_nueva";
 const TEMPLATE_SALDO = "mp_saldo_para_transferir";
 const TEMPLATE_RECORDATORIO = "ml_pregunta_sin_responder";
+const TEMPLATE_REAL = "ml_pregunta_respuesta_real";
 const TEMPLATE_REPARTO = "reparto_unidad_sin_factura";
 const TEMPLATE_FALLBACK = "precios_actualizados";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
@@ -95,11 +96,14 @@ Deno.serve(async (req: Request) => {
   const esSaldo = body?.tipo === "saldo_mp";
   const esRecordatorio = body?.tipo === "pregunta_recordatorio";
   const esReparto = body?.tipo === "reparto_sin_factura";
-  const template = esReparto ? TEMPLATE_REPARTO
+  // Acuse de fuera de horario ya publicado en ML, pero el cliente sigue sin la
+  // respuesta de verdad. Ver portal-precios/src/lib/mlAcuseFinde.ts.
+  const esReal = body?.tipo === "pregunta_real";
+  const template = esReal ? TEMPLATE_REAL : esReparto ? TEMPLATE_REPARTO
     : esRecordatorio ? TEMPLATE_RECORDATORIO : esSaldo ? TEMPLATE_SALDO
     : esPregunta ? TEMPLATE_PREGUNTA : TEMPLATE_NAME;
   if (body?.crear_template === true) {
-    const components = esReparto ? TEMPLATE_REPARTO_COMPONENTS
+    const components = esReal ? TEMPLATE_REAL_COMPONENTS : esReparto ? TEMPLATE_REPARTO_COMPONENTS
       : esRecordatorio ? TEMPLATE_RECORDATORIO_COMPONENTS : esSaldo ? TEMPLATE_SALDO_COMPONENTS
       : esPregunta ? TEMPLATE_PREGUNTA_COMPONENTS : TEMPLATE_COMPONENTS;
     return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN,
@@ -118,7 +122,9 @@ Deno.serve(async (req: Request) => {
   if (!producto || !detalle) return json({ error: "faltan producto y detalle" }, 400);
   const horas = limpiar(body?.horas);
   if (esRecordatorio && !horas) return json({ error: "falta horas" }, 400);
-  const rubro = esReparto ? "reparto_sin_factura"
+  const rubro = esReal
+    ? (body?.escalar === true ? "pregunta_recordatorio,pregunta_escalada" : "pregunta_recordatorio")
+    : esReparto ? "reparto_sin_factura"
     : esRecordatorio
     ? (body?.escalar === true ? "pregunta_recordatorio,pregunta_escalada" : "pregunta_recordatorio")
     : esSaldo ? "saldo_mp" : esPregunta ? "pregunta"
@@ -153,7 +159,9 @@ Deno.serve(async (req: Request) => {
     if (!tel || vistos.has(tel)) continue; // Fer y Catalina están en los dos grupos
     vistos.add(tel);
     const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
-    const r = esReparto
+    const r = esReal
+      ? await enviarReal(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
+      : esReparto
       ? await enviarReparto(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
       : esRecordatorio
       ? await enviarRecordatorio(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, horas, detalle)
@@ -182,6 +190,19 @@ async function enviar(
 }
 
 // producto = el aviso (titulo · MLA), detalle = la pregunta tal cual.
+async function enviarReal(
+  phoneId: string, token: string, tel: string, nombre: string, aviso: string, pregunta: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_REAL, [nombre, recortar(aviso, 200), recortar(pregunta, 700)]);
+  if (propio.ok) return { ...propio, template: TEMPLATE_REAL };
+  const code = propio.error?.code;
+  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+  if (!noExiste) return { ...propio, template: TEMPLATE_REAL };
+  const texto = recortar(`PREGUNTA DE MERCADO LIBRE sobre ${aviso}: "${pregunta}" — solo tiene el acuse automatico, falta la respuesta de verdad. Vela con Repuestos y cerrala en el portal, en Preguntas ML.`, 900);
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
+  return { ...fb, template: TEMPLATE_FALLBACK };
+}
+
 async function enviarPregunta(
   phoneId: string, token: string, tel: string, nombre: string, aviso: string, pregunta: string,
 ): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
@@ -308,6 +329,26 @@ const TEMPLATE_RECORDATORIO_COMPONENTS = [
         "Nadia",
         "Filtro De Aceite Original Vw 04E115561T · MLA3968577738",
         "2 horas habiles",
+        "Hola, le sirve a un Polo 2019 1.6 MSI?",
+      ]],
+    },
+  },
+];
+
+// {{1}} primer nombre · {{2}} el aviso · {{3}} la pregunta.
+const TEMPLATE_REAL_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! La pregunta de Mercado Libre sobre {{2}} tiene solo el acuse automatico de fuera de horario y todavia no la respuesta de verdad.
+
+Pregunta: {{3}}
+
+Vela con el personal de repuestos y contestale al cliente cuando vuelva a preguntar. Despues cerrala en el portal, en Preguntas ML: hasta que este cerrada, este control se repite cada 2 horas habiles.",
+    example: {
+      body_text: [[
+        "Nadia",
+        "Filtro De Aceite Original Vw 04E115561T · MLA3968577738",
         "Hola, le sirve a un Polo 2019 1.6 MSI?",
       ]],
     },
