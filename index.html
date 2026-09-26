@@ -4467,18 +4467,48 @@ function toggleMargenDetalle(id) {
   btn.textContent = abierto ? 'Ver detalle ▼' : 'Ocultar detalle ▲';
 }
 
+// Recalcula la Fórmula FG con una rotación dada, igual que las cards.
+// Alta rotación = 7% (divide menos, paga MÁS) · Normal = 9% · Baja = 11% (paga menos).
+// Devuelve null si no hay 0km equivalente: sin eso no hay de dónde recalcular y
+// pisar el valor guardado con el viejo sería peor que dejarlo.
+function _fgConRotacion(t, rotacion) {
+  if (t.equiv_0km_precio == null || !t.equiv_0km_moneda) return null;
+  const cotiz = getCotiz();
+  const p0 = (t.equiv_0km_moneda === 'USD') ? t.equiv_0km_precio * cotiz : t.equiv_0km_precio;
+  const anios = Math.max(0, 2026 - (t.anio || 2026));
+  const mercado = p0 / 1.05 / Math.pow(1 + (Number(rotacion) || 9) / 100, anios);
+  const ajuste = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override)
+                                                : calcAjusteKm(t.kilometros, t.anio, t.modelo);
+  return { mercado, toma: mercado * (1 + ajuste / 100) * FG_TOMA };
+}
+
 // Cambia el % de rotación anual de una tasación (afecta el cálculo de la Fórmula FG).
 // Re-renderiza solo el card afectado para mantenerlo abierto si lo estaba.
 async function cambiarRotacion(tasId, valor) {
   try {
+    const t0 = (allTasaciones || []).find(x => x.id === tasId);
+    // Hasta el 26-09-2026 esto guardaba SOLO el porcentaje: las cards mostraban el
+    // precio nuevo pero en la base quedaba para siempre la FG calculada al 9%. Todo
+    // lo que lee `precio_formula_vw` después (el análisis del tasador en Baratito,
+    // el control contra Kavak) veía un número que el vendedor ya había cambiado.
+    const campos = { rotacion_anual: valor };
+    const fg = t0 ? _fgConRotacion(t0, valor) : null;
+    if (fg) {
+      campos.precio_formula_vw = Math.round(fg.mercado);
+      campos.precio_formula_vw_toma = Math.round(fg.toma);
+    }
     await sbFetch(`tasaciones?id=eq.${tasId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ rotacion_anual: valor })
+      body: JSON.stringify(campos)
     });
     // Actualizo el dato en memoria
-    const t = (allTasaciones || []).find(x => x.id === tasId);
+    const t = t0;
     if (!t) return;
     t.rotacion_anual = valor;
+    if (fg) {
+      t.precio_formula_vw = Math.round(fg.mercado);
+      t.precio_formula_vw_toma = Math.round(fg.toma);
+    }
 
     // Las de ArgenDreams tienen su propia card: reemplazo solo esa y salgo.
     if (_esExterna(t)) { _argdReRender(t); return; }
