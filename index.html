@@ -3231,7 +3231,7 @@ function renderArgdCard(t) {
       <div class="precio-box vw" style="flex:1; min-width:150px">
         <div class="label">Fórmula FG</div>
         <div class="valor">${c.fgToma ? '$ ' + formatNum(c.fgToma) : 'N/A'}</div>
-        <div class="sub">Mercado: ${c.fgAjustado ? '$ ' + formatNum(Math.round(c.fgAjustado)) : '-'}<br>Toma -14% · Rotación ${c.rotacion}%</div>
+        <div class="sub">Mercado: ${c.fgAjustado ? '$ ' + formatNum(Math.round(c.fgAjustado)) : '-'}<br>Toma -${Math.round((1-FG_TOMA)*100)}% · Rotación ${c.rotacion}%</div>
         ${bloqueado ? '' : `
         <div style="margin-top:6px; display:flex; gap:3px; justify-content:center; flex-wrap:wrap">
           ${[
@@ -3418,7 +3418,7 @@ function renderPreciosReferenciaHTML(t) {
       <div class="precio-box vw">
         <div class="metodo">Fórmula FG</div>
         <div class="valor">${vwToma ? '$ ' + formatNum(Math.round(vwToma)) : 'N/A'}</div>
-        <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>Toma -12% · Rotación ${rotacion}%</div>
+        <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>Toma -${Math.round((1-FG_TOMA)*100)}% · Rotación ${rotacion}%</div>
         ${descRowHTML(vwToma)}
         <div style="margin-top:6px; display:flex; gap:3px; justify-content:center; flex-wrap:wrap">
           ${[
@@ -4103,7 +4103,7 @@ function renderAdminCard(t) {
             <div class="precio-box vw">
               <div class="metodo">Fórmula FG</div>
               <div class="valor">${vwToma ? '$ ' + formatNum(Math.round(vwToma)) : 'N/A'}</div>
-              <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>Toma -14% · Rotación ${rotacion}%</div>
+              <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>Toma -${Math.round((1-FG_TOMA)*100)}% · Rotación ${rotacion}%</div>
               ${descRowHTML(vwToma)}
               <div style="margin-top:6px; display:flex; gap:3px; justify-content:center; flex-wrap:wrap">
                 ${[
