@@ -82,6 +82,31 @@ Deno.serve(async (req: Request) => {
     return json(await borrarTemplate(WA_TOKEN));
   }
 
+  // Aviso del control diario de la tienda (nombres y precios raros). Usa su propio template;
+  // hasta que Meta lo apruebe sale por el de respaldo, igual que los pedidos.
+  if (body?.control === true) {
+    if (body?.crear_template_control === true) {
+      return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN, {
+        name: CONTROL_NOMBRE,
+        language: META_LANGUAGE,
+        category: "UTILITY",
+        components: CONTROL_COMPONENTS,
+      }));
+    }
+    const casos = String(body?.casos ?? "").trim();
+    const det = String(body?.detalle ?? "").replace(/\s+/g, " ").trim();
+    if (!casos || !det) return json({ error: "falta casos o detalle" }, 400);
+    return json(await procesar(
+      { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN },
+      casos,
+      det,
+      String(body?.solo || "").trim() || null,
+      CONTROL_NOMBRE,
+      "TIENDA_CONTROL_DESTINATARIOS",
+      "fngonzalez",     // el control lo mira Fer, no Repuestos
+    ));
+  }
+
   const cantidad = String(body?.cantidad ?? "").trim();
   if (!cantidad) return json({ error: "falta cantidad" }, 400);
   const detalle = String(body?.detalle ?? "").replace(/\s+/g, " ").trim();
@@ -99,16 +124,18 @@ type Env = {
   WA_TOKEN: string;
 };
 
-async function procesar(env: Env, cantidad: string, detalle: string, solo: string | null) {
+async function procesar(env: Env, cantidad: string, detalle: string, solo: string | null,
+                        template = TEMPLATE_NAME, quienes = "TIENDA_PEDIDO_DESTINATARIOS",
+                        porDefecto = DESTINATARIOS_DEFAULT) {
   const { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN } = env;
 
   if (solo) {
     const tel = solo.replace(/^\+/, "").replace(/\s|-/g, "");
-    const r = await enviar(WA_PHONE_ID, WA_TOKEN, tel, "equipo", cantidad, detalle);
+    const r = await enviar(WA_PHONE_ID, WA_TOKEN, tel, "equipo", cantidad, detalle, template);
     return { prueba: true, destino: tel, ...r };
   }
 
-  const usuarios = (Deno.env.get("TIENDA_PEDIDO_DESTINATARIOS") ?? DESTINATARIOS_DEFAULT)
+  const usuarios = (Deno.env.get(quienes) ?? porDefecto)
     .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 
   let users: any[] = [];
@@ -139,7 +166,7 @@ async function procesar(env: Env, cantidad: string, detalle: string, solo: strin
   const errores: any[] = [];
   for (const d of destinatarios) {
     const primerNombre = (d.nombre.split(/\s+/)[0] || d.nombre || "").trim() || "equipo";
-    const r = await enviar(WA_PHONE_ID, WA_TOKEN, d.tel, primerNombre, cantidad, detalle);
+    const r = await enviar(WA_PHONE_ID, WA_TOKEN, d.tel, primerNombre, cantidad, detalle, template);
     if (r.ok) enviados.push({ destinatario: d.nombre, template: r.template, meta_id: r.meta_id });
     else errores.push({ destinatario: d.nombre, error: r.error });
   }
@@ -158,17 +185,18 @@ async function enviar(
   primerNombre: string,
   cantidad: string,
   detalle: string,
+  template = TEMPLATE_NAME,
 ): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
-  const propio = await postMeta(phoneId, token, tel, TEMPLATE_NAME, [
+  const propio = await postMeta(phoneId, token, tel, template, [
     primerNombre,
     cantidad,
     recortar(detalle, 900),
   ]);
-  if (propio.ok) return { ...propio, template: TEMPLATE_NAME };
+  if (propio.ok) return { ...propio, template };
 
   const code = propio.error?.code;
   const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
-  if (!noExiste) return { ...propio, template: TEMPLATE_NAME };
+  if (!noExiste) return { ...propio, template };
 
   const texto = recortar(
     `🛒 PEDIDO DE LA TIENDA DE REPUESTOS: ${cantidad} — ${detalle} — ya está en el CRM, área Repuestos.`,
@@ -211,6 +239,23 @@ async function postMeta(
     return { ok: false, error: String(e) };
   }
 }
+
+// Control diario de la tienda: {{1}} primer nombre · {{2}} cuantos casos · {{3}} el detalle.
+const CONTROL_NOMBRE = "tienda_control_nombres";
+const CONTROL_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! El control diario de la tienda de repuestos encontro {{2}} para revisar.\n\n{{3}}\n\nEstan en la tabla tienda_control.",
+    example: {
+      body_text: [[
+        "Fer",
+        "3 cosas",
+        "5C6-945-260: el aviso de ML dice Linterna y VW la llama Portalamparas ($99.357)",
+      ]],
+    },
+  },
+];
 
 // {{1}} primer nombre · {{2}} la pieza ("Filtro de aceite 04E-115-561-T") · {{3}} el pedido.
 const TEMPLATE_COMPONENTS = [
