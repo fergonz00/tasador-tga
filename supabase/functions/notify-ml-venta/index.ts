@@ -61,6 +61,7 @@ const TEMPLATE_PREGUNTA = "ml_pregunta_nueva";
 const TEMPLATE_SALDO = "mp_saldo_para_transferir";
 const TEMPLATE_RECORDATORIO = "ml_pregunta_sin_responder";
 const TEMPLATE_REPARTO = "reparto_unidad_sin_factura";
+const TEMPLATE_COMPRA = "ml_compra_respuesta";
 const TEMPLATE_FALLBACK = "precios_actualizados";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 
@@ -95,11 +96,13 @@ Deno.serve(async (req: Request) => {
   const esSaldo = body?.tipo === "saldo_mp";
   const esRecordatorio = body?.tipo === "pregunta_recordatorio";
   const esReparto = body?.tipo === "reparto_sin_factura";
-  const template = esReparto ? TEMPLATE_REPARTO
+  const esCompra = body?.tipo === "compra_respuesta";
+  const template = esCompra ? TEMPLATE_COMPRA : esReparto ? TEMPLATE_REPARTO
     : esRecordatorio ? TEMPLATE_RECORDATORIO : esSaldo ? TEMPLATE_SALDO
     : esPregunta ? TEMPLATE_PREGUNTA : TEMPLATE_NAME;
   if (body?.crear_template === true) {
-    const components = esReparto ? TEMPLATE_REPARTO_COMPONENTS
+    const components = esCompra ? TEMPLATE_COMPRA_COMPONENTS
+      : esReparto ? TEMPLATE_REPARTO_COMPONENTS
       : esRecordatorio ? TEMPLATE_RECORDATORIO_COMPONENTS : esSaldo ? TEMPLATE_SALDO_COMPONENTS
       : esPregunta ? TEMPLATE_PREGUNTA_COMPONENTS : TEMPLATE_COMPONENTS;
     return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN,
@@ -118,7 +121,8 @@ Deno.serve(async (req: Request) => {
   if (!producto || !detalle) return json({ error: "faltan producto y detalle" }, 400);
   const horas = limpiar(body?.horas);
   if (esRecordatorio && !horas) return json({ error: "falta horas" }, 400);
-  const rubro = esReparto ? "reparto_sin_factura"
+  const rubro = esCompra ? "compra_ml"
+    : esReparto ? "reparto_sin_factura"
     : esRecordatorio
     ? (body?.escalar === true ? "pregunta_recordatorio,pregunta_escalada" : "pregunta_recordatorio")
     : esSaldo ? "saldo_mp" : esPregunta ? "pregunta"
@@ -153,7 +157,9 @@ Deno.serve(async (req: Request) => {
     if (!tel || vistos.has(tel)) continue; // Fer y Catalina están en los dos grupos
     vistos.add(tel);
     const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
-    const r = esReparto
+    const r = esCompra
+      ? await enviarCompra(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
+      : esReparto
       ? await enviarReparto(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
       : esRecordatorio
       ? await enviarRecordatorio(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, horas, detalle)
@@ -182,6 +188,23 @@ async function enviar(
 }
 
 // producto = el aviso (titulo · MLA), detalle = la pregunta tal cual.
+// producto = el auto + lo que le ofrecimos, detalle = lo que contestó el dueño.
+// Si el template propio todavía no está aprobado por Meta, cae al de siempre:
+// el aviso tiene que llegar igual, aunque sea con menos formato.
+async function enviarCompra(
+  phoneId: string, token: string, tel: string, nombre: string, auto: string, respuesta: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_COMPRA,
+    [nombre, recortar(auto, 200), recortar(respuesta, 700)]);
+  if (propio.ok) return { ...propio, template: TEMPLATE_COMPRA };
+  const code = propio.error?.code;
+  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+  if (!noExiste) return { ...propio, template: TEMPLATE_COMPRA };
+  const texto = recortar(`\u{1F4AC} CONTESTARON LA OFERTA DE COMPRA de ${auto}: "${respuesta}" \u2014 entra al tasador, solapa Compra ML.`, 900);
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
+  return { ...fb, template: TEMPLATE_FALLBACK };
+}
+
 async function enviarPregunta(
   phoneId: string, token: string, tel: string, nombre: string, aviso: string, pregunta: string,
 ): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
@@ -282,6 +305,25 @@ const TEMPLATE_COMPONENTS = [
 ];
 
 // {{1}} primer nombre · {{2}} el aviso · {{3}} la pregunta.
+// Un particular contestó la oferta que le dejamos en su aviso (solapa Compra ML
+// del tasador). Es lo contrario de `pregunta`: ahí alguien nos pregunta a
+// nosotros; acá contestaron lo que preguntamos nosotros. Por eso template y
+// destinatarios propios: el aviso va a Fer, no a Nadia, y manda al tasador.
+const TEMPLATE_COMPRA_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! Contestaron la oferta de compra de: {{2}}.\n\nRespuesta: {{3}}\n\nEntra al tasador, solapa Compra ML, para seguirla.",
+    example: {
+      body_text: [[
+        "Fer",
+        "Volkswagen Virtus 2020 1.6 Msi Trendline - le ofrecimos 16.000.000",
+        "Hola, por 17 lo cierro",
+      ]],
+    },
+  },
+];
+
 const TEMPLATE_PREGUNTA_COMPONENTS = [
   {
     type: "BODY",

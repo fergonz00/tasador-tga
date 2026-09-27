@@ -2817,17 +2817,36 @@ function renderAdminList(tasaciones) {
       list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">No hay autos de ML para evaluar</div>';
       return;
     }
-    // Los que ya tienen precio NO se van del tab: quedan abajo con el tilde, para
-    // poder volver a mirarlos y seguir la respuesta. Arriba, lo que falta tasar.
-    const conPrecio = soloML.filter(_mlYaTasado).length;
-    const ordenados = [...soloML].sort((a, b) => (_mlYaTasado(a) ? 1 : 0) - (_mlYaTasado(b) ? 1 : 0));
+    // Por etapa del circuito, en el orden en que se trabajan. Nada desaparece:
+    // lo ofrecido queda esperando respuesta y lo que contestó sube arriba de todo.
+    const ETAPAS = [
+      { id: 'contesto', titulo: '💬 Contestaron', color: '#065F46', fondo: '#D1FAE5',
+        ayuda: 'Respondieron la oferta. Hay que contestarles.' },
+      { id: 'para_ofertar', titulo: '💰 Para ofertar', color: '#92400E', fondo: '#FFFBEB',
+        ayuda: 'Mirá las fotos y el comparativo, y poné el precio que ofrecés.' },
+      { id: 'ofrecido', titulo: '✉️ Ya les ofrecí — esperando respuesta', color: '#1E40AF', fondo: '#EFF6FF',
+        ayuda: 'La pregunta ya está publicada en el aviso. Llega un WhatsApp cuando contesten.' },
+      { id: 'lejos', titulo: '🚫 Lejos de precio', color: '#991B1B', fondo: '#FEF2F2',
+        ayuda: `Ni Kavak ni Flash llegan al ${100 - TOPE_DIF_OFERTA * 100}% de lo que pide. No se ofertan.` }
+    ];
+    const porEtapa = {};
+    for (const t of soloML) (porEtapa[_etapaML(t)] = porEtapa[_etapaML(t)] || []).push(t);
+
     list.innerHTML =
-      '<div style="margin:0 16px 12px; padding:10px 14px; background:#FFFBEB; border-left:3px solid #F59E0B; border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">' +
-      '💰 Usados de <b>particulares</b> publicados en Mercado Libre, a menos de 150 km. Mirá las fotos y el comparativo, y poné el precio que ofrecés.' +
-      `<div style="margin-top:6px; font-weight:600">${soloML.length} auto${soloML.length === 1 ? '' : 's'} · ` +
-      `<span style="color:var(--green)">✓ ${conPrecio} con precio puesto</span> · ` +
-      `<span style="color:#92400E">${soloML.length - conPrecio} sin precio</span></div></div>` +
-      ordenados.map(t => _bloqueCompraML(t) + renderAdminCard(t)).join('');
+      '<div style="margin:0 16px 12px; padding:10px 14px; background:var(--vw-grey-1); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.6">' +
+      '💰 Usados de <b>particulares</b> publicados en Mercado Libre, a menos de 150 km.' +
+      `<div style="margin-top:5px; font-weight:600">${ETAPAS.map(e =>
+        `<span style="color:${e.color}">${e.titulo.replace(/ —.*/, '')}: ${(porEtapa[e.id] || []).length}</span>`
+      ).join(' · ')}</div></div>` +
+      ETAPAS.map(e => {
+        const grupo = porEtapa[e.id] || [];
+        if (!grupo.length) return '';
+        return `<div style="margin:16px 16px 8px; padding:8px 12px; background:${e.fondo}; border-left:3px solid ${e.color}; border-radius:4px">
+            <div style="font-size:13px; font-weight:700; color:${e.color}">${e.titulo} (${grupo.length})</div>
+            <div style="font-size:11px; color:var(--vw-grey-5); margin-top:2px">${e.ayuda}</div>
+          </div>` +
+          grupo.map(t => _bloqueCompraML(t) + renderAdminCard(t)).join('');
+      }).join('');
     return;
   }
   data = data.filter(t => !_esCompraML(t));
@@ -2950,6 +2969,9 @@ function abrirOfertaML(id) {
   }
   const d = t.origen_datos || {};
   if (d.oferta_enviada_at) { showToast('A este aviso ya le preguntamos'); return; }
+  // El mismo freno que en el bloque, por si se llega acá desde el guardado.
+  const ref = _refCompra(t);
+  if (!ref.ok) { showToast('No se oferta: ' + ref.motivo); return; }
 
   const viejo = document.getElementById('ofertaMLModal');
   if (viejo) viejo.remove();
@@ -3037,6 +3059,47 @@ async function enviarOfertaML(id) {
  *  el 0km equivalente ya resueltos, así el tasador calcula el resto solo. */
 function _esCompraML(t) {
   return !!(t && t.origen === 'ml');
+}
+
+
+/**
+ * Regla de Fer (26-09-2026): se oferta SOLO si Kavak o Flash quedan a 15% o menos
+ * de lo que pide el dueño. Si la mejor oferta real de compra está más abajo, la
+ * diferencia es demasiado grande y no se llega a un acuerdo: no se molesta a nadie.
+ *
+ * Se mide contra la MEJOR de las dos. Sin Kavak ni Flash no hay referencia de
+ * compra y tampoco se oferta: la Fórmula FG y el CCA son control, no precio de
+ * compra. Ojo con el sentido: la que importa es la diferencia hacia abajo; si una
+ * tasadora paga MÁS de lo que pide, mejor todavía.
+ */
+const TOPE_DIF_OFERTA = 0.15;
+
+function _refCompra(t) {
+  const d = t.origen_datos || {};
+  const pide = Number(d.pide) || 0;
+  const kavak = Number(t.precio_kavak_auto) || 0;
+  const flash = Number(d.flash) || 0;
+  const mejor = Math.max(kavak, flash);
+  if (!pide || !mejor) {
+    return { ok: false, pide, mejor: 0, dif: null, fuente: null,
+             motivo: 'sin Kavak ni Flash: no hay referencia de compra' };
+  }
+  const fuente = mejor === kavak ? 'Kavak' : 'Flash';
+  const dif = mejor / pide - 1;           // negativo = paga menos de lo que pide
+  if (dif < -TOPE_DIF_OFERTA) {
+    return { ok: false, pide, mejor, dif, fuente,
+             motivo: `${fuente} paga ${(dif * 100).toFixed(1)}% de lo que pide (tope ${-TOPE_DIF_OFERTA * 100}%)` };
+  }
+  return { ok: true, pide, mejor, dif, fuente, motivo: null };
+}
+
+/** Etapa del circuito. Es lo que ordena la solapa. */
+function _etapaML(t) {
+  const d = t.origen_datos || {};
+  if (d.oferta_respondida_at) return 'contesto';
+  if (d.oferta_enviada_at) return 'ofrecido';
+  if (!_refCompra(t).ok) return 'lejos';
+  return 'para_ofertar';
 }
 
 /** Ya le puso precio. Es el mismo campo que una tasación normal
@@ -3240,11 +3303,25 @@ function _bloqueCompraML(t) {
       <div style="margin:-8px -12px 8px; padding:7px 12px; background:#ECFDF5; border-bottom:1px solid #A7F3D0; font-size:12px; color:#065F46">
         ✉️ Pregunta publicada el ${new Date(d.oferta_enviada_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}${d.oferta_enviada_por ? ' por ' + d.oferta_enviada_por : ''}
         <div style="margin-top:3px; color:var(--vw-grey-5); font-style:italic">“${(d.oferta_texto || '').replace(/"/g, '&quot;')}”</div>
-      </div>` : `
-      <div style="margin:-8px -12px 8px; padding:7px 12px; background:#FFFBEB; border-bottom:1px solid #FDE68A; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
-        <span style="font-size:12px; color:#92400E; font-weight:600">Falta mandarle la oferta al dueño</span>
-        <button onclick="event.stopPropagation(); abrirOfertaML('${t.id}')" style="padding:6px 12px; background:#065F46; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">✉️ Ver y enviar el mensaje</button>
-      </div>`}`;
+        ${d.oferta_respondida_at ? `
+        <div style="margin-top:6px; padding:6px 8px; background:white; border-radius:4px; border-left:2px solid #065F46">
+          <b>Contestó el ${new Date(d.oferta_respondida_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}:</b>
+          <div style="margin-top:2px; white-space:pre-wrap">${(d.oferta_respuesta || '').replace(/</g, '&lt;')}</div>
+          ${d.link ? `<a href="${d.link}" target="_blank" rel="noopener" style="font-size:11px">contestarle en el aviso ↗</a>` : ''}
+        </div>` : '<div style="margin-top:4px; font-size:11px; opacity:.8">Todavía no contestó. Cuando lo haga llega un WhatsApp.</div>'}
+      </div>` : (() => {
+        const ref = _refCompra(t);
+        if (!ref.ok) {
+          return `<div style="margin:-8px -12px 8px; padding:7px 12px; background:#FEF2F2; border-bottom:1px solid #FECACA; font-size:12px; color:#991B1B">
+            🚫 <b>No se oferta:</b> ${ref.motivo}.
+            <div style="margin-top:2px; color:var(--vw-grey-5)">La diferencia es muy grande para llegar a un acuerdo.</div>
+          </div>`;
+        }
+        return `<div style="margin:-8px -12px 8px; padding:7px 12px; background:#FFFBEB; border-bottom:1px solid #FDE68A; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
+          <span style="font-size:12px; color:#92400E; font-weight:600">Ofertable: ${ref.fuente} está a ${(ref.dif * 100).toFixed(1)}% de lo que pide</span>
+          <button onclick="event.stopPropagation(); abrirOfertaML('${t.id}')" style="padding:6px 12px; background:#065F46; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">✉️ Ver y enviar el mensaje</button>
+        </div>`;
+      })()}`;
   return `
     <div style="margin:0 0 10px; padding:10px 12px; background:${ya ? '#F0FDF4' : '#FFFBEB'}; border-left:3px solid ${ya ? 'var(--green)' : '#F59E0B'}; border-radius:4px; font-size:13px">
       ${tilde}
