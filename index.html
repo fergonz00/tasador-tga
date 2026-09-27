@@ -2921,6 +2921,37 @@ function _esCompraML(t) {
   return !!(t && t.origen === 'ml');
 }
 
+/** El % de diferencia entre una cotización y lo que pide el dueño del auto.
+ *  Solo tiene sentido en las de ML: una tasación común no tiene "lo que pide".
+ *  Verde = queda por debajo de lo pedido (nos conviene), rojo = lo supera. */
+function _pctPide(t, valor) {
+  if (!_esCompraML(t) || !valor) return '';
+  const pide = Number((t.origen_datos || {}).pide) || 0;
+  if (!pide) return '';
+  const p = (valor / pide - 1) * 100;
+  const color = p <= 0 ? 'var(--green)' : 'var(--red)';
+  return `<div class="sub" style="color:${color}; font-weight:700; opacity:1">${p > 0 ? '+' : ''}${p.toFixed(1)}% vs lo que pide</div>`;
+}
+
+/** Flash y Carmuv como cajas del mismo grid, para que se lean junto a las otras
+ *  tres en vez de en un bloque aparte. Solo en las de ML. */
+function _cajasCompraML(t) {
+  if (!_esCompraML(t)) return '';
+  const d = t.origen_datos || {};
+  const caja = (clase, titulo, valor, sub) => `
+    <div class="precio-box ${clase}" style="flex:1; min-width:150px">
+      <div class="metodo">${titulo}</div>
+      <div class="valor">${valor ? '$ ' + formatNum(Math.round(valor)) : 'N/A'}</div>
+      <div class="sub">${sub}</div>
+      ${_pctPide(t, valor)}
+    </div>`;
+  return (
+    caja('kavak', 'Flash', d.flash, d.flash_estado === 'no oferto'
+      ? 'Flash NO quiere este auto' : 'lo que paga hoy') +
+    caja('cca', 'Carmuv', d.carmuv, '⚠️ TECHO: cotiza con 1 km')
+  );
+}
+
 /** Lo que agrega una de ML sobre la card normal: lo que pide el dueño, el link
  *  al aviso y las otras dos cotizaciones que no tiene una tasación común. */
 function _bloqueCompraML(t) {
@@ -3182,7 +3213,8 @@ function kavakBoxHTML(t, opts) {
       <div class="precio-box kavak"${opts.estiloBox ? ` style="${opts.estiloBox}"` : ''}>
         <div class="${claseTitulo}">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(automático)</span></div>
         ${principal}
-        <div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15)">
+        ${_pctPide(t, auto)}
+        <div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15); ${_esCompraML(t) ? 'display:none' : ''}">
           <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; opacity:0.7">Lo cargó el vendedor${manual != null ? ` — $ ${formatNum(Math.round(manual))}` : ''}</div>
           <div style="display:flex; align-items:center; gap:4px; margin-top:3px">
             <span style="font-family:var(--mono); font-size:11px; font-weight:700">$</span>
@@ -4159,12 +4191,14 @@ function renderAdminCard(t) {
               <div class="metodo">CCA</div>
               <div class="valor">${ccaToma ? '$ ' + formatNum(Math.round(ccaToma)) : 'N/A'}</div>
               <div class="sub">Público: ${ccaAjustado ? '$ ' + formatNum(Math.round(ccaAjustado)) : '-'}<br>Toma -14%</div>
+              ${_pctPide(t, ccaToma)}
               ${descRowHTML(ccaToma)}
             </div>
             <div class="precio-box vw">
               <div class="metodo">Fórmula FG</div>
               <div class="valor">${vwToma ? '$ ' + formatNum(Math.round(vwToma)) : 'N/A'}</div>
               <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>Toma -${Math.round((1-FG_TOMA)*100)}% · Rotación ${rotacion}%</div>
+              ${_pctPide(t, vwToma)}
               ${descRowHTML(vwToma)}
               <div style="margin-top:6px; display:flex; gap:3px; justify-content:center; flex-wrap:wrap">
                 ${[
@@ -4177,6 +4211,7 @@ function renderAdminCard(t) {
               </div>
             </div>
             ${kavakBoxHTML(t, { descRow: descRowHTML })}
+            ${_cajasCompraML(t)}
           </div>
         `;
       })()}
