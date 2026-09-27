@@ -2921,6 +2921,117 @@ function _esExterna(t) {
   return !!(t && t.origen && t.origen !== 'tga' && t.origen !== 'ml');
 }
 
+
+// ============ OFERTA POR MERCADO LIBRE (Compra ML) ============
+//
+// Son dos pasos a propósito: Fer guarda el precio, ve el mensaje exacto que va a
+// salir publicado en el aviso del particular y confirma. Nunca sale solo.
+//
+// ⚠️ Los T&C de ML prohíben el "envío masivo de solicitudes" automatizadas. Que
+// cada pregunta la confirme una persona no es un lujo de diseño: es la condición
+// para que esto sea una consulta y no un envío masivo. No agregar modo lote.
+//
+// El apodo con el que se publica es TITOGONZALEZAUTOMOTORES, así que el mensaje
+// no repite el nombre: el particular ya lo ve. Lo que no se ve —y sí da
+// confianza— es que somos oficiales VW, y eso sí va.
+
+function _mensajeOferta(t) {
+  const precio = Number(t.precio_toma_virtual) || 0;
+  return 'Hola! Somos concesionario oficial Volkswagen. Te ofrecemos $' +
+    formatNum(Math.round(precio)) + ' por tu auto, sujeto a verlo físicamente en ' +
+    'el concesionario. Si te interesa contestá por acá y coordinamos. Gracias!';
+}
+
+function abrirOfertaML(id) {
+  const t = (allTasaciones || []).find(x => x.id === id);
+  if (!t) { showToast('No encontré esa tasación'); return; }
+  if (!(Number(t.precio_toma_virtual) > 0)) {
+    showToast('Primero guardá el precio que ofrecés'); return;
+  }
+  const d = t.origen_datos || {};
+  if (d.oferta_enviada_at) { showToast('A este aviso ya le preguntamos'); return; }
+
+  const viejo = document.getElementById('ofertaMLModal');
+  if (viejo) viejo.remove();
+  const pide = Number(d.pide) || 0;
+  const precio = Number(t.precio_toma_virtual);
+  const pct = pide ? ((precio / pide - 1) * 100).toFixed(1) : null;
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="ofertaMLModal" class="modal-overlay" onclick="if(event.target===this)cerrarOfertaML()">
+      <div class="modal-box" style="max-width:560px">
+        <div class="modal-header">
+          <div style="flex:1">
+            <div style="font-size:16px; font-weight:700">✉️ Mandar la oferta al dueño</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">
+              Se publica como pregunta en el aviso, firmada TITOGONZALEZAUTOMOTORES.
+            </div>
+          </div>
+        </div>
+        <div style="padding:4px 0 0">
+          <div style="font-size:13px; padding:8px 10px; background:var(--vw-grey-1); border-radius:6px; margin-bottom:10px">
+            <div><b>${d.titulo_ml || ''}</b></div>
+            <div style="margin-top:3px">
+              Pide <b>${formatNum(pide)}</b> · ofrecemos <b>${formatNum(Math.round(precio))}</b>
+              ${pct !== null ? `<span style="color:${precio <= pide ? 'var(--green)' : 'var(--red)'}; font-weight:700"> (${precio > pide ? '+' : ''}${pct}%)</span>` : ''}
+            </div>
+            ${d.link ? `<a href="${d.link}" target="_blank" rel="noopener" style="font-size:12px">ver el aviso ↗</a>` : ''}
+          </div>
+          <label style="font-size:12px; font-weight:700; color:var(--vw-grey-5)">Mensaje que se publica</label>
+          <textarea id="ofertaMLTexto" rows="5" oninput="_ofertaMLLargo()"
+            style="width:100%; margin-top:4px; padding:9px 10px; font-size:13px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box; resize:vertical; font-family:var(--sans)">${_mensajeOferta(t)}</textarea>
+          <div id="ofertaMLLargo" style="font-size:11px; color:var(--vw-grey-4); margin-top:3px"></div>
+        </div>
+        <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap">
+          <button onclick="cerrarOfertaML()" style="padding:9px 14px; background:white; color:var(--vw-grey-5); border:1px solid var(--vw-grey-2); border-radius:6px; font-weight:600; font-size:13px; cursor:pointer">Cancelar</button>
+          <button id="ofertaMLEnviar" onclick="enviarOfertaML('${id}')" style="padding:9px 16px; background:#065F46; color:white; border:none; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer">Publicar la pregunta</button>
+        </div>
+      </div>
+    </div>`);
+  _ofertaMLLargo();
+}
+
+function _ofertaMLLargo() {
+  const ta = document.getElementById('ofertaMLTexto');
+  const out = document.getElementById('ofertaMLLargo');
+  if (!ta || !out) return;
+  const n = (ta.value || '').trim().length;
+  out.textContent = n + ' de 2.000 caracteres' + (n < 10 ? ' — muy corto' : '');
+  out.style.color = (n < 10 || n > 2000) ? 'var(--red)' : 'var(--vw-grey-4)';
+}
+
+function cerrarOfertaML() {
+  const m = document.getElementById('ofertaMLModal');
+  if (m) m.remove();
+}
+
+async function enviarOfertaML(id) {
+  const ta = document.getElementById('ofertaMLTexto');
+  const btn = document.getElementById('ofertaMLEnviar');
+  const texto = ta ? (ta.value || '').trim() : '';
+  if (texto.length < 10 || texto.length > 2000) { showToast('Revisá el largo del mensaje'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Publicando...'; }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/ml-preguntar`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ session: _waSession(), tasacion_id: id, texto })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || `Error ${res.status}`);
+    cerrarOfertaML();
+    showToast(data.aviso || 'Pregunta publicada en el aviso');
+    loadAdminTasaciones(adminFiltroEstado || 'compra_ml');
+  } catch (e) {
+    console.error(e);
+    showToast(String(e.message || e).slice(0, 140));
+    if (btn) { btn.disabled = false; btn.textContent = 'Publicar la pregunta'; }
+  }
+}
+
 /** Autos de particulares publicados en ML que estamos evaluando para comprar.
  *  Los carga `cargar_tasador.py` (repo kavak-cotizador) con el CCA, el Kavak y
  *  el 0km equivalente ya resueltos, así el tasador calcula el resto solo. */
@@ -3123,8 +3234,17 @@ function _bloqueCompraML(t) {
                   margin:-10px -12px 8px; padding:7px 12px; background:#D1FAE5; border-bottom:1px solid #6EE7B7;
                   border-radius:4px 4px 0 0; color:#065F46; font-weight:700">
         <span>✓ Ya le puse precio: $ ${formatNum(Math.round(oferta))} ${pct(oferta)}</span>
-        <span style="font-size:11px; font-weight:600; opacity:.85">${fechaOf}${t.precio_toma_virtual_por ? ' · ' + t.precio_toma_virtual_por : ''} · ${d.oferta_enviada_at ? 'pregunta enviada' : 'pregunta sin enviar'}</span>
-      </div>`;
+        <span style="font-size:11px; font-weight:600; opacity:.85">${fechaOf}${t.precio_toma_virtual_por ? ' · ' + t.precio_toma_virtual_por : ''}</span>
+      </div>
+      ${d.oferta_enviada_at ? `
+      <div style="margin:-8px -12px 8px; padding:7px 12px; background:#ECFDF5; border-bottom:1px solid #A7F3D0; font-size:12px; color:#065F46">
+        ✉️ Pregunta publicada el ${new Date(d.oferta_enviada_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}${d.oferta_enviada_por ? ' por ' + d.oferta_enviada_por : ''}
+        <div style="margin-top:3px; color:var(--vw-grey-5); font-style:italic">“${(d.oferta_texto || '').replace(/"/g, '&quot;')}”</div>
+      </div>` : `
+      <div style="margin:-8px -12px 8px; padding:7px 12px; background:#FFFBEB; border-bottom:1px solid #FDE68A; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
+        <span style="font-size:12px; color:#92400E; font-weight:600">Falta mandarle la oferta al dueño</span>
+        <button onclick="event.stopPropagation(); abrirOfertaML('${t.id}')" style="padding:6px 12px; background:#065F46; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">✉️ Ver y enviar el mensaje</button>
+      </div>`}`;
   return `
     <div style="margin:0 0 10px; padding:10px 12px; background:${ya ? '#F0FDF4' : '#FFFBEB'}; border-left:3px solid ${ya ? 'var(--green)' : '#F59E0B'}; border-radius:4px; font-size:13px">
       ${tilde}
@@ -6559,8 +6679,14 @@ async function guardarPrecioVirtual(id) {
     const tas = (allTasaciones || []).find(x => x.id === id);
     if (_esCompraML(tas)) {
       // Un auto de ML no tiene vendedor del salón: el WhatsApp no va a ningún lado.
-      // Lo que sigue es la pregunta en el aviso, y esa se confirma aparte.
+      // Lo que sigue es la pregunta en el aviso: se abre el mensaje para que lo
+      // lea y confirme. Es el segundo paso, no se publica nada todavía.
       showToast('Precio guardado');
+      if (!((tas.origen_datos || {}).oferta_enviada_at)) {
+        tas.precio_toma_virtual = precio;
+        setTimeout(() => abrirOfertaML(id), 150);
+        return;
+      }
     } else {
       showToast('Precio virtual guardado');
       // WhatsApp: evento "tasacion_virtual_completada" — avisa al vendedor con el precio
