@@ -699,6 +699,7 @@ input, select, textarea { font-family: var(--font); }
         <button onclick="showAdminTab('usado_tomado', this)">Usado tomado</button>
         <button onclick="showAdminTab('todas', this)">Todas</button>
         <button id="tabArgd" class="hidden" onclick="showAdminTab('argendreams', this)">🤝 ArgenDreams</button>
+        <button onclick="showAdminTab('compra_ml', this)">💰 Compra ML</button>
       </div>
       <div class="cotiz-bar">
         <label>Cotización USD:</label>
@@ -2807,6 +2808,23 @@ function renderAdminList(tasaciones) {
   // mientras están SIN cotizar viven en "Pendientes" mezcladas con las propias
   // (es lo primero que mira al entrar, así no se le pasan), y en cuanto les
   // pone precio se mudan al tab ArgenDreams a esperar el resultado.
+  // Compra por ML: autos de particulares que estamos evaluando comprar. Van con
+  // la card normal —el mismo comparativo de siempre— más un bloque con lo que
+  // pide el dueño y el link al aviso.
+  if (adminFiltroEstado === 'compra_ml') {
+    const soloML = data.filter(_esCompraML);
+    if (soloML.length === 0) {
+      list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">No hay autos de ML para evaluar</div>';
+      return;
+    }
+    list.innerHTML =
+      '<div style="margin:0 16px 12px; padding:10px 14px; background:#FFFBEB; border-left:3px solid #F59E0B; border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">' +
+      '💰 Usados de <b>particulares</b> publicados en Mercado Libre, a menos de 150 km. Mirá las fotos y el comparativo, y poné el precio que ofrecés.</div>' +
+      soloML.map(t => _bloqueCompraML(t) + renderAdminCard(t)).join('');
+    return;
+  }
+  data = data.filter(t => !_esCompraML(t));
+
   if (adminFiltroEstado === 'argendreams') {
     if (!_esArgd()) { list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">No autorizado</div>'; return; }
     return renderArgdList(data.filter(_esExterna));
@@ -2891,7 +2909,50 @@ function _esArgd() {
 }
 
 function _esExterna(t) {
-  return !!(t && t.origen && t.origen !== 'tga');
+  // Las de compra por ML tienen origen propio pero NO son externas en el sentido
+  // de ArgenDreams: usan la card normal, con el mismo comparativo de siempre.
+  return !!(t && t.origen && t.origen !== 'tga' && t.origen !== 'ml');
+}
+
+/** Autos de particulares publicados en ML que estamos evaluando para comprar.
+ *  Los carga `cargar_tasador.py` (repo kavak-cotizador) con el CCA, el Kavak y
+ *  el 0km equivalente ya resueltos, así el tasador calcula el resto solo. */
+function _esCompraML(t) {
+  return !!(t && t.origen === 'ml');
+}
+
+/** Lo que agrega una de ML sobre la card normal: lo que pide el dueño, el link
+ *  al aviso y las otras dos cotizaciones que no tiene una tasación común. */
+function _bloqueCompraML(t) {
+  const d = t.origen_datos || {};
+  const pide = Number(d.pide) || 0;
+  const pct = (v) => (v && pide) ? `<span style="color:${v <= pide ? 'var(--green)' : 'var(--red)'}">${v > pide ? '+' : ''}${((v / pide - 1) * 100).toFixed(1)}%</span>` : '';
+  const fila = (nombre, valor, ayuda) => `
+    <div style="display:flex; justify-content:space-between; gap:8px; padding:3px 0; border-bottom:1px solid var(--vw-grey-1)">
+      <span title="${ayuda || ''}">${nombre}</span>
+      <span><b>${valor ? formatNum(Math.round(valor)) : '—'}</b> ${pct(valor)}</span>
+    </div>`;
+  // ⚠️ El alt de las fotos dice de qué auto son. Si no habla del mismo modelo
+  // que la tasación, las fotos no son de esta unidad.
+  const alt = d.foto_alt || '';
+  const coincide = alt && (alt.toUpperCase().match(/[A-Z0-9]{3,}/g) || [])
+    .filter(x => (t.modelo || '').toUpperCase().includes(x)).length > 0;
+  return `
+    <div style="margin:0 0 10px; padding:10px 12px; background:#FFFBEB; border-left:3px solid #F59E0B; border-radius:4px; font-size:13px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
+        <b>${d.titulo_ml || ''}</b>
+        <a href="${d.link || '#'}" target="_blank" rel="noopener" style="font-size:12px">ver el aviso ↗</a>
+      </div>
+      <div style="font-size:12px; color:var(--vw-grey-4); margin:2px 0 6px">
+        ${d.localidad || ''}${d.partido && d.partido !== d.localidad ? ' · ' + d.partido : ''}
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:2px solid var(--vw-grey-2)">
+        <span><b>Pide</b></span><span><b>${formatNum(pide)}</b></span>
+      </div>
+      ${fila('Flash', d.flash, 'lo que paga Flash hoy')}
+      ${fila('Carmuv', d.carmuv, 'TECHO: Carmuv cotiza como si tuviera 1 km')}
+      ${!coincide && alt ? `<div style="margin-top:6px; color:var(--red); font-size:12px">⚠️ Las fotos podrían no ser de este auto: el aviso las rotula “${alt}”.</div>` : ''}
+    </div>`;
 }
 
 // Modelo 0km de la planilla VW para la Fórmula FG.
