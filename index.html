@@ -2988,7 +2988,7 @@ const _GAMA_CHK = [
   { nivel: 4, nombre: 'GTI', re: /\bGTI\b/ },
   { nivel: 4, nombre: 'GLI', re: /\bGLI\b/ },
   { nivel: 3, nombre: 'HIGHLINE', re: /HIGH\w*/ },
-  { nivel: 2, nombre: 'COMFORTLINE', re: /C[O0]MFORT\w*|CONFORT\w*/ },
+  { nivel: 2, nombre: 'COMFORTLINE', re: /\bCOMF\w*|\bCONF\w*/ },
   { nivel: 1, nombre: 'TRENDLINE', re: /TREND\w*/ },
   { nivel: 1, nombre: 'LIFE', re: /\bLIFE\b/ },
   { nivel: 1, nombre: 'START', re: /\bSTART\b/ },
@@ -3004,14 +3004,21 @@ function _gamaChk(txt) {
   return null;
 }
 
-/** Cabina de una pick-up. Es el error más caro: una Saveiro cabina doble
- *  tasada con la fila de cabina simple del CCA se va millones para abajo. */
+/**
+ * Cabina de una pick-up: simple, extendida o doble. Es el error más caro
+ * — una Saveiro cabina doble tasada con la fila de cabina simple del CCA se va
+ * millones para abajo.
+ *
+ * ⚠️ NO se deduce de la gama. La Saveiro MY26 Comfortline es cabina doble, pero
+ * la 2021 Comfortline era cabina EXTENDIDA (la doble de ese año era Highline).
+ * Deducirlo daba "doble" para un aviso de 2021 y marcaba mal el control.
+ * Si el aviso no dice la cabina, se dice que no la dice.
+ */
 function _cabina(txt) {
   const t = (txt || '').toUpperCase();
-  if (/\bC\s*\/?\s*D\b|\bCD\b|DOBLE|\bDC\b/.test(t)) return 'doble';
+  if (/\bC\s*\/?\s*EXT|CABINA\s*EXT|\bCE\b/.test(t)) return 'extendida';
+  if (/\bD\s*\/?\s*C\b|\bCD\b|DOBLE|\bDC\b/.test(t)) return 'doble';
   if (/\bC\s*\/?\s*S\b|\bCS\b|SIMPLE|\bSC\b/.test(t)) return 'simple';
-  // En VW, Comfortline y Highline de Saveiro son siempre cabina doble.
-  if (/(COMFORT|CONFORT)|HIGH/.test(t) && /SAVEIRO/.test(t)) return 'doble';
   return null;
 }
 
@@ -3053,6 +3060,7 @@ function _lecturaFuentes(t) {
     }
     if (gA && !g) flojos.push(`no le leí la gama a esta versión (el aviso dice <b>${gA.nombre}</b>)`);
     if (cA && c && cA !== c) graves.push(`cabina: el aviso es <b>${cA}</b> y esto es <b>${c}</b>`);
+    if (!cA && c) flojos.push(`el aviso no dice la cabina; esto es <b>${c}</b>`);
     if (kA && k && kA !== k) flojos.push(`caja: el aviso dice <b>${kA}</b> y esto es <b>${k}</b>`);
     if (!kA && k) flojos.push(`el aviso no dice la caja; esto asume <b>${k}</b>`);
     const avisos = graves.concat(flojos);
