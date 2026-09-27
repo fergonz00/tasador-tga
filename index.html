@@ -2965,6 +2965,129 @@ function _cajasCompraML(t) {
   );
 }
 
+
+/**
+ * Gama con nombre Y nivel, tolerante a los typos de los avisos de ML.
+ *
+ * ⚠️ Los títulos que escribe un particular vienen con errores: un T-Cross
+ * publicado como "Trendlinde" no matcheaba con /\bTREND(LINE)?\b/ (la D de más
+ * rompe el límite de palabra) y el auto pasaba el control sin que nadie viera
+ * que la Fórmula FG lo estaba comparando contra un Sense — $12,8M menos.
+ * Por eso acá se busca el prefijo y no la palabra entera.
+ *
+ * Tabla propia y no `_eqGama`: esta se usa sólo para CONTROLAR lo que leyó cada
+ * fuente, así aflojarla no le cambia el matcheo a ninguna tasación normal.
+ */
+const _GAMA_CHK = [
+  { nivel: 4, nombre: 'BLACK STYLE', re: /BLACK\s*STYLE/ },
+  { nivel: 4, nombre: 'EXTREME', re: /EXTREM\w*/ },
+  { nivel: 4, nombre: 'EXCLUSIVE', re: /EXCLUSIV\w*/ },
+  { nivel: 4, nombre: 'R-LINE', re: /R\s*-?\s*LINE/ },
+  { nivel: 4, nombre: 'HERO', re: /\bHERO\b/ },
+  { nivel: 4, nombre: 'OUTFIT', re: /OUTFIT\w*/ },
+  { nivel: 4, nombre: 'GTI', re: /\bGTI\b/ },
+  { nivel: 4, nombre: 'GLI', re: /\bGLI\b/ },
+  { nivel: 3, nombre: 'HIGHLINE', re: /HIGH\w*/ },
+  { nivel: 2, nombre: 'COMFORTLINE', re: /C[O0]MFORT\w*|CONFORT\w*/ },
+  { nivel: 1, nombre: 'TRENDLINE', re: /TREND\w*/ },
+  { nivel: 1, nombre: 'LIFE', re: /\bLIFE\b/ },
+  { nivel: 1, nombre: 'START', re: /\bSTART\b/ },
+  { nivel: 1, nombre: 'POWER', re: /\bPOWER\b/ },
+  { nivel: 0, nombre: 'SENSE', re: /\bSENSE\b/ },
+  { nivel: 0, nombre: 'TRACK', re: /\bTRACK\b/ },
+  { nivel: 0, nombre: 'ROBUST', re: /ROBUST\w*/ }
+];
+
+function _gamaChk(txt) {
+  const t = (txt || '').toUpperCase();
+  for (const g of _GAMA_CHK) if (g.re.test(t)) return g;
+  return null;
+}
+
+/** Cabina de una pick-up. Es el error más caro: una Saveiro cabina doble
+ *  tasada con la fila de cabina simple del CCA se va millones para abajo. */
+function _cabina(txt) {
+  const t = (txt || '').toUpperCase();
+  if (/\bC\s*\/?\s*D\b|\bCD\b|DOBLE|\bDC\b/.test(t)) return 'doble';
+  if (/\bC\s*\/?\s*S\b|\bCS\b|SIMPLE|\bSC\b/.test(t)) return 'simple';
+  // En VW, Comfortline y Highline de Saveiro son siempre cabina doble.
+  if (/(COMFORT|CONFORT)|HIGH/.test(t) && /SAVEIRO/.test(t)) return 'doble';
+  return null;
+}
+
+/**
+ * Qué auto leyó cada fuente. Pedido de Fer: las fórmulas pueden estar tomando
+ * mal el auto, y sin ver el texto que matcheó cada una no hay forma de saberlo.
+ *
+ * El chequeo no adivina precios: compara el título del aviso contra la
+ * descripción que usó cada fuente en tres ejes que mueven mucha plata
+ * — gama, cabina y caja — y marca en rojo cuando no coinciden.
+ * Cuando el aviso no dice el dato, lo dice así: no inventa un OK.
+ */
+/** El CCA que muestra la card, leido en vivo de la planilla (no el guardado:
+ *  la card calcula con calcPrecioCCA, y las dos cosas tienen que coincidir). */
+function _ccaEnVivo(t) {
+  const c = calcPrecioCCA(t.marca, t.modelo, t.version, t.anio);
+  if (!c) return null;
+  return (c.moneda === 'USD') ? c.precio * getCotiz() : c.precio;
+}
+
+function _lecturaFuentes(t) {
+  const d = t.origen_datos || {};
+  const aviso = d.titulo_ml || '';
+  const gA = _gamaChk(aviso), cA = _cabina(aviso), kA = _eqCaja((aviso || '').toUpperCase());
+
+  const fila = (fuente, texto, valor) => {
+    if (!texto) {
+      return `<tr><td style="padding:3px 6px 3px 0; white-space:nowrap; color:var(--vw-grey-4)">${fuente}</td>
+        <td colspan="2" style="padding:3px 0; color:var(--vw-grey-3); font-style:italic">no guardamos qué versión matcheó</td></tr>`;
+    }
+    const T = texto.toUpperCase();
+    const graves = [], flojos = [];
+    const g = _gamaChk(T), c = _cabina(T), k = _eqCaja(T);
+    // Gama y cabina cambian millones: van en rojo. La caja es más fina, y muchas
+    // veces el 0km de esa gama ya no viene manual — eso va en ámbar.
+    if (gA && g && gA.nivel !== g.nivel) {
+      graves.push(`gama: el aviso dice <b>${gA.nombre}</b> y esto es <b>${g.nombre}</b>` +
+        (g.nivel < gA.nivel ? ' — tasa por <b>debajo</b>' : ' — tasa por <b>encima</b>'));
+    }
+    if (gA && !g) flojos.push(`no le leí la gama a esta versión (el aviso dice <b>${gA.nombre}</b>)`);
+    if (cA && c && cA !== c) graves.push(`cabina: el aviso es <b>${cA}</b> y esto es <b>${c}</b>`);
+    if (kA && k && kA !== k) flojos.push(`caja: el aviso dice <b>${kA}</b> y esto es <b>${k}</b>`);
+    if (!kA && k) flojos.push(`el aviso no dice la caja; esto asume <b>${k}</b>`);
+    const avisos = graves.concat(flojos);
+    const mal = graves.length > 0;
+    return `<tr style="${mal ? 'background:#FEF2F2' : ''}">
+      <td style="padding:3px 6px 3px 0; white-space:nowrap; color:var(--vw-grey-4); vertical-align:top">${fuente}</td>
+      <td style="padding:3px 6px 3px 0; vertical-align:top">${texto}${
+        avisos.length ? `<div style="color:${mal ? 'var(--red)' : '#92400E'}; font-size:11px; margin-top:1px">${mal ? '⚠️ ' : ''}${avisos.join(' · ')}</div>` : ''
+      }</td>
+      <td style="padding:3px 0; text-align:right; white-space:nowrap; font-family:var(--mono); vertical-align:top">${valor ? formatNum(Math.round(valor)) : ''}</td></tr>`;
+  };
+
+  const cca = [t.modelo, t.version].filter(Boolean).join(' ');
+  return `
+    <details style="margin-top:8px; font-size:12px">
+      <summary style="cursor:pointer; font-weight:700; color:var(--vw-grey-5)">🔍 Qué auto leyó cada fuente</summary>
+      <table style="width:100%; border-collapse:collapse; margin-top:6px">
+        <tr style="border-bottom:1px solid var(--vw-grey-2)">
+          <td style="padding:3px 6px 3px 0; white-space:nowrap; font-weight:700">Aviso</td>
+          <td style="padding:3px 6px 3px 0; font-weight:700">${aviso} · ${t.anio} · ${formatNum(t.kilometros || 0)} km</td>
+          <td style="padding:3px 0; text-align:right; white-space:nowrap; font-family:var(--mono); font-weight:700">${formatNum(Number(d.pide) || 0)}</td>
+        </tr>
+        ${fila('CCA', cca, _ccaEnVivo(t))}
+        ${fila('0km (Fórmula FG)', t.equiv_0km_modelo, t.equiv_0km_precio)}
+        ${fila('Kavak', d.kavak_version, t.precio_kavak_auto)}
+        ${fila('Flash', d.flash_version, d.flash)}
+        ${fila('Carmuv', d.carmuv_version, d.carmuv)}
+      </table>
+      <div style="margin-top:5px; color:var(--vw-grey-4); font-size:11px">
+        El CCA y el 0km son los que usó esta tasación para calcular. Si el auto que leyeron
+        no es el del aviso, el precio está mal y hay que corregirlo antes de ofertar.
+      </div>
+    </details>`;
+}
+
 /** Lo que agrega una de ML sobre la card normal: lo que pide el dueño, el link
  *  al aviso y las otras dos cotizaciones que no tiene una tasación común. */
 function _bloqueCompraML(t) {
@@ -3009,6 +3132,7 @@ function _bloqueCompraML(t) {
       </div>
       ${fila('Flash', d.flash, 'lo que paga Flash hoy')}
       ${fila('Carmuv', d.carmuv, 'TECHO: Carmuv cotiza como si tuviera 1 km')}
+      ${_lecturaFuentes(t)}
       ${!coincide && alt ? `<div style="margin-top:6px; color:var(--red); font-size:12px">⚠️ Las fotos podrían no ser de este auto: el aviso las rotula “${alt}”.</div>` : ''}
     </div>`;
 }
