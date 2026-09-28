@@ -791,6 +791,11 @@ Cierra el riesgo que estaba anotado como "sin mitigar": **el sync fallaba en sil
 1. **Cuenta frenada**: corridas que fallan sin arrancar. El motivo real **no está en el log** (el zip viene vacío): está en las anotaciones del check-run → `/actions/runs/<id>/jobs` para el job id y después `/check-runs/<job id>/annotations`.
 2. **Silencio**: ninguna corrida exitosa en 6 h. Medido sobre 7 días reales, el hueco normal más largo es **5,6 h** (de madrugada). ⚠️ **Los deploys de GitHub Pages no cuentan**: siguen andando con la cuenta frenada y taparían el corte.
 3. **Token de GitHub vencido**: si no, el vigía se queda ciego y el silencio parece calma.
+4. **Consumo contra el tope** (Fer, 28/09/2026): tope de **US$50/mes** para Actions, avisa al **80%** y al **90%**, *"así lo vemos con anticipación"*. Una sola vez por umbral por mes. El 100% ya lo cubre la señal 1: cuando el tope se llena, GitHub frena la cuenta.
+   ⚠️ **El gasto se estima, no se lee.** `/users/<u>/settings/billing/usage` da **404** con nuestro PAT (pide permiso de *Plan*, que `repo`+`workflow` no tiene). Se suma la duración de cada corrida de los repos **privados** del mes redondeada al minuto, que es como factura GitHub; los **públicos no cuentan** (ahí Actions es gratis e ilimitado). Queda por arriba del real —las corridas encoladas por `concurrency:` suman tiempo de cola, que no se cobra— que es el lado correcto para equivocarse. Medido el 28/09: 2.617 min estimados contra 2.549 reales.
+   El precio del minuto va por env `GITHUB_PRECIO_MINUTO` (default **0,008**) porque no está confirmado: 0,008 en un tarifario y 0,006 en otro. Se mide una vez por hora (`GITHUB_HORAS_CONSUMO`), no cada 15 min: cuesta una llamada por repo privado. Estado en la fila `clave = 'consumo'`, con lo ya avisado guardado como `2026-09:80`.
+
+⚠️ **Las fallas anteriores a la última corrida buena no cuentan** (arreglado el 28/09 antes de que saliera un aviso falso): si algo corrió bien después, la cuenta está andando. Sin ese filtro, el vigía seguía gritando "cuenta frenada" durante 12 h después de que Fer destrabara el pago.
 
 Repite cada 6 h mientras siga caído y manda un único "volvió a andar". **Entre las 23 y las 7 no manda** (de noche no se destraba igual): queda para la primera corrida de la mañana. Estado en la tabla **`github_vigia`** (una fila, `clave = 'cuenta'`).
 

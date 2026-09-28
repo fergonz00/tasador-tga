@@ -20,6 +20,10 @@
 //      Pages: ésos siguen andando aunque Actions esté frenado y taparían el corte.
 //   3. El token de GitHub vencido o sin permisos (si no, el vigía se queda ciego
 //      y el silencio parece calma).
+//   4. El consumo del mes contra el tope de gasto (Fer, 28-09-2026: tope de
+//      US$50/mes, avisar al 80% y al 90% "así lo vemos con anticipación"). El
+//      100% ya lo cubre la señal 1: cuando el tope se llena, GitHub frena la
+//      cuenta y las corridas empiezan a fallar sin arrancar.
 //
 // Vuelve a avisar cada HORAS_REPETIR mientras siga caído, y manda un aviso
 // cuando se recupera. Entre las 23 y las 7 no manda nada: queda para la primera
@@ -47,6 +51,23 @@ const SIN_ARRANCAR_SEG = 15; // un job que "falla" en menos de esto nunca arranc
 const DESDE_HORA = 7; // horario en que se puede mandar (hora argentina)
 const HASTA_HORA = 23;
 const DESTINATARIOS = Deno.env.get("GITHUB_VIGIA_DESTINATARIOS") ?? "fngonzalez,mlubrano";
+
+// Tope de gasto y umbrales de aviso. GitHub NO nos deja leer los dólares:
+// /users/<u>/settings/billing/usage da 404 con este token (pide permiso de
+// "Plan", que un PAT de repo+workflow no tiene). Así que el gasto se ESTIMA
+// sumando la duración de cada corrida de los repos PRIVADOS del mes, redondeada
+// al minuto para arriba, que es como factura GitHub. Los repos públicos no
+// cuentan: ahí Actions es gratis e ilimitado.
+// ⚠️ La estimación queda por arriba: las corridas que esperan por `concurrency:`
+// suman tiempo de cola, que GitHub no cobra. Y el precio por minuto va por env
+// porque no está confirmado (0,008 en el tarifario que miré yo, 0,006 en el de
+// Fer): queda el más caro, así el aviso llega antes y no después.
+const PRESUPUESTO_USD = Number(Deno.env.get("GITHUB_PRESUPUESTO_USD") ?? 50);
+const PRECIO_MINUTO = Number(Deno.env.get("GITHUB_PRECIO_MINUTO") ?? 0.008);
+const MINUTOS_GRATIS = Number(Deno.env.get("GITHUB_MINUTOS_GRATIS") ?? 2000);
+const AVISAR_EN = (Deno.env.get("GITHUB_AVISAR_EN") ?? "80,90").split(",").map(Number)
+  .filter((n) => n > 0).sort((a, b) => a - b);
+const HORAS_ENTRE_CONSUMO = Number(Deno.env.get("GITHUB_HORAS_CONSUMO") ?? 1);
 
 type Run = {
   id: number;
@@ -101,10 +122,14 @@ Deno.serve(async (req: Request) => {
   // ---- corridas de las últimas horas, repo por repo
   const desdeISO = new Date(Date.now() - VENTANA_HORAS * 3600_000).toISOString();
   let repos: string[];
+  // Para el consumo van TODOS los privados, sin el filtro de 4 meses: un repo
+  // que sólo tiene cron puede gastar minutos sin que nadie le haga un push.
+  let privados: string[] = [];
   try {
     const rs = await gh<Array<Record<string, string>>>(GH_TOKEN, "/user/repos?per_page=100&sort=pushed&affiliation=owner");
     const limite = Date.now() - 120 * 24 * 3600_000; // repos tocados en los últimos 4 meses
     repos = rs.filter((r) => new Date(r.pushed_at ?? 0).getTime() > limite).map((r) => r.full_name);
+    privados = rs.filter((r) => String(r.private) === "true").map((r) => r.full_name);
   } catch (e) {
     return await resolver(SUPABASE_URL, SERVICE_KEY, STOCK_SECRET, {
       caida: true,
@@ -144,10 +169,15 @@ Deno.serve(async (req: Request) => {
   const ultimoExito = vivos.length ? new Date(vivos[0].updated_at).getTime() : 0;
   const horasSinExito = ultimoExito ? (ahora - ultimoExito) / 3600_000 : VENTANA_HORAS;
 
+  // ⚠️ Sólo cuentan las que fallaron DESPUES de la última corrida buena. Si algo
+  // corrió bien más tarde, la cuenta está andando y esas fallas ya son historia.
+  // Sin esto, el 28-09 el vigía seguía gritando "cuenta frenada" durante 12 horas
+  // después de que Fer destrabara el pago y todo volviera a correr.
   const sinArrancar = runs.filter((r) =>
     r.conclusion === "failure" && r.run_started_at &&
     (new Date(r.updated_at).getTime() - new Date(r.run_started_at).getTime()) / 1000 <= SIN_ARRANCAR_SEG &&
-    (ahora - new Date(r.updated_at).getTime()) / 3600_000 <= HORAS_SIN_EXITO * 2
+    (ahora - new Date(r.updated_at).getTime()) / 3600_000 <= HORAS_SIN_EXITO * 2 &&
+    new Date(r.updated_at).getTime() > ultimoExito
   ).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 
   // El motivo real está en las anotaciones del check-run, no en el log (que viene vacío).
@@ -193,6 +223,22 @@ Deno.serve(async (req: Request) => {
     ? "Entrá a GitHub, Settings, Billing & plans y destrabá el pago o subí el límite de gasto. Hasta que eso no se resuelva no corre ningún control automático"
     : "Mirá la solapa Actions en GitHub. Mientras esté así no corre ningún control automático";
 
+  // Señal 4: el consumo del mes contra el tope. Va aparte de la caída, porque
+  // puede estar todo corriendo bien y aun así convenir avisar que el gasto se
+  // acerca al límite: eso es lo que Fer quiere ver con anticipación.
+  const horaAhora = (new Date().getUTCHours() + 21) % 24;
+  let consumo: Record<string, unknown>;
+  try {
+    consumo = await mirarConsumo(GH_TOKEN, SUPABASE_URL, SERVICE_KEY, STOCK_SECRET, privados, {
+      dry,
+      forzar,
+      enHorario: horaAhora >= DESDE_HORA && horaAhora < HASTA_HORA,
+    });
+  } catch (e) {
+    // Que un error midiendo el gasto no tumbe el vigía: la señal 1 es la importante.
+    consumo = { error: String(e).slice(0, 200) };
+  }
+
   return await resolver(SUPABASE_URL, SERVICE_KEY, STOCK_SECRET, {
     caida,
     clave: facturacion ? "facturacion" : sinArrancar.length ? "no-arranca" : "silencio",
@@ -208,6 +254,7 @@ Deno.serve(async (req: Request) => {
       horas_sin_exito: Number(horasSinExito.toFixed(1)),
       sin_arrancar: sinArrancar.length,
       motivo,
+      consumo,
     },
   });
 });
@@ -308,6 +355,116 @@ async function avisar(
     }),
   });
   return { status: r.status, respuesta: await r.json().catch(() => null) };
+}
+
+// ------------------------------------------------------- consumo contra el tope
+type FilaConsumo = { motivo: string | null; chequeado_en: string | null; avisado_en: string | null };
+
+async function mirarConsumo(
+  token: string,
+  url: string,
+  key: string,
+  secret: string,
+  privados: string[],
+  o: { dry: boolean; forzar: boolean; enHorario: boolean },
+): Promise<Record<string, unknown>> {
+  const ahora = new Date();
+  const mes = ahora.toISOString().slice(0, 7);
+  const filas = await sb<FilaConsumo[]>(url, key, "github_vigia?clave=eq.consumo&select=*");
+  const prev = filas[0] ?? null;
+
+  // Medir cuesta una llamada por repo privado: con una vez por hora alcanza.
+  const desdeUltima = prev?.chequeado_en
+    ? (ahora.getTime() - new Date(prev.chequeado_en).getTime()) / 3600_000
+    : Infinity;
+  if (!o.forzar && desdeUltima < HORAS_ENTRE_CONSUMO) {
+    return { medido: false, hace_horas: Number(desdeUltima.toFixed(1)) };
+  }
+
+  const desde = mes + "-01T00:00:00Z";
+  let minutos = 0;
+  const porRepo: Record<string, number> = {};
+  for (const full of privados) {
+    for (let p = 1; p <= 6; p++) {
+      const j = await gh<{ workflow_runs?: Array<Record<string, string>> }>(
+        token,
+        "/repos/" + full + "/actions/runs?per_page=100&page=" + p + "&created=%3E%3D" + desde,
+      );
+      const rs = j.workflow_runs ?? [];
+      for (const r of rs) {
+        if (!r.run_started_at || /pages/i.test(r.name ?? "")) continue; // Pages no se cobra
+        const seg = (new Date(r.updated_at).getTime() - new Date(r.run_started_at).getTime()) / 1000;
+        const m = Math.max(1, Math.ceil(seg / 60)); // GitHub redondea cada corrida al minuto
+        minutos += m;
+        const corto = full.split("/")[1];
+        porRepo[corto] = (porRepo[corto] ?? 0) + m;
+      }
+      if (rs.length < 100) break;
+    }
+  }
+
+  const pagos = Math.max(0, minutos - MINUTOS_GRATIS);
+  const gasto = pagos * PRECIO_MINUTO;
+  const pct = PRESUPUESTO_USD > 0 ? Math.round((gasto / PRESUPUESTO_USD) * 100) : 0;
+
+  // Lo ya avisado se guarda como "2026-09:80". Si cambia el mes, arranca de cero.
+  const avisado = (prev?.motivo ?? "").startsWith(mes + ":")
+    ? Number((prev?.motivo ?? "").split(":")[1]) || 0
+    : 0;
+  const pasados = AVISAR_EN.filter((u) => pct >= u);
+  const umbral = pasados.length ? pasados[pasados.length - 1] : 0;
+  const manda = umbral > avisado && (o.forzar || o.enHorario);
+
+  const top = Object.entries(porRepo).sort((a, b) => b[1] - a[1])[0];
+  const info: Record<string, unknown> = {
+    medido: true,
+    minutos,
+    pagos,
+    gasto: Number(gasto.toFixed(2)),
+    tope: PRESUPUESTO_USD,
+    pct,
+    umbral,
+    avisado,
+    manda,
+    top: top ? top[0] + ": " + top[1] + " min" : null,
+  };
+  if (o.dry) return info;
+
+  let envio: unknown = null;
+  if (manda) {
+    envio = await avisar(url, secret, {
+      resumen: "el gasto de GitHub va por el " + pct + "% del tope de " + plata(PRESUPUESTO_USD) + " del mes",
+      detalle: [
+        "Este mes se usaron " + miles(minutos) + " minutos: " + miles(Math.min(minutos, MINUTOS_GRATIS)) +
+        " gratis y " + miles(pagos) + " pagos, o sea " + plata(gasto) + " de " + plata(PRESUPUESTO_USD),
+        top ? "El que más gasta es " + top[0] + ", con " + miles(top[1]) + " minutos" : "",
+        "Es una estimación: GitHub no deja leer el gasto real con este token",
+      ].filter(Boolean).join(". "),
+      accion: "Si el tope se llena se frenan TODAS las automatizaciones de la cuenta, como pasó el 27/09. " +
+        "Mirá Settings, Billing, Usage con el filtro product:actions y decidí si subir el tope o bajarle " +
+        "la frecuencia a " + (top ? top[0] : "lo que más gasta"),
+    }, null);
+  }
+
+  await sbUpsert(url, key, "github_vigia", {
+    clave: "consumo",
+    estado: umbral ? "gastando" : "ok",
+    motivo: mes + ":" + (manda ? umbral : avisado),
+    detalle: miles(minutos) + " min, " + plata(gasto) + " de " + plata(PRESUPUESTO_USD) + " (" + pct + "%)" +
+      (top ? ". El que más gasta: " + top[0] : ""),
+    avisado_en: manda ? ahora.toISOString() : (prev?.avisado_en ?? null),
+    anduvo: true,
+    chequeado_en: ahora.toISOString(),
+  });
+  return { ...info, envio };
+}
+
+function plata(n: number) {
+  return "US$" + n.toFixed(2).replace(".", ",");
+}
+
+function miles(n: number) {
+  return Math.round(n).toLocaleString("es-AR");
 }
 
 // ---------------------------------------------------------------- helpers
