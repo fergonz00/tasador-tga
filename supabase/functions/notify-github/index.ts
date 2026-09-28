@@ -92,6 +92,9 @@ Deno.serve(async (req: Request) => {
       resumen: "el vigía de GitHub se quedó sin token y no puede ver si los controles están corriendo",
       detalle: "Falta el secret GITHUB_TOKEN en la función notify-github",
       accion: "Generá un token nuevo en GitHub y cargalo con supabase secrets set GITHUB_TOKEN",
+      // Mientras el vigía todavía no arrancó nunca (no hay fila de estado), esto
+      // no se avisa: sería un WhatsApp por algo que nadie prendió todavía.
+      soloSiYaAndaba: true,
     }, { dry, forzar });
   }
 
@@ -109,6 +112,7 @@ Deno.serve(async (req: Request) => {
       resumen: "el vigía no puede entrar a GitHub, así que no sabe si los controles están corriendo",
       detalle: "GitHub contestó: " + String(e).slice(0, 200),
       accion: "Revisá el token de GitHub (secret GITHUB_TOKEN de la función notify-github): si venció, generá uno nuevo",
+      soloSiYaAndaba: true,
     }, { dry, forzar });
   }
 
@@ -209,7 +213,16 @@ Deno.serve(async (req: Request) => {
 });
 
 // ---------------------------------------------------------------- estado y aviso
-type Estado = { caida: boolean; clave: string; resumen: string; detalle: string; accion: string };
+type Fila = { estado: string; avisado_en: string | null; desde: string | null; anduvo: boolean };
+
+type Estado = {
+  caida: boolean;
+  clave: string;
+  resumen: string;
+  detalle: string;
+  accion: string;
+  soloSiYaAndaba?: boolean;
+};
 
 async function resolver(
   url: string,
@@ -218,8 +231,8 @@ async function resolver(
   e: Estado,
   o: { dry: boolean; forzar: boolean; extra?: Record<string, unknown> },
 ) {
-  const filas = await sb<Array<Record<string, string>>>(url, key, "github_vigia?clave=eq.cuenta&select=*");
-  const prev = filas[0] ?? { estado: "ok", avisado_en: null, desde: null };
+  const filas = await sb<Fila[]>(url, key, "github_vigia?clave=eq.cuenta&select=*");
+  const prev: Fila = filas[0] ?? { estado: "ok", avisado_en: null, desde: null, anduvo: false };
   const ahora = new Date();
   const horaAr = (ahora.getUTCHours() + 21) % 24; // Argentina = UTC-3
   const enHorario = horaAr >= DESDE_HORA && horaAr < HASTA_HORA;
@@ -227,8 +240,14 @@ async function resolver(
   const cambio = prev.estado !== nuevo;
   const desdeAviso = prev.avisado_en ? (ahora.getTime() - new Date(prev.avisado_en).getTime()) / 3600_000 : Infinity;
 
+  // `anduvo` se prende la primera vez que el vigia pudo leer GitHub de verdad.
+  // Hasta entonces no avisa que esta ciego: seria un WhatsApp por algo que nadie
+  // prendio todavia (el secret recien se carga).
+  const anduvo = prev.anduvo === true;
+
   let manda: false | "caida" | "recuperada" = false;
   if (e.caida && (o.forzar || ((cambio || desdeAviso >= HORAS_REPETIR) && enHorario))) manda = "caida";
+  if (manda === "caida" && e.soloSiYaAndaba && !anduvo) manda = false;
   if (!e.caida && prev.estado === "caida" && prev.avisado_en) manda = "recuperada";
 
   const plan = {
@@ -262,6 +281,7 @@ async function resolver(
     detalle: [e.resumen, e.detalle].filter(Boolean).join(". ").slice(0, 900) || null,
     desde: e.caida ? (prev.estado === "caida" && prev.desde ? prev.desde : ahora.toISOString()) : null,
     avisado_en: manda === "caida" ? ahora.toISOString() : (e.caida ? prev.avisado_en : null),
+    anduvo: anduvo || !["sin-token", "token"].includes(e.clave),
     chequeado_en: ahora.toISOString(),
   });
   return json({ ...plan, envio });
