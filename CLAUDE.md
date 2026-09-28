@@ -783,6 +783,23 @@ Cierra el riesgo que estaba anotado como "sin mitigar": **el sync fallaba en sil
 
 **Probarlo:** `?dry=1` (corre todo, no manda ni escribe) · `?simular=puente` (da por roto ese chequeo y ejerce el camino de alerta de verdad — sin esto el vigía no se puede probar, porque mientras todo anda callar es lo mismo que estar muerto; la simulación **no** escribe en `argd_salud`) · `?forzar=1`. **Deployar con `--no-verify-jwt`.**
 
+## Vigía de GitHub Actions (`notify-github`) — 28/09/2026
+
+**Por qué existe.** El 27/09 a la noche GitHub frenó la cuenta entera (*"recent account payments have failed or your spending limit needs to be increased"*) y durante 18 h no corrió **ningún** control: compras de repuestos, controles de ML, mail-tga, stock de fábrica, competencia. Los avisos de "falló el control" que tienen los propios workflows adentro **tampoco salen**, porque el runner nunca arranca: el job muere en 3-6 segundos con `steps: []`. Un vigía dentro de GitHub no sirve para esto — éste corre en **Supabase (pg_cron `github-vigia`, jobid 31, cada 15 min)** y mira GitHub desde afuera.
+
+**Qué avisa** (Fer, 28/09/2026: sólo cuando se corta todo, sin ruido de scrapers que fallan seguido):
+1. **Cuenta frenada**: corridas que fallan sin arrancar. El motivo real **no está en el log** (el zip viene vacío): está en las anotaciones del check-run → `/actions/runs/<id>/jobs` para el job id y después `/check-runs/<job id>/annotations`.
+2. **Silencio**: ninguna corrida exitosa en 6 h. Medido sobre 7 días reales, el hueco normal más largo es **5,6 h** (de madrugada). ⚠️ **Los deploys de GitHub Pages no cuentan**: siguen andando con la cuenta frenada y taparían el corte.
+3. **Token de GitHub vencido**: si no, el vigía se queda ciego y el silencio parece calma.
+
+Repite cada 6 h mientras siga caído y manda un único "volvió a andar". **Entre las 23 y las 7 no manda** (de noche no se destraba igual): queda para la primera corrida de la mañana. Estado en la tabla **`github_vigia`** (una fila, `clave = 'cuenta'`).
+
+**Destinatarios: Fer y Matías Lubrano** (env `GITHUB_VIGIA_DESTINATARIOS`, default `fngonzalez,mlubrano`). El WhatsApp sale por `notify-ml-excepciones` con `tipo: "resultado"` (template `control_automatico_resultado`), que ahora acepta **`usuarios`** en el body para elegir a quién le llega ese aviso sin tocar a quién le llegan los de ML.
+
+**Secret `GITHUB_TOKEN`** (el PAT de `C:\proyectos\.secrets\github.env`; también acepta `GH_TOKEN`). Sin eso el vigía avisa que está ciego.
+
+**Probarlo:** `{"dry":true}` (dice qué haría, no manda ni escribe) · `{"forzar":true}` (ignora horario y "ya avisé") · `{"prueba":true,"solo":"549..."}`. **Deployar con `--no-verify-jwt`.**
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)

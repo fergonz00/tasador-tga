@@ -103,8 +103,11 @@ Deno.serve(async (req: Request) => {
     if (p.some((x) => !x)) return json({ error: "faltan control, resumen, detalle o accion" }, 400);
     const env = { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN };
     const solo = String(body?.solo || "").trim() || null;
+    // `usuarios` (28-09-2026): quién recibe ESTE aviso, sin tocar a quién le
+    // llegan los de ML. Lo usa notify-github, que avisa a Fer y a Matías.
+    const usuarios = String(body?.usuarios || "").trim() || null;
     return json(await procesar(env, "", "", solo, (tel, nombre) =>
-      enviarResultado(WA_PHONE_ID, WA_TOKEN, tel, nombre, p, String(body?.cantidad ?? "0"))));
+      enviarResultado(WA_PHONE_ID, WA_TOKEN, tel, nombre, p, String(body?.cantidad ?? "0")), usuarios));
   }
 
   const cantidad = String(body?.cantidad ?? "").trim();
@@ -133,6 +136,7 @@ async function procesar(
   detalle: string,
   solo: string | null,
   envio?: Envio,
+  aQuien?: string | null,
 ) {
   const { SUPABASE_URL, SERVICE_KEY, WA_PHONE_ID, WA_TOKEN } = env;
   const mandar: Envio = envio ??
@@ -144,7 +148,7 @@ async function procesar(
     return { prueba: true, destino: tel, ...r };
   }
 
-  const usuarios = (Deno.env.get("ML_EXCEPCIONES_DESTINATARIOS") ?? DESTINATARIOS_DEFAULT)
+  const usuarios = (aQuien || Deno.env.get("ML_EXCEPCIONES_DESTINATARIOS") || DESTINATARIOS_DEFAULT)
     .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 
   let users: any[] = [];

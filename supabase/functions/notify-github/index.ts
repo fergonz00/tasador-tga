@@ -1,0 +1,342 @@
+// Edge Function: notify-github
+// Vigía de las automatizaciones que corren en GitHub Actions.
+//
+// Por qué vive acá y no en GitHub (Fer, 28-09-2026): el 27/09 a la noche GitHub
+// frenó la cuenta entera por un problema de facturación y durante 18 horas no
+// corrió NINGÚN control (compras de repuestos, ML, mail-tga, stock de fábrica,
+// competencia). Los avisos de "falló el control" que tienen los propios
+// workflows adentro tampoco salieron, porque el runner nunca llega a arrancar.
+// Un vigía dentro de GitHub no sirve para esto: éste corre en Supabase (pg_cron)
+// y mira GitHub desde afuera.
+//
+// Qué avisa (decisión de Fer, 28-09-2026: sólo cuando se corta todo, sin ruido):
+//   1. La cuenta frenada: corridas que fallan sin arrancar (job de pocos
+//      segundos y cero pasos). Se confirma leyendo las anotaciones del check-run,
+//      que es donde GitHub deja el motivo real ("recent account payments have
+//      failed or your spending limit needs to be increased"); en el log no está.
+//   2. Silencio: ninguna corrida exitosa en las últimas HORAS_SIN_EXITO horas.
+//      Medido sobre 7 días reales, el hueco normal más largo es 5,6 h (de
+//      madrugada), así que 6 h ya es anormal. No cuentan los deploys de GitHub
+//      Pages: ésos siguen andando aunque Actions esté frenado y taparían el corte.
+//   3. El token de GitHub vencido o sin permisos (si no, el vigía se queda ciego
+//      y el silencio parece calma).
+//
+// Vuelve a avisar cada HORAS_REPETIR mientras siga caído, y manda un aviso
+// cuando se recupera. Entre las 23 y las 7 no manda nada: queda para la primera
+// corrida de la mañana (de noche no se destraba igual).
+//
+// - Autenticación: header x-stock-secret == STOCK_NOTIF_SECRET.
+// - Estado en `github_vigia` (wjfgl), una sola fila (clave = 'cuenta').
+// - El WhatsApp lo manda notify-ml-excepciones con el template
+//   `control_automatico_resultado` (UTILITY, aprobado). Destinatarios: env
+//   GITHUB_VIGIA_DESTINATARIOS (default "fngonzalez,mlubrano" — Fer y Matías).
+// - Necesita el secret GITHUB_TOKEN (PAT de GitHub con acceso a los repos privados;
+//   el mismo de C:\proyectos\.secrets\github.env). También acepta GH_TOKEN.
+//
+//   POST {}                  -> chequea y avisa si corresponde
+//   POST {"dry":true}        -> dice qué haría, sin mandar ni tocar el estado
+//   POST {"forzar":true}     -> ignora el horario y el "ya avisé"
+//   POST {"prueba":true,"solo":"549..."} -> manda un aviso de ejemplo a ese número
+
+const GH_API = "https://api.github.com";
+const GH_USER = Deno.env.get("GH_USUARIO") ?? "fergonz00";
+const HORAS_SIN_EXITO = Number(Deno.env.get("GITHUB_VIGIA_HORAS") ?? 6);
+const HORAS_REPETIR = 6;
+const VENTANA_HORAS = 30; // corridas que se miran
+const SIN_ARRANCAR_SEG = 15; // un job que "falla" en menos de esto nunca arrancó
+const DESDE_HORA = 7; // horario en que se puede mandar (hora argentina)
+const HASTA_HORA = 23;
+const DESTINATARIOS = Deno.env.get("GITHUB_VIGIA_DESTINATARIOS") ?? "fngonzalez,mlubrano";
+
+type Run = {
+  id: number;
+  name: string;
+  repo: string;
+  conclusion: string | null;
+  run_started_at: string | null;
+  updated_at: string;
+};
+
+Deno.serve(async (req: Request) => {
+  if (req.method !== "POST") return json({ error: "Método no permitido" }, 405);
+
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const STOCK_SECRET = Deno.env.get("STOCK_NOTIF_SECRET");
+  const GH_TOKEN = Deno.env.get("GH_TOKEN") ?? Deno.env.get("GITHUB_TOKEN");
+  if (!SUPABASE_URL || !SERVICE_KEY) return json({ error: "SUPABASE env vars missing" }, 500);
+  if (!STOCK_SECRET) return json({ error: "STOCK_NOTIF_SECRET missing" }, 500);
+  if (req.headers.get("x-stock-secret") !== STOCK_SECRET) return json({ error: "secret inválido" }, 401);
+
+  let body: Record<string, unknown> = {};
+  try {
+    body = await req.json();
+  } catch { /* body opcional */ }
+  const dry = body?.dry === true;
+  const forzar = body?.forzar === true;
+
+  if (body?.prueba === true) {
+    const r = await avisar(SUPABASE_URL, STOCK_SECRET, {
+      resumen: "PRUEBA. Hace 13 horas que no corre ninguna automatización: GitHub frenó la cuenta",
+      detalle:
+        "Prueba del vigía. La última que corrió bien fue el domingo a las 21:36. Fallaron 12 corridas de repuestos-tga, mail-tga, tienda-repuestos y portal-precios sin llegar a arrancar",
+      accion: "Es una prueba, no hay que hacer nada",
+    }, body?.solo ? String(body.solo) : null);
+    return json({ prueba: true, ...r });
+  }
+
+  if (!GH_TOKEN) {
+    return await resolver(SUPABASE_URL, SERVICE_KEY, STOCK_SECRET, {
+      caida: true,
+      clave: "sin-token",
+      resumen: "el vigía de GitHub se quedó sin token y no puede ver si los controles están corriendo",
+      detalle: "Falta el secret GITHUB_TOKEN en la función notify-github",
+      accion: "Generá un token nuevo en GitHub y cargalo con supabase secrets set GITHUB_TOKEN",
+    }, { dry, forzar });
+  }
+
+  // ---- corridas de las últimas horas, repo por repo
+  const desdeISO = new Date(Date.now() - VENTANA_HORAS * 3600_000).toISOString();
+  let repos: string[];
+  try {
+    const rs = await gh<Array<Record<string, string>>>(GH_TOKEN, "/user/repos?per_page=100&sort=pushed&affiliation=owner");
+    const limite = Date.now() - 120 * 24 * 3600_000; // repos tocados en los últimos 4 meses
+    repos = rs.filter((r) => new Date(r.pushed_at ?? 0).getTime() > limite).map((r) => r.full_name);
+  } catch (e) {
+    return await resolver(SUPABASE_URL, SERVICE_KEY, STOCK_SECRET, {
+      caida: true,
+      clave: "token",
+      resumen: "el vigía no puede entrar a GitHub, así que no sabe si los controles están corriendo",
+      detalle: "GitHub contestó: " + String(e).slice(0, 200),
+      accion: "Revisá el token de GitHub (secret GITHUB_TOKEN de la función notify-github): si venció, generá uno nuevo",
+    }, { dry, forzar });
+  }
+
+  const runs: Run[] = [];
+  for (const full of repos) {
+    try {
+      const j = await gh<{ workflow_runs?: Array<Record<string, never>> }>(
+        GH_TOKEN,
+        "/repos/" + full + "/actions/runs?per_page=50&created=%3E" + desdeISO,
+      );
+      for (const x of j.workflow_runs ?? []) {
+        const r = x as unknown as Record<string, string>;
+        runs.push({
+          id: Number(r.id),
+          name: r.name ?? "",
+          repo: full.split("/")[1],
+          conclusion: r.conclusion,
+          run_started_at: r.run_started_at,
+          updated_at: r.updated_at,
+        });
+      }
+    } catch { /* un repo que no contesta no puede tumbar el chequeo */ }
+  }
+
+  const ahora = Date.now();
+  // Los deploys de GitHub Pages siguen andando con la cuenta frenada: no cuentan como señal de vida.
+  const vivos = runs.filter((r) => r.conclusion === "success" && !/pages/i.test(r.name))
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  const ultimoExito = vivos.length ? new Date(vivos[0].updated_at).getTime() : 0;
+  const horasSinExito = ultimoExito ? (ahora - ultimoExito) / 3600_000 : VENTANA_HORAS;
+
+  const sinArrancar = runs.filter((r) =>
+    r.conclusion === "failure" && r.run_started_at &&
+    (new Date(r.updated_at).getTime() - new Date(r.run_started_at).getTime()) / 1000 <= SIN_ARRANCAR_SEG &&
+    (ahora - new Date(r.updated_at).getTime()) / 3600_000 <= HORAS_SIN_EXITO * 2
+  ).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+
+  // El motivo real está en las anotaciones del check-run, no en el log (que viene vacío).
+  let motivo = "";
+  if (sinArrancar.length) {
+    const r = sinArrancar[0];
+    try {
+      const jobs = await gh<{ jobs?: Array<{ id: number }> }>(
+        GH_TOKEN,
+        "/repos/" + GH_USER + "/" + r.repo + "/actions/runs/" + r.id + "/jobs",
+      );
+      const jid = jobs.jobs?.[0]?.id;
+      if (jid) {
+        const an = await gh<Array<{ annotation_level: string; message: string }>>(
+          GH_TOKEN,
+          "/repos/" + GH_USER + "/" + r.repo + "/check-runs/" + jid + "/annotations",
+        );
+        motivo = (an.find((a) => a.annotation_level === "failure")?.message ?? "").trim();
+      }
+    } catch { /* si no se puede leer, alcanza con el síntoma */ }
+  }
+
+  const facturacion = /payment|spending limit|billing/i.test(motivo);
+  const caida = sinArrancar.length > 0 || horasSinExito >= HORAS_SIN_EXITO;
+  const afectados = [...new Set(sinArrancar.map((r) => r.repo))];
+
+  const resumen = !caida ? "" : facturacion
+    ? "GitHub frenó la cuenta y hace " + hs(horasSinExito) + " que no corre ninguna automatización"
+    : sinArrancar.length
+    ? sinArrancar.length + " corridas fallaron sin llegar a arrancar y hace " + hs(horasSinExito) +
+      " que no corre ninguna automatización"
+    : "hace " + hs(horasSinExito) + " que no corre ninguna automatización";
+
+  const detalle = !caida ? "" : [
+    ultimoExito
+      ? "La última que corrió bien fue " + cuando(ultimoExito) + " (" + vivos[0].repo + ")"
+      : "No hubo ninguna corrida buena en las últimas " + VENTANA_HORAS + " horas",
+    afectados.length ? "Fallan sin arrancar: " + afectados.slice(0, 6).join(", ") : "",
+    motivo ? "GitHub dice: " + motivo.replace(/\s+/g, " ").slice(0, 220) : "",
+  ].filter(Boolean).join(". ");
+
+  const accion = !caida ? "" : facturacion
+    ? "Entrá a GitHub, Settings, Billing & plans y destrabá el pago o subí el límite de gasto. Hasta que eso no se resuelva no corre ningún control automático"
+    : "Mirá la solapa Actions en GitHub. Mientras esté así no corre ningún control automático";
+
+  return await resolver(SUPABASE_URL, SERVICE_KEY, STOCK_SECRET, {
+    caida,
+    clave: facturacion ? "facturacion" : sinArrancar.length ? "no-arranca" : "silencio",
+    resumen,
+    detalle,
+    accion,
+  }, {
+    dry,
+    forzar,
+    extra: {
+      repos: repos.length,
+      corridas: runs.length,
+      horas_sin_exito: Number(horasSinExito.toFixed(1)),
+      sin_arrancar: sinArrancar.length,
+      motivo,
+    },
+  });
+});
+
+// ---------------------------------------------------------------- estado y aviso
+type Estado = { caida: boolean; clave: string; resumen: string; detalle: string; accion: string };
+
+async function resolver(
+  url: string,
+  key: string,
+  secret: string,
+  e: Estado,
+  o: { dry: boolean; forzar: boolean; extra?: Record<string, unknown> },
+) {
+  const filas = await sb<Array<Record<string, string>>>(url, key, "github_vigia?clave=eq.cuenta&select=*");
+  const prev = filas[0] ?? { estado: "ok", avisado_en: null, desde: null };
+  const ahora = new Date();
+  const horaAr = (ahora.getUTCHours() + 21) % 24; // Argentina = UTC-3
+  const enHorario = horaAr >= DESDE_HORA && horaAr < HASTA_HORA;
+  const nuevo = e.caida ? "caida" : "ok";
+  const cambio = prev.estado !== nuevo;
+  const desdeAviso = prev.avisado_en ? (ahora.getTime() - new Date(prev.avisado_en).getTime()) / 3600_000 : Infinity;
+
+  let manda: false | "caida" | "recuperada" = false;
+  if (e.caida && (o.forzar || ((cambio || desdeAviso >= HORAS_REPETIR) && enHorario))) manda = "caida";
+  if (!e.caida && prev.estado === "caida" && prev.avisado_en) manda = "recuperada";
+
+  const plan = {
+    estado: nuevo,
+    clave: e.clave,
+    manda,
+    en_horario: enHorario,
+    resumen: e.resumen,
+    detalle: e.detalle,
+    ...(o.extra ?? {}),
+  };
+  if (o.dry) return json({ dry: true, ...plan });
+
+  let envio: unknown = null;
+  if (manda === "caida") {
+    envio = await avisar(url, secret, { resumen: e.resumen, detalle: e.detalle, accion: e.accion }, null);
+  } else if (manda === "recuperada") {
+    const desde = prev.desde ? " Estuvo cortado desde " + cuando(new Date(prev.desde).getTime()) + "." : "";
+    envio = await avisar(url, secret, {
+      resumen: "las automatizaciones volvieron a correr",
+      detalle: "GitHub está andando otra vez." + desde +
+        " Lo que tenía que correr mientras estuvo frenado no se recupera solo",
+      accion: "Si algún control tenía que haber corrido en ese rato, conviene dispararlo a mano",
+    }, null);
+  }
+
+  await sbUpsert(url, key, "github_vigia", {
+    clave: "cuenta",
+    estado: nuevo,
+    motivo: e.clave,
+    detalle: [e.resumen, e.detalle].filter(Boolean).join(". ").slice(0, 900) || null,
+    desde: e.caida ? (prev.estado === "caida" && prev.desde ? prev.desde : ahora.toISOString()) : null,
+    avisado_en: manda === "caida" ? ahora.toISOString() : (e.caida ? prev.avisado_en : null),
+    chequeado_en: ahora.toISOString(),
+  });
+  return json({ ...plan, envio });
+}
+
+/** El WhatsApp sale por notify-ml-excepciones (template control_automatico_resultado). */
+async function avisar(
+  url: string,
+  secret: string,
+  t: { resumen: string; detalle: string; accion: string },
+  solo: string | null,
+) {
+  const r = await fetch(url + "/functions/v1/notify-ml-excepciones", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-stock-secret": secret },
+    body: JSON.stringify({
+      tipo: "resultado",
+      control: "GitHub, donde corren los controles automáticos",
+      resumen: t.resumen,
+      detalle: t.detalle,
+      accion: t.accion,
+      cantidad: "1",
+      ...(solo ? { solo } : { usuarios: DESTINATARIOS }),
+    }),
+  });
+  return { status: r.status, respuesta: await r.json().catch(() => null) };
+}
+
+// ---------------------------------------------------------------- helpers
+async function gh<T>(token: string, path: string): Promise<T> {
+  const r = await fetch(GH_API + path, {
+    headers: {
+      Authorization: "Bearer " + token,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "vigia-tga",
+    },
+  });
+  if (!r.ok) throw new Error(r.status + " " + (await r.text()).slice(0, 120));
+  return await r.json() as T;
+}
+
+async function sb<T>(url: string, key: string, path: string): Promise<T> {
+  const r = await fetch(url + "/rest/v1/" + path, { headers: { apikey: key, Authorization: "Bearer " + key } });
+  if (!r.ok) throw new Error("Supabase " + r.status + ": " + await r.text());
+  return await r.json() as T;
+}
+
+async function sbUpsert(url: string, key: string, tabla: string, fila: Record<string, unknown>) {
+  await fetch(url + "/rest/v1/" + tabla + "?on_conflict=clave", {
+    method: "POST",
+    headers: {
+      apikey: key,
+      Authorization: "Bearer " + key,
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(fila),
+  });
+}
+
+function hs(h: number) {
+  const n = Math.round(h);
+  return n <= 1 ? "una hora" : n + " horas";
+}
+
+function cuando(ms: number) {
+  const d = new Date(ms - 3 * 3600_000);
+  const dias = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  return "el " + dias[d.getUTCDay()] + " " + dd + "/" + mm + " a las " + hh + ":" + mi;
+}
+
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+}
