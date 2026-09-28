@@ -3216,7 +3216,11 @@ function _ccaEnVivo(t) {
 function _lecturaFuentes(t) {
   const d = t.origen_datos || {};
   const aviso = d.titulo_ml || '';
-  const gA = _gamaChk(aviso), cA = _cabina(aviso), kA = _eqCaja((aviso || '').toUpperCase());
+  const gA = _gamaChk(aviso), cA = _cabina(aviso);
+  // Regla de Fer: si el aviso no dice automatico, es MANUAL. No es un dato que
+  // falta, es el dato por defecto. Asumir AT infla la cotizacion y se oferta de mas.
+  const kDicho = _eqCaja((aviso || '').toUpperCase());
+  const kA = kDicho || 'MT';
 
   const fila = (fuente, texto, valor) => {
     if (!texto) {
@@ -3235,8 +3239,13 @@ function _lecturaFuentes(t) {
     if (gA && !g) flojos.push(`no le leí la gama a esta versión (el aviso dice <b>${gA.nombre}</b>)`);
     if (cA && c && cA !== c) graves.push(`cabina: el aviso es <b>${cA}</b> y esto es <b>${c}</b>`);
     if (!cA && c) flojos.push(`el aviso no dice la cabina; esto es <b>${c}</b>`);
-    if (kA && k && kA !== k) flojos.push(`caja: el aviso dice <b>${kA}</b> y esto es <b>${k}</b>`);
-    if (!kA && k) flojos.push(`el aviso no dice la caja; esto asume <b>${k}</b>`);
+    if (k && kA !== k) {
+      const comoLoSabe = kDicho ? 'el aviso dice' : 'el aviso no dice la caja, asi que es';
+      const aviso2 = `caja: ${comoLoSabe} <b>${kA}</b> y esto es <b>${k}</b>`;
+      // Leer AT cuando es manual tasa por ENCIMA: eso es grave, no un detalle.
+      if (k === 'AT') graves.push(aviso2 + ' \u2014 tasa por <b>encima</b>');
+      else flojos.push(aviso2);
+    }
     const avisos = graves.concat(flojos);
     const mal = graves.length > 0;
     return `<tr style="${mal ? 'background:#FEF2F2' : ''}">

@@ -61,7 +61,26 @@ const TEMPLATE_PREGUNTA = "ml_pregunta_nueva";
 const TEMPLATE_SALDO = "mp_saldo_para_transferir";
 const TEMPLATE_RECORDATORIO = "ml_pregunta_sin_responder";
 const TEMPLATE_REPARTO = "reparto_unidad_sin_factura";
-const TEMPLATE_COMPRA = "ml_compra_respuesta";
+/**
+ * ⚠️ `ml_compra_respuesta` quedo APPROVED pero en categoria **MARKETING**, y un
+ * MARKETING no se entrega aunque Meta devuelva message id: el 27-9-2026 un
+ * particular contesto "no gracias" y el aviso nunca llego.
+ * Ver reference_whatsapp_template_utility: Meta clasifica el TEXTO por su cuenta
+ * y un template aprobado no se puede recategorizar.
+ *
+ * Por eso se prueba una LISTA en orden y se usa el primero que salga. Los tres
+ * `tasador_*` estan redactados como un control sobre registros propios, que es
+ * lo que cae en UTILITY. El ultimo de la lista es `ml_pregunta_nueva`, que ya
+ * esta APPROVED/UTILITY y entrega seguro.
+ * NO volver a poner `ml_compra_respuesta`: no llega.
+ */
+const TEMPLATES_COMPRA = [
+  "tasador_respuesta_sin_atender",
+  "tasador_usado_con_respuesta",
+  "tasador_consulta_contestada",
+  "ml_pregunta_nueva",
+];
+const TEMPLATE_COMPRA = TEMPLATES_COMPRA[0];
 const TEMPLATE_FALLBACK = "precios_actualizados";
 const WABA_ID = Deno.env.get("WA_TASADOR_WABA_ID") ?? "1183788370595856";
 
@@ -188,21 +207,26 @@ async function enviar(
 }
 
 // producto = el aviso (titulo · MLA), detalle = la pregunta tal cual.
-// producto = el auto + lo que le ofrecimos, detalle = lo que contestó el dueño.
-// Si el template propio todavía no está aprobado por Meta, cae al de siempre:
-// el aviso tiene que llegar igual, aunque sea con menos formato.
+// producto = el auto + lo que le ofrecimos, detalle = lo que contesto el dueno.
+// Prueba los templates en orden y se queda con el primero que Meta acepte: los
+// que todavia estan PENDING fallan con 132001 y se saltean solos, asi que cuando
+// alguno se apruebe empieza a usarse sin redeployar.
 async function enviarCompra(
   phoneId: string, token: string, tel: string, nombre: string, auto: string, respuesta: string,
 ): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
-  const propio = await postMeta(phoneId, token, tel, TEMPLATE_COMPRA,
-    [nombre, recortar(auto, 200), recortar(respuesta, 700)]);
-  if (propio.ok) return { ...propio, template: TEMPLATE_COMPRA };
-  const code = propio.error?.code;
-  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
-  if (!noExiste) return { ...propio, template: TEMPLATE_COMPRA };
-  const texto = recortar(`\u{1F4AC} CONTESTARON LA OFERTA DE COMPRA de ${auto}: "${respuesta}" \u2014 entra al tasador, solapa Compra ML.`, 900);
+  let ultimo: any = null;
+  for (const tpl of TEMPLATES_COMPRA) {
+    const r = await postMeta(phoneId, token, tel, tpl,
+      [nombre, recortar(auto, 200), recortar(respuesta, 700)]);
+    if (r.ok) return { ...r, template: tpl };
+    ultimo = r;
+    const code = r.error?.code;
+    const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+    if (!noExiste) return { ...r, template: tpl };  // error real: no seguir probando
+  }
+  const texto = recortar(`\u{1F4AC} CONTESTARON POR EL USADO ${auto}: "${respuesta}" \u2014 entra al tasador, solapa Compra ML.`, 900);
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
-  return { ...fb, template: TEMPLATE_FALLBACK };
+  return fb.ok ? { ...fb, template: TEMPLATE_FALLBACK } : { ...(ultimo || fb), template: "ninguno" };
 }
 
 async function enviarPregunta(
