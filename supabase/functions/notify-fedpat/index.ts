@@ -83,10 +83,14 @@ Deno.serve(async (req: Request) => {
     }
     a.template = usable;
     // `lista`: de qué tabla salen los destinatarios. "compras" = control semanal de
-    // compras de repuestos (repuestos-tga/scripts/sync_compras.py).
-    const tabla = a.lista === "compras" ? "compras_avisos_destinatarios" : "fedpat_avisos_destinatarios";
-    let dest: { nombre: string; telefono: string }[] = await sb(SUPABASE_URL, SERVICE_KEY,
-      `${tabla}?activo=eq.true&select=nombre,telefono`);
+    // compras de repuestos y "margen" = control de margen sobre el costo de
+    // reposición (los dos en repuestos-tga/scripts/).
+    const consulta = a.lista === "compras"
+      ? "compras_avisos_destinatarios?activo=eq.true&select=nombre,telefono"
+      : a.lista === "margen"
+      ? "margen_destinatarios?activo=eq.true&wsp=eq.true&select=nombre,telefono"
+      : "fedpat_avisos_destinatarios?activo=eq.true&select=nombre,telefono";
+    let dest: { nombre: string; telefono: string }[] = await sb(SUPABASE_URL, SERVICE_KEY, consulta);
     // `para` compara contra la PRIMERA palabra del nombre ("Fer" no es "Fernando")
     const para: string[] = Array.isArray(a.para) ? a.para.map((x: string) => x.toLowerCase()) : [];
     if (para.length) dest = dest.filter((d) => para.includes(d.nombre.toLowerCase().split(/\s+/)[0]));
@@ -342,6 +346,41 @@ const EXTRA: Record<string, unknown[]> = {
     text: "Hola {{1}}, quedó cerrado el control de compras de repuestos de la {{2}}. {{3}}. " +
       "Verificalo en la solapa Compras del portal de Repuestos.",
     example: { body_text: [["Fer", "semana del 14/09 al 20/09: 47 renglones por $ 39.400.000 sin IVA", "Sin respuesta: 17"]] },
+  }],
+  // Control de margen sobre el costo de reposición (repuestos-tga/scripts/
+  // control_margen.py). Salta cuando una venta quedó por debajo de lo que
+  // cuesta reponer la pieza, o cuando se vendió un código que VW ya no
+  // despacha. Tres redacciones: se usa la primera que Meta apruebe como
+  // UTILITY (una MARKETING se acepta y no se entrega).
+  margen_reposicion_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, en el control de repuestos quedó una venta por debajo de lo que cuesta reponer la pieza: {{2}}. {{3}}. " +
+      "Revisala en la solapa Margen del portal de Repuestos antes de que se entregue.",
+    example: {
+      body_text: [["Fer",
+        "2G0-941-661 FARO DELAN se vendió el 27/02 a $29.880, pero VW ya no despacha ese código: se repone con 2G0941661C y cuesta $397.575",
+        "Taller · QUALITY COMEX SRL / Taos AG017ES. Diferencia: $367.694"]],
+    },
+  }],
+  margen_reposicion_2: [{
+    type: "BODY",
+    text: "Hola {{1}}, una venta de repuestos quedó por debajo del costo de reposición: {{2}}. {{3}}. " +
+      "El detalle está en la solapa Margen del portal de Repuestos.",
+    example: {
+      body_text: [["Fer",
+        "2G0-941-661 FARO DELAN se vendió el 27/02 a $29.880 y reponerla cuesta $397.575",
+        "Taller · QUALITY COMEX SRL / Taos AG017ES. Diferencia: $367.694"]],
+    },
+  }],
+  margen_reposicion_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, el control de repuestos marcó esta venta para que la revises: {{2}}. {{3}}. " +
+      "Verificá el precio en la solapa Margen del portal de Repuestos.",
+    example: {
+      body_text: [["Fer",
+        "2G0-941-661 FARO DELAN se vendió a $29.880 y reponerla cuesta $397.575",
+        "Taller · Taos AG017ES. Diferencia: $367.694"]],
+    },
   }],
   // a German (y quien corresponda), con pedidos sin elegir en la bandeja
   fedpat_bandeja_pendiente: [{
