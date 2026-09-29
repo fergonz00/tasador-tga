@@ -47,7 +47,8 @@ const GH_USER = Deno.env.get("GH_USUARIO") ?? "fergonz00";
 const HORAS_SIN_EXITO = Number(Deno.env.get("GITHUB_VIGIA_HORAS") ?? 6);
 const HORAS_REPETIR = 6;
 const VENTANA_HORAS = 30; // corridas que se miran
-const SIN_ARRANCAR_SEG = 15; // un job que "falla" en menos de esto nunca arrancó
+const SIN_ARRANCAR_SEG = 15; // primer filtro: un job que "falla" en menos de esto es sospechoso
+const MAX_CONFIRMAR = 8; // cuántas de esas se confirman contra la API (una llamada cada una)
 const DESDE_HORA = 7; // horario en que se puede mandar (hora argentina)
 const HASTA_HORA = 23;
 const DESTINATARIOS = Deno.env.get("GITHUB_VIGIA_DESTINATARIOS") ?? "fngonzalez,mlubrano";
@@ -76,6 +77,7 @@ type Run = {
   conclusion: string | null;
   run_started_at: string | null;
   updated_at: string;
+  jobId?: number;
 };
 
 Deno.serve(async (req: Request) => {
@@ -173,42 +175,57 @@ Deno.serve(async (req: Request) => {
   // corrió bien más tarde, la cuenta está andando y esas fallas ya son historia.
   // Sin esto, el 28-09 el vigía seguía gritando "cuenta frenada" durante 12 horas
   // después de que Fer destrabara el pago y todo volviera a correr.
-  const sinArrancar = runs.filter((r) =>
+  const candidatos = runs.filter((r) =>
     r.conclusion === "failure" && r.run_started_at &&
     (new Date(r.updated_at).getTime() - new Date(r.run_started_at).getTime()) / 1000 <= SIN_ARRANCAR_SEG &&
     (ahora - new Date(r.updated_at).getTime()) / 3600_000 <= HORAS_SIN_EXITO * 2 &&
     new Date(r.updated_at).getTime() > ultimoExito
   ).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 
-  // El motivo real está en las anotaciones del check-run, no en el log (que viene vacío).
-  let motivo = "";
-  if (sinArrancar.length) {
-    const r = sinArrancar[0];
+  // ⚠️ Durar pocos segundos NO alcanza para decir que nunca arrancó. El 29-09-2026
+  // el control de nombres de tienda-repuestos moría en 13 segundos porque el script
+  // reventaba en el import, y el vigía lo leyó como "GitHub frenó la cuenta". Lo que
+  // de verdad las distingue es la cantidad de PASOS: al que nunca arrancó el runner
+  // no lo tomó nunca y el job vuelve con cero pasos; al que arrancó y se cayó se le
+  // ven todos (Set up job, checkout, el paso que falló, Complete job).
+  const sinArrancar: Run[] = [];
+  for (const r of candidatos.slice(0, MAX_CONFIRMAR)) {
     try {
-      const jobs = await gh<{ jobs?: Array<{ id: number }> }>(
+      const jobs = await gh<{ jobs?: Array<{ id: number; steps?: unknown[] }> }>(
         GH_TOKEN,
         "/repos/" + GH_USER + "/" + r.repo + "/actions/runs/" + r.id + "/jobs",
       );
-      const jid = jobs.jobs?.[0]?.id;
-      if (jid) {
-        const an = await gh<Array<{ annotation_level: string; message: string }>>(
-          GH_TOKEN,
-          "/repos/" + GH_USER + "/" + r.repo + "/check-runs/" + jid + "/annotations",
-        );
-        motivo = (an.find((a) => a.annotation_level === "failure")?.message ?? "").trim();
-      }
+      const j = jobs.jobs?.[0];
+      if (j && (j.steps ?? []).length === 0) sinArrancar.push({ ...r, jobId: j.id });
+    } catch { /* si GitHub no contesta por una corrida, no invento una caída */ }
+  }
+
+  // El motivo real está en las anotaciones del check-run, no en el log (que viene vacío).
+  let motivo = "";
+  if (sinArrancar.length && sinArrancar[0].jobId) {
+    const r = sinArrancar[0];
+    try {
+      const an = await gh<Array<{ annotation_level: string; message: string }>>(
+        GH_TOKEN,
+        "/repos/" + GH_USER + "/" + r.repo + "/check-runs/" + r.jobId + "/annotations",
+      );
+      motivo = (an.find((a) => a.annotation_level === "failure")?.message ?? "").trim();
     } catch { /* si no se puede leer, alcanza con el síntoma */ }
   }
 
   const facturacion = /payment|spending limit|billing/i.test(motivo);
-  const caida = sinArrancar.length > 0 || horasSinExito >= HORAS_SIN_EXITO;
+  // El silencio se afirma aparte: si algo corrió bien hace un rato, decir "no corre
+  // ninguna automatización" es mentira y hace perder tiempo buscando donde no es.
+  const silencio = horasSinExito >= HORAS_SIN_EXITO;
+  const caida = sinArrancar.length > 0 || silencio;
   const afectados = [...new Set(sinArrancar.map((r) => r.repo))];
+  const yNoCorre = silencio ? " y hace " + hs(horasSinExito) + " que no corre ninguna automatización" : "";
 
   const resumen = !caida ? "" : facturacion
-    ? "GitHub frenó la cuenta y hace " + hs(horasSinExito) + " que no corre ninguna automatización"
+    ? "GitHub frenó la cuenta" + yNoCorre
     : sinArrancar.length
-    ? sinArrancar.length + " corridas fallaron sin llegar a arrancar y hace " + hs(horasSinExito) +
-      " que no corre ninguna automatización"
+    ? sinArrancar.length + (sinArrancar.length === 1 ? " corrida falló" : " corridas fallaron") +
+      " sin llegar a arrancar" + yNoCorre
     : "hace " + hs(horasSinExito) + " que no corre ninguna automatización";
 
   const detalle = !caida ? "" : [
@@ -500,6 +517,7 @@ async function sbUpsert(url: string, key: string, tabla: string, fila: Record<st
 }
 
 function hs(h: number) {
+  if (h < 1) return "menos de una hora";
   const n = Math.round(h);
   return n <= 1 ? "una hora" : n + " horas";
 }
