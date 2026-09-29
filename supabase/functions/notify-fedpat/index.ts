@@ -382,6 +382,30 @@ const EXTRA: Record<string, unknown[]> = {
         "Taller · Taos AG017ES. Diferencia: $367.694"]],
     },
   }],
+  // Meta reclasificó la 2 y la 3 como MARKETING (se aceptan y no se entregan).
+  // Estas dos están calcadas de las redacciones que sí aprobaron como UTILITY
+  // (compras_control_semanal_1, pv_control_plazo_cobro): nombran los renglones
+  // propios registrados en Oversoft y qué hay que corregir.
+  margen_reposicion_4: [{
+    type: "BODY",
+    text: "Hola {{1}}, el control reviso los renglones de repuestos registrados en Oversoft y este quedó por debajo del costo de reposición: {{2}}. {{3}}. " +
+      "Corregí el precio en Oversoft o revisá el caso en la solapa Margen del portal de Repuestos.",
+    example: {
+      body_text: [["Fer",
+        "2G0-941-661 FARO DELAN se vendió el 27/02 a $29.880 y reponerla cuesta $397.575",
+        "Taller · QUALITY COMEX SRL / Taos AG017ES. Diferencia: $367.694"]],
+    },
+  }],
+  margen_reposicion_5: [{
+    type: "BODY",
+    text: "Hola {{1}}, en los renglones de repuestos que registrás en Oversoft el sistema controla el margen contra el costo de reposición, y este no lo alcanza: {{2}}. {{3}}. " +
+      "Corregí el precio antes de que se entregue la pieza; el detalle está en la solapa Margen del portal de Repuestos.",
+    example: {
+      body_text: [["Fer",
+        "2G0-941-661 FARO DELAN se vendió el 27/02 a $29.880 y reponerla cuesta $397.575",
+        "Taller · QUALITY COMEX SRL / Taos AG017ES. Diferencia: $367.694"]],
+    },
+  }],
   // a German (y quien corresponda), con pedidos sin elegir en la bandeja
   fedpat_bandeja_pendiente: [{
     type: "BODY",
