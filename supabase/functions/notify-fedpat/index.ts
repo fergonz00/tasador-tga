@@ -78,10 +78,16 @@ Deno.serve(async (req: Request) => {
       { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
     const estado = new Map(((await lr.json())?.data ?? []).map((t: any) => [t.name, t]));
     const usable = candidatas.find((t) => { const x: any = estado.get(t); return x && x.status === "APPROVED" && x.category === "UTILITY"; });
-    if (!usable) {
+    // Si ninguna propia sirve, el aviso NO se pierde: cae a `precios_actualizados`,
+    // que está aprobada como UTILITY desde hace meses y lleva todo el texto en
+    // {{1}}. Meta reclasifica a MARKETING por su cuenta y no avisa (pasó con las
+    // tres primeras de margen_reposicion), así que esperar la aprobación no es
+    // una estrategia: el control tiene que avisar igual.
+    const fallback = !usable && (estado.get(TEMPLATE_FALLBACK) as any)?.status === "APPROVED";
+    if (!usable && !fallback) {
       return json({ ok: false, error: "ninguna plantilla aprobada como UTILITY", candidatas: candidatas.map((t) => [t, estado.get(t)]) }, 409);
     }
-    a.template = usable;
+    a.template = usable ?? TEMPLATE_FALLBACK;
     // `lista`: de qué tabla salen los destinatarios. "compras" = control semanal de
     // compras de repuestos y "margen" = control de margen sobre el costo de
     // reposición (los dos en repuestos-tga/scripts/).
@@ -98,10 +104,18 @@ Deno.serve(async (req: Request) => {
     const out: any[] = [];
     for (const d of dest) {
       const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
-      const params = [nombre, ...(a.params || []).map((p: string) => recortar(sinPuntoFinal(limpiar(p)), 600))];
-      out.push({ a: d.nombre, ...(await postMeta(WA_PHONE_ID, WA_TOKEN, String(d.telefono).replace(/\D/g, ""), a.template, params)) });
+      const partes = (a.params || []).map((p: string) => recortar(sinPuntoFinal(limpiar(p)), 600));
+      // `precios_actualizados` sólo tiene {{1}}: ahí va el aviso entero.
+      const params = usable
+        ? [nombre, ...partes]
+        : [recortar(`${nombre}: ${a.titulo ?? "control de repuestos"} — ${partes.join(". ")}`, 900)];
+      out.push({
+        a: d.nombre,
+        template: a.template,
+        ...(await postMeta(WA_PHONE_ID, WA_TOKEN, String(d.telefono).replace(/\D/g, ""), a.template, params)),
+      });
     }
-    return json({ ok: true, resultados: out });
+    return json({ ok: true, plantilla: a.template, propia: Boolean(usable), resultados: out });
   }
   if (body?.listar === true) {
     const res = await fetch(
