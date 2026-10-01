@@ -700,6 +700,7 @@ input, select, textarea { font-family: var(--font); }
         <button onclick="showAdminTab('todas', this)">Todas</button>
         <button id="tabArgd" class="hidden" onclick="showAdminTab('argendreams', this)">🤝 ArgenDreams</button>
         <button onclick="showAdminTab('compra_ml', this)">💰 Compra ML</button>
+        <button onclick="showAdminTab('flash', this)">⚡ Flash ML</button>
       </div>
       <div class="cotiz-bar">
         <label>Cotización USD:</label>
@@ -2845,6 +2846,8 @@ function renderAdminList(tasaciones) {
   // Compra por ML: autos de particulares que estamos evaluando comprar. Van con
   // la card normal —el mismo comparativo de siempre— más un bloque con lo que
   // pide el dueño y el link al aviso.
+  if (adminFiltroEstado === 'flash') return renderFlashList(data.filter(_esFlash));
+  data = data.filter(t => !_esFlash(t));
   if (adminFiltroEstado === 'compra_ml') {
     const soloML = data.filter(_esCompraML);
     if (soloML.length === 0) {
@@ -2971,9 +2974,155 @@ function _esArgd() {
 function _esExterna(t) {
   // Las de compra por ML tienen origen propio pero NO son externas en el sentido
   // de ArgenDreams: usan la card normal, con el mismo comparativo de siempre.
-  return !!(t && t.origen && t.origen !== 'tga' && t.origen !== 'ml');
+  return !!(t && t.origen && t.origen !== 'tga' && t.origen !== 'ml' && t.origen !== 'flash');
 }
 
+
+// ============ SUBASTAS FLASH (Flash ML) ============
+//
+// Pedido de Fer (1-10-2026): cada auto que publica Flash (el socio de usados de
+// Mercado Libre) entra con el mismo análisis que si lo cargara un vendedor. Fer
+// pone UN número, el tope, y el bot (kavak-cotizador/flash_subastas.py, en la PC)
+// puja solo de a poco sin pasarlo nunca.
+// ⭐ El tope es el TOTAL CON COMISIÓN: la puja máxima es tope / (1 + comisión).
+
+function _esFlash(t) {
+  return !!(t && t.origen === 'flash');
+}
+
+function _flashMaxPuja(t, tope) {
+  const com = Number((t && t.origen_datos || {}).comision_pct) || 5;
+  return Math.floor((Number(tope) || 0) / (1 + com / 100));
+}
+
+const FLASH_ESTADO = {
+  esperando: ['⏳ Esperando que arranque', '#1E40AF', '#EFF6FF'],
+  ganando: ['🟢 Vamos ganando', '#065F46', '#D1FAE5'],
+  superado: ['🔴 Pasaron el tope: no pujamos más', '#991B1B', '#FEF2F2'],
+  prueba: ['🧪 Modo prueba: registra lo que haría, no puja', '#92400E', '#FFFBEB'],
+  ganado: ['🏆 GANADO · pagar en 48 h', '#065F46', '#D1FAE5'],
+  perdido: ['Cerró: lo ganó otra agencia', '#6B7280', '#F3F4F6'],
+  desierto: ['Cerró sin ventas', '#6B7280', '#F3F4F6']
+};
+
+function _escFlash(x) {
+  return String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
+function _cajasFlash(t) {
+  const d = t.origen_datos || {};
+  const com = Number(d.comision_pct) || 5;
+  const base = Number(d.base) || 0;
+  const baseTotal = base * (1 + com / 100);
+  const kavak = Number(t.precio_kavak_auto) || 0;
+  const pct = kavak ? ((baseTotal / kavak - 1) * 100) : null;
+  return `
+    <div class="precio-box cca" style="flex:1; min-width:150px">
+      <div class="metodo">Base Flash + ${com}%</div>
+      <div class="valor">${base ? '$ ' + formatNum(Math.round(baseTotal)) : 'N/A'}</div>
+      <div class="sub">base $ ${formatNum(base)} + comisión</div>
+      ${pct !== null ? `<div class="sub" style="color:${pct <= 0 ? 'var(--green)' : 'var(--red)'}; font-weight:700; opacity:1">${pct > 0 ? '+' : ''}${pct.toFixed(1)}% vs Kavak</div>` : ''}
+    </div>`;
+}
+
+function _textoTopeFlash(t, tope) {
+  const d = t.origen_datos || {};
+  const com = Number(d.comision_pct) || 5;
+  const base = Number(d.base) || 0;
+  const kavak = Number(t.precio_kavak_auto) || 0;
+  if (!tope) {
+    return `Poné el total que querés pagar con la comisión del ${com}% incluida.` +
+      (kavak ? ` Kavak paga $ ${formatNum(Math.round(kavak))}.` : '');
+  }
+  const max = _flashMaxPuja(t, tope);
+  return `Puja máxima <b>$ ${formatNum(max)}</b> + ${com}% = $ ${formatNum(Math.round(tope))}` +
+    (kavak ? ` · Kavak paga $ ${formatNum(Math.round(kavak))}` : '') +
+    (base && max < base ? ` · <b style="color:var(--red)">no llega a la base ($ ${formatNum(base)}): no se va a pujar</b>` : '');
+}
+
+function _ayudaTopeFlash(t) {
+  return `<div id="flashTopeVivo-${t.id}" style="width:100%; font-size:11px; color:#92400E; margin-bottom:2px">${_textoTopeFlash(t, Number(t.precio_toma_virtual) || 0)}</div>`;
+}
+
+function _vivoTopeFlash(id) {
+  const t = (allTasaciones || []).find(x => x.id === id);
+  const el = document.getElementById('flashTopeVivo-' + id);
+  const inp = document.getElementById('virtual-' + id);
+  if (!t || !el || !inp) return;
+  el.innerHTML = _textoTopeFlash(t, Number(inp.value) || 0);
+}
+
+function _bloqueFlash(t) {
+  const d = t.origen_datos || {};
+  const ini = d.inicio ? new Date(d.inicio) : null;
+  const fin = d.fin ? new Date(d.fin) : null;
+  const fh = (x) => x ? x.toLocaleString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
+  const insp = d.inspeccion || {};
+  const obs = insp.items_con_observacion || [];
+  const pj = d.puja || {};
+  const est = FLASH_ESTADO[pj.estado];
+  const tope = Number(t.precio_toma_virtual) || 0;
+  const pausada = !!d.puja_pausada;
+  const e = _escFlash;
+  return `
+    <div style="margin:12px 16px 0; padding:10px 12px; background:#F5F3FF; border:1px solid #DDD6FE; border-radius:6px 6px 0 0; font-size:12px; color:#3B0764">
+      <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:baseline">
+        <b style="font-size:13px">⚡ ${e(d.subasta)} · ${fh(ini)}${fin ? ' a ' + fin.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''}</b>
+        ${d.link ? `<a href="${e(d.link)}" target="_blank" rel="noopener" style="font-size:12px">ver en Flash ↗</a>` : ''}
+      </div>
+      <div style="margin-top:4px">Flash lo publica como: <b>${e(d.flash_version)}</b>${t.patente ? ' · ' + e(t.patente) : ''}${d.vin ? ' · VIN ' + e(d.vin) : ''}</div>
+      ${insp.calificacion != null ? `<div style="margin-top:4px">Inspección Flash: <b>${e(insp.calificacion)}/5 · ${insp.veredicto === 'approved' ? 'aprobado' : e(insp.veredicto)}</b> — ${e(insp.comentarios)}</div>` : ''}
+      ${insp.positivos ? `<div style="margin-top:2px; color:var(--vw-grey-5); white-space:pre-wrap">${e(insp.positivos)}</div>` : ''}
+      ${obs.length ? `<details style="margin-top:4px"><summary style="cursor:pointer; font-weight:700">${obs.length} ítems con observación (de ${e(insp.items_total || '?')})</summary>
+        <ul style="margin:4px 0 0 16px; padding:0">${obs.map(o => `<li><b>${e(o.item)}</b>: ${e(o.cal)}${o.obs && o.obs !== o.cal ? ' — ' + e(o.obs) : ''}</li>`).join('')}</ul></details>` : ''}
+      <div style="margin-top:8px; padding:6px 8px; border-radius:4px; background:${est ? est[2] : 'white'}; color:${est ? est[1] : 'var(--vw-grey-5)'}; display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center">
+        <span>${pausada ? '⏸️ <b>Puja pausada</b>' : (est ? '<b>' + est[0] + '</b>' : (tope ? '<b>Con tope:</b> el bot entra 10 min antes' : 'Sin tope: no se puja'))}${
+          pj.precio_actual ? ' · va $ ' + formatNum(pj.precio_actual) : ''}${
+          pj.ultima_puja ? ' · nuestra última $ ' + formatNum(pj.ultima_puja) : ''}${
+          pj.cierre ? ' · cerró en $ ' + formatNum(pj.cierre) : ''}</span>
+        ${tope ? `<button onclick="event.stopPropagation(); pausarPujaFlash('${t.id}', ${!pausada})" style="padding:4px 10px; font-size:11px; font-weight:700; border-radius:4px; border:1px solid currentColor; background:white; color:inherit; cursor:pointer">${pausada ? '▶️ Reanudar puja' : '⏸️ Pausar puja'}</button>` : ''}
+      </div>
+    </div>`;
+}
+
+async function pausarPujaFlash(id, pausar) {
+  const t = (allTasaciones || []).find(x => x.id === id);
+  if (!t) return;
+  const d = Object.assign({}, t.origen_datos || {}, { puja_pausada: !!pausar });
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ origen_datos: d }) });
+    showToast(pausar ? 'Puja pausada: el bot no puja este auto' : 'Puja reanudada');
+    loadAdminTasaciones('flash');
+  } catch (e) {
+    showToast('No pude guardar: ' + String(e.message || e).slice(0, 80));
+  }
+}
+
+function renderFlashList(lista) {
+  const list = document.getElementById('adminList');
+  if (!lista.length) {
+    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Todavía no hay autos de Flash</div>';
+    return;
+  }
+  const ahora = Date.now();
+  const cerrado = (t) => {
+    const d = t.origen_datos || {};
+    return ['ganado', 'perdido', 'desierto'].includes((d.puja || {}).estado) ||
+      (d.fin && new Date(d.fin).getTime() < ahora - 2 * 3600e3);
+  };
+  const porInicio = (a, b) => String((a.origen_datos || {}).inicio).localeCompare(String((b.origen_datos || {}).inicio));
+  const abiertas = lista.filter(t => !cerrado(t)).sort(porInicio);
+  const cerradas = lista.filter(cerrado).sort((a, b) => porInicio(b, a));
+  list.innerHTML =
+    '<div style="margin:0 16px 12px; padding:10px 14px; background:var(--vw-grey-1); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.6">' +
+    '⚡ Autos de las <b>subastas de Flash</b> (socio de usados de Mercado Libre), tasados como si los cargara un vendedor. ' +
+    'Poné el <b>tope total con la comisión incluida</b>: el bot entra 10 min antes y puja de a poco (lo mínimo que permite Flash) sin pasarlo nunca. ' +
+    'Sin tope no se puja.</div>' +
+    (abiertas.length ? `<div style="margin:16px 16px 8px; font-size:13px; font-weight:700; color:#5B21B6">Próximas y en curso (${abiertas.length})</div>` +
+      abiertas.map(t => _bloqueFlash(t) + renderAdminCard(t)).join('') : '') +
+    (cerradas.length ? `<div style="margin:24px 16px 8px; font-size:13px; font-weight:700; color:var(--vw-grey-4)">Cerradas (${cerradas.length})</div>` +
+      cerradas.map(t => _bloqueFlash(t) + renderAdminCard(t)).join('') : '');
+}
 
 // ============ OFERTA POR MERCADO LIBRE (Compra ML) ============
 //
@@ -3157,6 +3306,7 @@ function _pctPide(t, valor) {
 /** Flash y Carmuv como cajas del mismo grid, para que se lean junto a las otras
  *  tres en vez de en un bloque aparte. Solo en las de ML. */
 function _cajasCompraML(t) {
+  if (_esFlash(t)) return _cajasFlash(t);
   if (!_esCompraML(t)) return '';
   const d = t.origen_datos || {};
   const caja = (clase, titulo, valor, sub) => `
@@ -3613,7 +3763,7 @@ function kavakBoxHTML(t, opts) {
         <div class="${claseTitulo}">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(automático)</span></div>
         ${principal}
         ${_pctPide(t, auto)}
-        <div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15); ${_esCompraML(t) ? 'display:none' : ''}">
+        <div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15); ${(_esCompraML(t) || _esFlash(t)) ? 'display:none' : ''}">
           <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; opacity:0.7">Lo cargó el vendedor${manual != null ? ` — $ ${formatNum(Math.round(manual))}` : ''}</div>
           <div style="display:flex; align-items:center; gap:4px; margin-top:3px">
             <span style="font-family:var(--mono); font-size:11px; font-weight:700">$</span>
@@ -4668,15 +4818,16 @@ function renderAdminCard(t) {
         return `
           <div style="margin-top:10px; padding:10px 12px; background:#FFFBEB; border-radius:6px; border:1px solid #FDE68A">
             <div style="display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-bottom:6px; flex-wrap:wrap">
-              <span style="font-size:12px; font-weight:700; color:#92400E">${_esCompraML(t) ? 'PRECIO QUE LE OFRECEMOS' : 'PRECIO VIRTUAL DE TOMA'}</span>
-              <span style="font-size:10px; color:var(--vw-grey-4)">${t.precio_toma_virtual ? '✓ ' + fechaVirt + (t.precio_toma_virtual_por ? ' · ' + t.precio_toma_virtual_por : '') : (_esCompraML(t) ? 'Sin precio · al guardar se arma la pregunta para el aviso y la confirmás antes de enviarla' : 'No cargado · al guardar se avisa al vendedor por WA')}</span>
+              <span style="font-size:12px; font-weight:700; color:#92400E">${_esFlash(t) ? 'TOPE · TOTAL CON COMISIÓN' : (_esCompraML(t) ? 'PRECIO QUE LE OFRECEMOS' : 'PRECIO VIRTUAL DE TOMA')}</span>
+              <span style="font-size:10px; color:var(--vw-grey-4)">${t.precio_toma_virtual ? '✓ ' + fechaVirt + (t.precio_toma_virtual_por ? ' · ' + t.precio_toma_virtual_por : '') : (_esFlash(t) ? 'Sin tope · no se puja' : (_esCompraML(t) ? 'Sin precio · al guardar se arma la pregunta para el aviso y la confirmás antes de enviarla' : 'No cargado · al guardar se avisa al vendedor por WA'))}</span>
             </div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
-              <input type="number" id="virtual-${t.id}" placeholder="Precio virtual" value="${t.precio_toma_virtual || ''}" onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box">
+              ${_esFlash(t) ? _ayudaTopeFlash(t) : ''}
+              <input type="number" id="virtual-${t.id}" placeholder="${_esFlash(t) ? 'Tope total (con comisión)' : 'Precio virtual'}" ${_esFlash(t) ? `oninput="_vivoTopeFlash('${t.id}')"` : ''} value="${t.precio_toma_virtual || ''}" onclick="event.stopPropagation()" style="flex:1; min-width:140px; padding:8px 10px; font-size:15px; font-family:var(--mono); font-weight:700; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box">
               <button onclick="event.stopPropagation(); guardarPrecioVirtual('${t.id}')" style="padding:8px 14px; background:#92400E; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">${t.precio_toma_virtual ? 'Actualizar' : 'Guardar'}</button>
             </div>
-            <textarea id="comentario-virtual-${t.id}" placeholder="${_esCompraML(t) ? 'Nota interna sobre este auto (opcional)' : 'Comentario para el vendedor (opcional si cargás precio, obligatorio si marcás NO APTO)'}" onclick="event.stopPropagation()" rows="2" style="width:100%; padding:8px 10px; font-size:13px; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box; resize:vertical; font-family:var(--sans)">${t.comentario_virtual_vendedor || ''}</textarea>
-            <div style="margin-top:8px; ${_esCompraML(t) ? 'display:none' : 'display:flex'}; justify-content:flex-end; gap:6px; flex-wrap:wrap">
+            <textarea id="comentario-virtual-${t.id}" placeholder="${(_esCompraML(t) || _esFlash(t)) ? 'Nota interna sobre este auto (opcional)' : 'Comentario para el vendedor (opcional si cargás precio, obligatorio si marcás NO APTO)'}" onclick="event.stopPropagation()" rows="2" style="width:100%; padding:8px 10px; font-size:13px; border:1px solid #FDE68A; border-radius:6px; box-sizing:border-box; resize:vertical; font-family:var(--sans)">${t.comentario_virtual_vendedor || ''}</textarea>
+            <div style="margin-top:8px; ${(_esCompraML(t) || _esFlash(t)) ? 'display:none' : 'display:flex'}; justify-content:flex-end; gap:6px; flex-wrap:wrap">
               <button onclick="event.stopPropagation(); abrirRebotarVendedor('${t.id}')" style="padding:6px 12px; background:white; color:#9A3412; border:1px solid #9A3412; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">↩️ Rebotar al vendedor</button>
               <button onclick="event.stopPropagation(); marcarNoApto('${t.id}')" style="padding:6px 12px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:11px; cursor:pointer">❌ Marcar NO APTO para toma</button>
             </div>
@@ -6924,6 +7075,13 @@ async function guardarPrecioVirtual(id) {
       })
     });
     const tas = (allTasaciones || []).find(x => x.id === id);
+    if (_esFlash(tas)) {
+      // Flash: el tope ES la orden de puja. No hay vendedor a quien avisar; el bot
+      // lo relee cada 20 s, aunque la subasta ya haya empezado.
+      showToast('Tope guardado · puja máxima $ ' + formatNum(_flashMaxPuja(tas, precio)));
+      loadAdminTasaciones('flash');
+      return;
+    }
     if (_esCompraML(tas)) {
       // Un auto de ML no tiene vendedor del salón: el WhatsApp no va a ningún lado.
       // Lo que sigue es la pregunta en el aviso: se abre el mensaje para que lo
