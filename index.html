@@ -2864,7 +2864,10 @@ function renderAdminList(tasaciones) {
       { id: 'ofrecido', titulo: '✉️ Ya les ofrecí — esperando respuesta', color: '#1E40AF', fondo: '#EFF6FF',
         ayuda: 'La pregunta ya está publicada en el aviso. Llega un WhatsApp cuando contesten.' },
       { id: 'lejos', titulo: '🚫 Lejos de precio', color: '#991B1B', fondo: '#FEF2F2',
-        ayuda: `Ni Kavak ni Flash llegan al ${100 - TOPE_DIF_OFERTA * 100}% de lo que pide. No se ofertan.` }
+        ayuda: `Ni Kavak ni Flash llegan al ${100 - TOPE_DIF_OFERTA * 100}% de lo que pide. No se ofertan.` },
+      { id: 'descartado', titulo: '🗑️ Descartados', color: 'var(--vw-grey-4)',
+        fondo: 'var(--vw-grey-1)',
+        ayuda: 'Quedaron afuera por la diferencia de precio. Siguen listados para que el barrido no los traiga de nuevo.' }
     ];
     const porEtapa = {};
     for (const t of soloML) (porEtapa[_etapaML(t)] = porEtapa[_etapaML(t)] || []).push(t);
@@ -3281,8 +3284,22 @@ function _etapaML(t) {
   const d = t.origen_datos || {};
   if (d.oferta_respondida_at) return 'contesto';
   if (d.oferta_enviada_at) return 'ofrecido';
+  // Descartado a mano o por el tope de diferencia: no se oferta, pero la fila
+  // queda para que el barrido no lo vuelva a traer todos los dias.
+  if (d.descartado_at) return 'descartado';
   if (!_refCompra(t).ok) return 'lejos';
   return 'para_ofertar';
+}
+
+/**
+ * ¿La respuesta del dueño suena a que acepta? Es sólo una ayuda visual: la
+ * respuesta completa se muestra siempre al lado, porque un "si pero..." no es un sí.
+ */
+function _pareceSi(txt) {
+  const t = (txt || '').toLowerCase();
+  if (!t) return false;
+  if (/\bno\b|no gracias|no me interesa|ya lo vend/.test(t)) return false;
+  return /\bsi\b|\bsí\b|dale|acepto|me interesa|de acuerdo|coordin|cuando pod|cerramo|lo llevo|vendido/.test(t);
 }
 
 /** Ya le puso precio. Es el mismo campo que una tasación normal
@@ -3492,12 +3509,17 @@ function _bloqueCompraML(t) {
         <span>✓ Ya le puse precio: $ ${formatNum(Math.round(oferta))} ${pct(oferta)}</span>
         <span style="font-size:11px; font-weight:600; opacity:.85">${fechaOf}${t.precio_toma_virtual_por ? ' · ' + t.precio_toma_virtual_por : ''}</span>
       </div>
+      ${d.descartado_at ? `
+      <div style="margin:-8px -12px 8px; padding:6px 12px; background:var(--vw-grey-1); border-bottom:1px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-5)">
+        \u{1F5D1}\uFE0F Descartado el ${new Date(d.descartado_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}${d.descartado_motivo ? ' \u2014 ' + d.descartado_motivo : ''}
+      </div>` : ''}
       ${d.oferta_enviada_at ? `
       <div style="margin:-8px -12px 8px; padding:7px 12px; background:#ECFDF5; border-bottom:1px solid #A7F3D0; font-size:12px; color:#065F46">
         ✉️ Pregunta publicada el ${new Date(d.oferta_enviada_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}${d.oferta_enviada_por ? ' por ' + d.oferta_enviada_por : ''}
         <div style="margin-top:3px; color:var(--vw-grey-5); font-style:italic">“${(d.oferta_texto || '').replace(/"/g, '&quot;')}”</div>
         ${d.oferta_respondida_at ? `
-        <div style="margin-top:6px; padding:6px 8px; background:white; border-radius:4px; border-left:2px solid #065F46">
+        <div style="margin-top:6px; padding:6px 8px; background:${_pareceSi(d.oferta_respuesta) ? '#D1FAE5' : 'white'}; border-radius:4px; border-left:2px solid #065F46">
+          ${_pareceSi(d.oferta_respuesta) ? '<div style="font-weight:800; color:#065F46">\u2705 PARECE QUE ACEPTA \u2014 llamalo</div>' : ''}
           <b>Contestó el ${new Date(d.oferta_respondida_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}:</b>
           <div style="margin-top:2px; white-space:pre-wrap">${(d.oferta_respuesta || '').replace(/</g, '&lt;')}</div>
           ${d.link ? `<a href="${d.link}" target="_blank" rel="noopener" style="font-size:11px">contestarle en el aviso ↗</a>` : ''}
