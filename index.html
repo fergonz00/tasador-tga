@@ -5264,6 +5264,138 @@ ${accesorios.length > 0 ? `
 
 function renderInspeccionFisicaAdmin(t) {
   const af = (t.analisis_fisico && typeof t.analisis_fisico === 'object') ? t.analisis_fisico : null;
+  // La opinión del tasador va arriba de la inspección (entre los precios y el bloque
+  // violeta): es lo primero que tiene que leer el admin antes de cerrar el precio.
+  const opinionHTML = (af && t.precio_sugerido_fisico) ? renderOpinionTasadorHTML(af, t.tasado_fisico_por) : '';
+  return opinionHTML + _renderInspeccionFisicaAdminBloque(t, af);
+}
+
+// ============ OPINIÓN DEL TASADOR FÍSICO ============
+// Al guardar la inspección, el tasador deja sí o sí su opinión: qué recomienda hacer
+// con el auto, por qué ese valor de toma y aclaraciones. Vive en analisis_fisico.opinion
+// (interna para el admin: NO va al borrador IA del comentario al vendedor).
+const OPINION_RECOMENDACIONES = [
+  { key: 'tomar',          label: '✅ Tomarlo',              color: '#065F46', fondo: '#ECFDF5' },
+  { key: 'tomar_reservas', label: '⚠️ Tomarlo con reservas', color: '#92400E', fondo: '#FFFBEB' },
+  { key: 'no_tomar',       label: '❌ No tomarlo',           color: '#991B1B', fondo: '#FEE2E2' }
+];
+const OPINION_SALIDAS = [
+  { key: 'rapida', label: '🚀 Rápida' },
+  { key: 'normal', label: '⏱ Normal' },
+  { key: 'lenta',  label: '🐢 Lenta' }
+];
+const OPINION_MIN_CHARS = 30;
+
+// Kavak para el perfil del tasador: manda el automático; si el robot no lo sacó, el del vendedor.
+function _kavakParaFisico(tas) {
+  if (tas.precio_kavak_auto != null) return { valor: tas.precio_kavak_auto, fuente: '(automático)' };
+  if (tas.precio_kavak) return { valor: tas.precio_kavak, fuente: '(lo cargó el vendedor)' };
+  return { valor: null, fuente: '' };
+}
+
+function renderOpinionTasadorHTML(af, autor) {
+  const op = af && af.opinion;
+  if (!op || !op.recomendacion) return '';
+  const esc = _escapeHtmlUsr;
+  const rec = OPINION_RECOMENDACIONES.find(r => r.key === op.recomendacion) || { label: op.recomendacion, color: '#991B1B', fondo: '#FEE2E2' };
+  const sal = OPINION_SALIDAS.find(s => s.key === op.salida);
+  const quien = op.por || autor || 'Tasador';
+  return `
+    <div style="margin-top:12px; padding:14px; background:#FEF2F2; border:1px solid #FCA5A5; border-left:5px solid #DC2626; border-radius:8px">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px">
+        <span style="font-size:12px; font-weight:700; color:#991B1B; letter-spacing:0.5px">🗣️ OPINIÓN DEL TASADOR · ${esc(quien)}</span>
+        <span style="display:flex; gap:6px; flex-wrap:wrap">
+          <span style="padding:3px 10px; background:${rec.fondo}; color:${rec.color}; border:1px solid ${rec.color}; border-radius:12px; font-size:12px; font-weight:700">${rec.label}</span>
+          ${sal ? `<span style="padding:3px 10px; background:white; color:var(--vw-grey-5); border:1px solid var(--vw-grey-2); border-radius:12px; font-size:12px; font-weight:600">Salida ${sal.label}</span>` : ''}
+        </span>
+      </div>
+      <div style="font-size:10px; font-weight:700; color:#991B1B; letter-spacing:0.5px; text-transform:uppercase">Por qué ese valor de toma</div>
+      <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap; margin-top:2px">${esc(op.motivo_valor)}</div>
+      ${op.aclaraciones ? `
+        <div style="font-size:10px; font-weight:700; color:#991B1B; letter-spacing:0.5px; text-transform:uppercase; margin-top:10px">Aclaraciones</div>
+        <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap; margin-top:2px">${esc(op.aclaraciones)}</div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function abrirOpinionTasadorModal(tasId, precioSugerido) {
+  cerrarOpinionTasadorModal();
+  const prev = window.__opinionInsp || {};
+  const chips = (lista, name, sel) => lista.map(o => `
+    <label style="flex:1; min-width:120px; display:flex; align-items:center; gap:6px; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; cursor:pointer; font-size:13px; font-weight:600">
+      <input type="radio" name="${name}" value="${o.key}" ${sel === o.key ? 'checked' : ''} style="width:16px; height:16px; flex-shrink:0">${o.label}
+    </label>`).join('');
+  const modalHTML = `
+    <div id="opinionInspModal" class="modal-overlay" onclick="if(event.target===this)cerrarOpinionTasadorModal()">
+      <div class="modal-box" style="max-width:560px">
+        <div class="modal-header">
+          <div style="flex:1; min-width:0">
+            <div style="font-size:16px; font-weight:700; color:#991B1B">🗣️ Opinión</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">Contale a Fer qué harías con este auto. Sugerido: <b style="font-family:var(--mono)">$ ${formatNum(precioSugerido)}</b></div>
+          </div>
+          <button onclick="cerrarOpinionTasadorModal()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="font-size:13px; font-weight:700; margin-bottom:6px">¿Qué recomendás hacer? *</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px">${chips(OPINION_RECOMENDACIONES, 'opinionRec', prev.recomendacion)}</div>
+
+          <div style="font-size:13px; font-weight:700; margin-bottom:6px">¿Cómo ves la salida para la venta? *</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px">${chips(OPINION_SALIDAS, 'opinionSalida', prev.salida)}</div>
+
+          <label style="display:block; font-size:13px; font-weight:700; margin-bottom:4px">¿Por qué ese valor de toma? *</label>
+          <textarea id="opinionMotivo" rows="4" placeholder="Ej: Está impecable pero la versión 4x2 sale menos que la 4x4; en Kavak hay varias publicadas; le resté por cubiertas a cambiar..." style="width:100%; min-width:0; padding:8px; font-size:13px; font-family:var(--sans); resize:vertical; box-sizing:border-box; border:1px solid var(--vw-grey-2); border-radius:6px">${_escapeHtmlUsr(prev.motivo_valor || '')}</textarea>
+          <div style="font-size:11px; color:var(--vw-grey-4); margin:3px 0 12px">Mínimo ${OPINION_MIN_CHARS} caracteres.</div>
+
+          <label style="display:block; font-size:13px; font-weight:700; margin-bottom:4px">Aclaraciones <span style="font-weight:400; color:var(--vw-grey-4)">(riesgos, qué revisar, papeles, historia del auto)</span></label>
+          <textarea id="opinionAclaraciones" rows="3" placeholder="Ej: El dueño la compró usada a la semana de patentada; service al día en el oficial; revisar el embrague antes de publicarla..." style="width:100%; min-width:0; padding:8px; font-size:13px; font-family:var(--sans); resize:vertical; box-sizing:border-box; border:1px solid var(--vw-grey-2); border-radius:6px">${_escapeHtmlUsr(prev.aclaraciones || '')}</textarea>
+
+          <div style="margin-top:14px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">
+            <button onclick="cerrarOpinionTasadorModal()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Volver</button>
+            <button onclick="confirmarOpinionTasador('${tasId}')" style="padding:10px 16px; background:#991B1B; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">Guardar inspección</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  document.body.style.overflow = 'hidden';
+}
+
+// Lo que escribió queda en window.__opinionInsp aunque cierre el modal, así no lo pierde.
+function _leerOpinionModal() {
+  const m = document.getElementById('opinionInspModal');
+  if (!m) return;
+  window.__opinionInsp = {
+    recomendacion: (m.querySelector('input[name="opinionRec"]:checked') || {}).value || '',
+    salida: (m.querySelector('input[name="opinionSalida"]:checked') || {}).value || '',
+    motivo_valor: (document.getElementById('opinionMotivo').value || '').trim(),
+    aclaraciones: (document.getElementById('opinionAclaraciones').value || '').trim()
+  };
+}
+
+function cerrarOpinionTasadorModal() {
+  _leerOpinionModal();
+  const m = document.getElementById('opinionInspModal');
+  if (m) m.remove();
+  document.body.style.overflow = '';
+}
+
+function confirmarOpinionTasador(tasId) {
+  _leerOpinionModal();
+  const op = window.__opinionInsp || {};
+  if (!op.recomendacion) { showToast('Elegí qué recomendás hacer con el auto'); return; }
+  if (!op.salida) { showToast('Elegí cómo ves la salida para la venta'); return; }
+  if ((op.motivo_valor || '').length < OPINION_MIN_CHARS) {
+    showToast(`Explicá por qué ese valor (mínimo ${OPINION_MIN_CHARS} caracteres)`);
+    document.getElementById('opinionMotivo')?.focus();
+    return;
+  }
+  cerrarOpinionTasadorModal();
+  guardarInspeccion(tasId, op);
+}
+
+function _renderInspeccionFisicaAdminBloque(t, af) {
   const precioFisico = t.precio_sugerido_fisico;
   const tasadoPor = t.tasado_fisico_por;
   const tasadoAt = t.tasado_fisico_at;
@@ -7822,6 +7954,7 @@ async function abrirInspeccion(tasId) {
   const tas = (fisicoData || []).find(t => t.id === tasId);
   if (!tas) { showToast('Tasación no encontrada'); return; }
   fisicoTasacionActual = tas;
+  window.__opinionInsp = null;
 
   document.getElementById('tasadorFisicoView').classList.add('hidden');
   document.getElementById('fisicoInspeccionView').classList.remove('hidden');
@@ -7873,6 +8006,7 @@ function renderInspeccionSoloLectura(tas, prev) {
   const preciosHTML = `
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-bottom:14px">
       ${precioBox('Virtual (admin)', tas.precio_toma_virtual, 'var(--vw-blue)', '')}
+      ${precioBox('Kavak', _kavakParaFisico(tas).valor ? Math.round(_kavakParaFisico(tas).valor) : null, '#7E22CE', _kavakParaFisico(tas).fuente)}
       ${precioBox('Sugerido por vos', tas.precio_sugerido_fisico, '#5B21B6', '')}
       ${precioBox('Final (admin)', tas.precio_toma_final, 'var(--green)', tas.tasado_por ? 'por ' + tas.tasado_por : '')}
     </div>
@@ -7999,6 +8133,7 @@ function renderInspeccionSoloLectura(tas, prev) {
   body.innerHTML = `
     ${bannerHTML}
     ${preciosHTML}
+    ${renderOpinionTasadorHTML(af, tas.tasado_fisico_por)}
     ${datosVehHTML}
     ${marcadoresHTML}
     ${checklistHTML}
@@ -8186,6 +8321,7 @@ function renderInspeccionFormulario(tas, prev) {
   // Contexto arriba: si es presencial → mostramos CCA bruto y Kavak como referencia (sin Fórmula FG).
   // Si no, mostramos el precio virtual cargado por el admin (flujo tradicional).
   let contextoHTML;
+  const kavakFis = _kavakParaFisico(tas);
   if (tas.es_presencial) {
     // CCA bruto = precio_cca crudo (sin ajuste km, sin -14%), pesificado si está en USD.
     const cotiz = getCotiz();
@@ -8227,6 +8363,10 @@ function renderInspeccionFormulario(tas, prev) {
         ` : `
           <div style="font-size:13px; color:var(--orange)">⚠ Sin precio virtual cargado todavía por el admin.</div>
         `}
+        <div style="margin-top:12px; padding:10px; background:#FDF4FF; border-radius:6px">
+          <div style="font-size:11px; color:#7E22CE; font-weight:700">Kavak <span style="font-weight:400; color:var(--vw-grey-4)">${kavakFis.fuente}</span></div>
+          <div style="font-size:18px; font-weight:700; color:#7E22CE; font-family:var(--mono); margin-top:3px">${kavakFis.valor ? '$ ' + formatNum(Math.round(kavakFis.valor)) : '—'}</div>
+        </div>
       </div>
     `;
   }
@@ -8461,7 +8601,7 @@ function onInspEstadoChange(grupoKey) {
     : `<span style="color:var(--green); font-weight:600">✓ Todo OK</span> · ${total} ítems`;
 }
 
-async function guardarInspeccion(tasId) {
+async function guardarInspeccion(tasId, opinion) {
   // Recolectamos los ítems del checklist (estado + costo + obs)
   const items = {};
   document.querySelectorAll('[data-insp-grupo]').forEach(el => {
@@ -8512,6 +8652,12 @@ async function guardarInspeccion(tasId) {
     return;
   }
 
+  // Antes de guardar, la opinión es obligatoria: el modal vuelve a llamar acá con ella.
+  if (!opinion) {
+    abrirOpinionTasadorModal(tasId, precioSugerido);
+    return;
+  }
+
   // Datos del vehículo (corregibles por el tasador)
   const datosVeh = {
     cliente_nombre: (document.getElementById('datosCliente').value || '').trim() || null,
@@ -8544,7 +8690,15 @@ async function guardarInspeccion(tasId) {
     observaciones_grales: observaciones,
     marcadores,
     total_arreglos: totalArreglos,
-    precio_implicito_bruto: precioSugerido + totalArreglos
+    precio_implicito_bruto: precioSugerido + totalArreglos,
+    opinion: {
+      recomendacion: opinion.recomendacion,
+      salida: opinion.salida,
+      motivo_valor: opinion.motivo_valor,
+      aclaraciones: opinion.aclaraciones || '',
+      por: currentUser.nombre,
+      at: new Date().toISOString()
+    }
   };
 
   // Armamos el payload a actualizar
@@ -8573,13 +8727,16 @@ async function guardarInspeccion(tasId) {
       body: JSON.stringify(payload)
     });
     hideLoading();
+    window.__opinionInsp = null;
     showToast('Inspección enviada al admin para revisión');
 
     // WhatsApp: evento "tasacion_fisica_completada" — avisa al admin del precio sugerido
     notifyWA(tasId, 'tasacion_fisica_completada');
 
     // IA: generar borrador del comentario para el vendedor en background (no bloquea)
-    generarBorradorComentarioIA(tasId, Object.assign({}, fisicoTasacionActual || {}, datosVeh), analisisFisico, precioSugerido);
+    // (sin la opinión: es interna para el admin, no tiene que llegarle al vendedor)
+    const { opinion: _opinionInterna, ...analisisParaIA } = analisisFisico;
+    generarBorradorComentarioIA(tasId, Object.assign({}, fisicoTasacionActual || {}, datosVeh), analisisParaIA, precioSugerido);
 
     volverTasadorFisicoLista();
   } catch (e) {
