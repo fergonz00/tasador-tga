@@ -551,7 +551,7 @@ Deno.serve(async (req) => {
     const subs = await fl.subastas();
     const ya = await existentes();
     const out: any = {
-      config: (await sb("flash_config?id=eq.1"))?.[0],
+      config: (await sb("flash_config?id=eq.1&select=nube,modo,lock_hasta,ultima_corrida,ultimo_error"))?.[0],
       por_arrancar: porArrancar(subs, ya).map(([s, l]) => ({ subasta: s.id, lotes: l.map(([x]) => x.id) })),
       pendientes: pendientesDe(subs, ya).map(([s, l]) => ({ subasta: s.id, lote: l.id })),
     };
