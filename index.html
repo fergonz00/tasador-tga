@@ -909,6 +909,38 @@ async function sbFetch(path, options = {}) {
   return res.json();
 }
 
+// RPC de usuarios. `tasador_usuarios` ya no se lee ni se escribe con la anon
+// key (estaba a la vista el directorio entero del personal: nombre, usuario,
+// email y telefono de WhatsApp de las 30 cuentas). Todo pasa por funciones
+// SECURITY DEFINER que verifican la firma de sesion que emitio login_tasador,
+// asi que hay que mandarla en cada llamada. Las `returns void` contestan 204
+// sin body: por eso no se usa sbFetch, que hace res.json() a ciegas.
+async function rpcUsuarios(fn, args) {
+  const s = _waSession();
+  if (!s) throw new Error('Sesión vencida: volvé a entrar.');
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({
+      p_actor: s.usuario,
+      p_actor_exp: s.session_exp,
+      p_actor_sig: s.session_sig,
+      ...(args || {})
+    })
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(t || ('Supabase ' + res.status));
+  }
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+
 // ============ NOTIFY WHATSAPP (Meta Cloud API via Edge Function) ============
 // Fire-and-forget: dispara el evento, no bloquea al usuario. Log a consola si falla.
 // Los destinatarios y el template los resuelve la Edge Function según `notificaciones_config`.
@@ -1379,7 +1411,9 @@ async function mostrarModalVendedorPresencial() {
   // Traemos todos los usuarios con rol vendedor (o que tengan vendedor entre sus roles).
   let vendedores = [];
   try {
-    const data = await sbFetch('tasador_usuarios?select=id,usuario,nombre,roles,rol,activo&order=nombre.asc');
+    // La RPC ya devuelve solo activos con rol vendedor; el filtro queda igual
+    // por si la lista cambia, y no pide email ni telefono.
+    const data = await rpcUsuarios('directorio_vendedores');
     vendedores = (data || []).filter(u => {
       if (u.activo === false) return false;
       const roles = Array.isArray(u.roles) ? u.roles : (u.rol ? [u.rol] : []);
@@ -5961,7 +5995,9 @@ async function loadUsuarios() {
   const list = document.getElementById('usuariosList');
   list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Cargando...</div>';
   try {
-    const data = await sbFetch('tasador_usuarios?select=id,usuario,nombre,email,telefono_wa,callmebot_key,roles,rol,activo,debe_cambiar_clave&order=usuario.asc');
+    // Panel de superadmin: la RPC valida el rol server-side (no alcanza con
+    // esconder el boton) y devuelve la tabla completa.
+    const data = await rpcUsuarios('listar_usuarios');
     usuariosData = data || [];
     renderUsuarios();
   } catch(e) {
@@ -6185,17 +6221,17 @@ async function guardarUsuarioModal(modo, id) {
 
     try {
       showLoading('Creando usuario...');
-      await sbFetch('tasador_usuarios', {
-        method: 'POST',
-        body: JSON.stringify({
-          usuario, nombre, clave,
-          rol, roles: [rol],
-          email: email || null,
-          telefono_wa: telWa || null,
-          callmebot_key: callmebot || null,
-          activo: true,
-          debe_cambiar_clave: true
-        })
+      // La RPC hashea la clave con bcrypt y la guarda en app_credenciales;
+      // `tasador_usuarios` no tiene mas la columna `clave`.
+      await rpcUsuarios('alta_usuario', {
+        p_usuario: usuario,
+        p_nombre: nombre,
+        p_clave: clave,
+        p_rol: rol,
+        p_roles: [rol],
+        p_email: email || null,
+        p_tel: telWa || null,
+        p_callmebot: callmebot || null
       });
       hideLoading();
       cerrarUsuarioModal();
@@ -6218,16 +6254,15 @@ async function guardarUsuarioModal(modo, id) {
 
     try {
       showLoading('Guardando...');
-      await sbFetch(`tasador_usuarios?id=eq.${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          nombre,
-          rol, roles: [rol],
-          email: email || null,
-          telefono_wa: telWa || null,
-          callmebot_key: callmebot || null,
-          activo
-        })
+      await rpcUsuarios('editar_usuario', {
+        p_id: id,
+        p_nombre: nombre,
+        p_rol: rol,
+        p_roles: [rol],
+        p_email: email || null,
+        p_tel: telWa || null,
+        p_callmebot: callmebot || null,
+        p_activo: activo
       });
       hideLoading();
       cerrarUsuarioModal();
@@ -6245,13 +6280,7 @@ async function guardarUsuarioModal(modo, id) {
 
     try {
       showLoading('Reseteando clave...');
-      await sbFetch(`tasador_usuarios?id=eq.${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          clave,
-          debe_cambiar_clave: true
-        })
-      });
+      await rpcUsuarios('resetear_clave', { p_id: id, p_clave: clave });
       hideLoading();
       cerrarUsuarioModal();
       showToast('Clave reseteada. Anotala y pásasela al vendedor.');
@@ -6272,10 +6301,7 @@ async function toggleActivoUsuario(id, nuevoEstado) {
   if (!confirm(`¿Seguro que querés ${accion} al usuario "${u.usuario}"?`)) return;
   try {
     showLoading('Guardando...');
-    await sbFetch(`tasador_usuarios?id=eq.${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ activo: nuevoEstado })
-    });
+    await rpcUsuarios('set_activo_usuario', { p_id: id, p_activo: nuevoEstado });
     hideLoading();
     showToast(nuevoEstado ? 'Usuario activado' : 'Usuario desactivado');
     await loadUsuarios();
@@ -6321,12 +6347,15 @@ async function loadNotifConfig() {
   list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Cargando...</div>';
   try {
     // Traemos config + usuarios en paralelo. Solo usuarios activos con notificaciones_wa=true y teléfono cargado.
+    // Esta vista es superadmin-only (abrirNotif lo exige), igual que la RPC.
+    // Necesita telefono_wa, asi que va por listar_usuarios y los activos se
+    // filtran aca: antes el filtro lo hacia PostgREST.
     const [cfg, users] = await Promise.all([
       sbFetch('notificaciones_config?select=*'),
-      sbFetch('tasador_usuarios?select=id,usuario,nombre,telefono_wa,notificaciones_wa,activo,roles,rol&activo=eq.true&order=usuario.asc')
+      rpcUsuarios('listar_usuarios')
     ]);
     notifConfigData = cfg || [];
-    notifUsuariosData = users || [];
+    notifUsuariosData = (users || []).filter(u => u.activo !== false);
     renderNotifConfig();
   } catch(e) {
     console.error(e);
@@ -7518,7 +7547,9 @@ async function enviarMailVendedor(tasId) {
     const tas = tasData[0];
 
     // Email del vendedor
-    const userData = await sbFetch(`tasador_usuarios?id=eq.${tas.vendedor_id}&select=email,usuario`);
+    // Una sola fila y por id: cualquier sesion valida puede resolverla, pero
+    // no se puede barrer la tabla de mails.
+    const userData = await rpcUsuarios('email_de_usuario', { p_id: tas.vendedor_id });
     if (!userData || userData.length === 0 || !userData[0].email) {
       console.log('Vendedor sin email configurado, no se envía mail.');
       return;
