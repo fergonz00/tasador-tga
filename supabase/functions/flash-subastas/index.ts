@@ -420,7 +420,8 @@ function porArrancar(subs: any[], ya: Map<string, any>) {
     const lotes: [any, any][] = [];
     for (const lot of s.lots || []) {
       const t = ya.get(`FLASH-${lot.id}`);
-      if (t && +t.precio_toma_virtual > 0 && !["finished", "expired"].includes(lot.status)) lotes.push([lot, t]);
+      // "No ofertar" del panel: se saltea aunque tenga tope
+      if (t && +t.precio_toma_virtual > 0 && !t.origen_datos?.no_ofertar && !["finished", "expired"].includes(lot.status)) lotes.push([lot, t]);
     }
     if (lotes.length) out.push([s, lotes]);
   }
