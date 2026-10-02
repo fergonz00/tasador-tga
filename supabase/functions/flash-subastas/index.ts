@@ -36,7 +36,7 @@ const HDR = { "Content-Type": "application/json", "User-Agent": UA, "Origin": "h
 const CCA_CSV = "https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=904791552&headers=1";
 const VW_CSV = "https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=1899724741";
 const CERO_KM_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQH_9OtgijB7xV7qZEHoogNXq8TE5gLxz4RNb2DvxbbQ1o2A_Be2my532IJF0nxpJCUkghJrEa3TeDw/pub?gid=647749443&single=true&output=csv";
-const FYF = 1110000;
+const FYF = 1300000;
 const FG_TOMA = 0.83;
 const CCA_TOMA = 0.86;
 const ANIO_ACTUAL = 2026;
