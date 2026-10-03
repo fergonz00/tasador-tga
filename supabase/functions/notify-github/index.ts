@@ -51,6 +51,7 @@ const SIN_ARRANCAR_SEG = 15; // primer filtro: un job que "falla" en menos de es
 const MAX_CONFIRMAR = 8; // cuántas de esas se confirman contra la API (una llamada cada una)
 const DESDE_HORA = 7; // horario en que se puede mandar (hora argentina)
 const HASTA_HORA = 23;
+const HORAS_SIN_CONEXION = 1; // sin conexión con GitHub: avisa recién si dura esto
 const DESTINATARIOS = Deno.env.get("GITHUB_VIGIA_DESTINATARIOS") ?? "fngonzalez,mlubrano";
 
 // Tope de gasto y umbrales de aviso. GitHub NO nos deja leer los dólares:
@@ -133,13 +134,27 @@ Deno.serve(async (req: Request) => {
     repos = rs.filter((r) => new Date(r.pushed_at ?? 0).getTime() > limite).map((r) => r.full_name);
     privados = rs.filter((r) => String(r.private) === "true").map((r) => r.full_name);
   } catch (e) {
+    if (esErrorDeToken(e)) {
+      return await resolver(SUPABASE_URL, SERVICE_KEY, STOCK_SECRET, {
+        caida: true,
+        clave: "token",
+        resumen: "el vigía no puede entrar a GitHub, así que no sabe si los controles están corriendo",
+        detalle: "GitHub rechazó el token: " + String(e).slice(0, 200),
+        accion: "Revisá el token de GitHub (secret GITHUB_TOKEN de la función notify-github): si venció, generá uno nuevo",
+        soloSiYaAndaba: true,
+      }, { dry, forzar });
+    }
+    // No hubo conexión (o GitHub dio error de su lado) aun después de reintentar.
+    // No es el token: se avisa sólo si sigue así HORAS_SIN_CONEXION seguidas.
     return await resolver(SUPABASE_URL, SERVICE_KEY, STOCK_SECRET, {
       caida: true,
-      clave: "token",
-      resumen: "el vigía no puede entrar a GitHub, así que no sabe si los controles están corriendo",
-      detalle: "GitHub contestó: " + String(e).slice(0, 200),
-      accion: "Revisá el token de GitHub (secret GITHUB_TOKEN de la función notify-github): si venció, generá uno nuevo",
+      clave: "sin-conexion",
+      resumen: "el vigía no logra conectarse con GitHub hace más de " + HORAS_SIN_CONEXION +
+        " h, así que no sabe si los controles están corriendo",
+      detalle: "No es el token: la conexión no llega. Último error: " + String(e).slice(0, 200),
+      accion: "Mirá githubstatus.com. Si GitHub anda bien, avisá para revisar la conexión desde Supabase",
       soloSiYaAndaba: true,
+      minHoras: HORAS_SIN_CONEXION,
     }, { dry, forzar });
   }
 
@@ -286,6 +301,8 @@ type Estado = {
   detalle: string;
   accion: string;
   soloSiYaAndaba?: boolean;
+  /** No avisa hasta que la caída lleve estas horas seguidas (para cortes sueltos de red). */
+  minHoras?: number;
 };
 
 async function resolver(
@@ -312,6 +329,10 @@ async function resolver(
   let manda: false | "caida" | "recuperada" = false;
   if (e.caida && (o.forzar || ((cambio || desdeAviso >= HORAS_REPETIR) && enHorario))) manda = "caida";
   if (manda === "caida" && e.soloSiYaAndaba && !anduvo) manda = false;
+  // La caída cuenta desde que empezó (aunque haya arrancado con otro motivo).
+  const desdeCaida = prev.estado === "caida" && prev.desde ? new Date(prev.desde).getTime() : ahora.getTime();
+  const horasCaida = (ahora.getTime() - desdeCaida) / 3600_000;
+  if (manda === "caida" && e.minHoras && horasCaida < e.minHoras && !o.forzar) manda = false;
   if (!e.caida && prev.estado === "caida" && prev.avisado_en) manda = "recuperada";
 
   const plan = {
@@ -345,7 +366,7 @@ async function resolver(
     detalle: [e.resumen, e.detalle].filter(Boolean).join(". ").slice(0, 900) || null,
     desde: e.caida ? (prev.estado === "caida" && prev.desde ? prev.desde : ahora.toISOString()) : null,
     avisado_en: manda === "caida" ? ahora.toISOString() : (e.caida ? prev.avisado_en : null),
-    anduvo: anduvo || !["sin-token", "token"].includes(e.clave),
+    anduvo: anduvo || !["sin-token", "token", "sin-conexion"].includes(e.clave),
     chequeado_en: ahora.toISOString(),
   });
   return json({ ...plan, envio });
@@ -485,16 +506,44 @@ function miles(n: number) {
 }
 
 // ---------------------------------------------------------------- helpers
+class GhError extends Error {
+  constructor(public status: number | null, msg: string) {
+    super(msg);
+  }
+}
+
+// Un corte de red suelto entre Supabase y GitHub pasa (03/10/2026 a las 18:45:
+// "connection err" de un solo intento, el anterior y el siguiente anduvieron).
+// Se reintenta antes de rendirse; un 401 no se reintenta, ahí es el token.
+const ESPERAS_REINTENTO_MS = [2000, 5000];
+
 async function gh<T>(token: string, path: string): Promise<T> {
-  const r = await fetch(GH_API + path, {
-    headers: {
-      Authorization: "Bearer " + token,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "vigia-tga",
-    },
-  });
-  if (!r.ok) throw new Error(r.status + " " + (await r.text()).slice(0, 120));
-  return await r.json() as T;
+  for (let intento = 0; ; intento++) {
+    let err: GhError;
+    try {
+      const r = await fetch(GH_API + path, {
+        headers: {
+          Authorization: "Bearer " + token,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "vigia-tga",
+        },
+      });
+      if (r.ok) return await r.json() as T;
+      err = new GhError(r.status, r.status + " " + (await r.text()).slice(0, 120));
+      if (r.status < 500) throw err;
+    } catch (e) {
+      if (e instanceof GhError && e.status !== null && e.status < 500) throw e;
+      err = e instanceof GhError ? e : new GhError(null, String(e));
+    }
+    if (intento >= ESPERAS_REINTENTO_MS.length) throw err;
+    await new Promise((res) => setTimeout(res, ESPERAS_REINTENTO_MS[intento]));
+  }
+}
+
+/** true si GitHub rechazó el token (vencido, revocado o sin permisos); false si fue la red o GitHub caído. */
+function esErrorDeToken(e: unknown) {
+  if (!(e instanceof GhError) || e.status === null) return false;
+  return e.status === 401 || (e.status === 403 && !/rate limit/i.test(e.message));
 }
 
 async function sb<T>(url: string, key: string, path: string): Promise<T> {
