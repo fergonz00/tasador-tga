@@ -802,6 +802,10 @@ input, select, textarea { font-family: var(--font); }
 
 <!-- Hidden file input -->
 <input type="file" id="fotoInput" accept="image/*" multiple class="hidden" onchange="handleFotos(this.files)">
+<!-- Fotos que saca el tasador físico durante la inspección. En el flujo portal
+     el vendedor no carga ninguna (el auto todavía no vino), así que estas son
+     las únicas. `capture` no se fuerza: que elija cámara o galería. -->
+<input type="file" id="fisicoFotoInput" accept="image/*" multiple class="hidden" onchange="subirFotosInspeccion(this.files)">
 
 <script>
 // ============ CONFIG ============
@@ -9025,6 +9029,21 @@ function renderInspeccionFormulario(tas, prev) {
 
   // Marcador visual sobre la silueta del auto
   const marcadoresPrevios = Array.isArray(prev.marcadores) ? prev.marcadores : [];
+  // ---- Fotos de la inspección --------------------------------------------
+  // Hasta hoy el tasador físico no tenía dónde subir fotos: solo veía las del
+  // vendedor. En el flujo portal el vendedor no carga ninguna (el auto no vino
+  // todavía), así que sin esto la tasación quedaba sin una sola imagen.
+  const fotosInspeccionHTML = `
+    <div style="margin-bottom:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow)">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:4px; flex-wrap:wrap">
+        <h3 style="margin:0; font-size:15px; color:var(--vw-blue)">Fotos del vehículo</h3>
+        <span style="font-size:11px; color:var(--vw-grey-4); font-style:italic">se guardan solas</span>
+      </div>
+      <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:10px">Sacá las fotos del auto ahora que lo tenés adelante. Se suben en el momento, no hace falta apretar Guardar.</div>
+      <div id="fisicoFotosGrid" class="fotos-grid"></div>
+    </div>
+  `;
+
   const marcadorVisualHTML = `
     <div style="margin-top:20px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow)">
       <h3 style="margin:0 0 6px 0; font-size:15px; color:var(--vw-blue)">Marcá los daños sobre el auto</h3>
@@ -9120,6 +9139,7 @@ function renderInspeccionFormulario(tas, prev) {
     ${avisoSoloVende(tas)}
     ${contextoHTML}
     ${datosVehiculoHTML}
+    ${fotosInspeccionHTML}
     ${marcadorVisualHTML}
     ${camposGrales}
     ${gruposHTML}
@@ -9134,6 +9154,7 @@ function renderInspeccionFormulario(tas, prev) {
   window.__fisicoMarcadores = marcadoresPrevios.map(m => ({ ...m }));
   renderMarcadores();
   renderAccesoriosList();
+  renderFotosInspeccion();
 }
 
 function renderAccesoriosList() {
@@ -9319,6 +9340,94 @@ function onInspEstadoChange(grupoKey) {
   label.innerHTML = conObs > 0
     ? `<span style="color:var(--orange); font-weight:600">⚠ ${conObs} con observaciones</span> · ${total - conObs} OK`
     : `<span style="color:var(--green); font-weight:600">✓ Todo OK</span> · ${total} ítems`;
+}
+
+// ============ FOTOS EN LA INSPECCIÓN (tasador físico) ============
+// Se suben y se guardan en el momento, no al apretar "Guardar inspección": si
+// el tasador cierra la pantalla o se le corta, las fotos ya están. Van al mismo
+// bucket y a la misma columna `fotos` que las del vendedor, con prefijo propio
+// para no pisar los nombres de archivo.
+function renderFotosInspeccion() {
+  const cont = document.getElementById('fisicoFotosGrid');
+  if (!cont) return;
+  const fotos = (fisicoTasacionActual && fisicoTasacionActual.fotos) || [];
+  let html = fotos.map((url, i) => `
+    <div class="foto-slot">
+      <img src="${url}" onclick="showPhoto('${url}')">
+      <div class="remove-foto" onclick="event.stopPropagation(); quitarFotoInspeccion(${i})">×</div>
+    </div>`).join('');
+  if (fotos.length < MAX_FOTOS) {
+    html += `<div class="foto-slot" onclick="document.getElementById('fisicoFotoInput').click()">
+      <span class="plus">+</span>
+    </div>`;
+  }
+  cont.innerHTML = html;
+}
+
+async function subirFotosInspeccion(files) {
+  const tas = fisicoTasacionActual;
+  if (!tas) return;
+  const lista = [...files];
+  document.getElementById('fisicoFotoInput').value = '';
+  if (!lista.length) return;
+
+  const actuales = Array.isArray(tas.fotos) ? tas.fotos.slice() : [];
+  const lugar = MAX_FOTOS - actuales.length;
+  if (lugar <= 0) { showToast(`Ya hay ${MAX_FOTOS} fotos`); return; }
+  const aSubir = lista.slice(0, lugar);
+  if (aSubir.length < lista.length) showToast(`Solo entran ${lugar} más`);
+
+  showLoading('Subiendo fotos...');
+  const subidas = [];
+  try {
+    for (let i = 0; i < aSubir.length; i++) {
+      document.getElementById('loadingText').textContent = `Subiendo foto ${i + 1} de ${aSubir.length}...`;
+      const ext = (aSubir[i].name.split('.').pop() || 'jpg').toLowerCase();
+      // Prefijo propio + hora: no pisa las del vendedor ni las de otra tanda.
+      const path = `${tas.id}/fisico_${Date.now()}_${i}.${ext}`;
+      subidas.push(await sbUpload('tasaciones-fotos', path, aSubir[i]));
+    }
+    const nuevas = actuales.concat(subidas);
+    await sbFetch(`tasaciones?id=eq.${tas.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fotos: nuevas })
+    });
+    tas.fotos = nuevas;
+    // Reflejarlo en la lista de atrás, para no tener que recargarla.
+    const enLista = (fisicoData || []).find(t => t.id === tas.id);
+    if (enLista) enLista.fotos = nuevas;
+    hideLoading();
+    renderFotosInspeccion();
+    showToast(aSubir.length === 1 ? 'Foto guardada' : `${aSubir.length} fotos guardadas`);
+  } catch (e) {
+    hideLoading();
+    console.error('subirFotosInspeccion:', e);
+    showToast('No se pudieron subir las fotos');
+  }
+}
+
+async function quitarFotoInspeccion(idx) {
+  const tas = fisicoTasacionActual;
+  if (!tas || !Array.isArray(tas.fotos)) return;
+  if (!confirm('¿Sacar esta foto de la tasación?')) return;
+  const nuevas = tas.fotos.filter((_, i) => i !== idx);
+  try {
+    showLoading('Guardando...');
+    await sbFetch(`tasaciones?id=eq.${tas.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fotos: nuevas })
+    });
+    tas.fotos = nuevas;
+    const enLista = (fisicoData || []).find(t => t.id === tas.id);
+    if (enLista) enLista.fotos = nuevas;
+    hideLoading();
+    renderFotosInspeccion();
+    showToast('Foto sacada');
+  } catch (e) {
+    hideLoading();
+    console.error('quitarFotoInspeccion:', e);
+    showToast('No se pudo sacar la foto');
+  }
 }
 
 async function guardarInspeccion(tasId, opinion) {
