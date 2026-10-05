@@ -51,7 +51,11 @@
 //   2. Arma los candidatos de los dos controles.
 //   3. Da de alta las alertas nuevas en `pv_fechas_alertas` (PK detcashid+tipo).
 //   4. Re-chequea las abiertas y cierra las que se resolvieron.
-//   5. Manda 1 mensaje por PV y por tipo (agrupa los renglones de esa PV).
+//   5. Manda 1 mensaje POR DESTINATARIO (Fer, 05/10/2026): el vendedor recibe
+//      todas sus PVs juntas (`pv_cobros_vendedor`) y los fijos un resumen por
+//      vendedor (`pv_cobros_resumen`). La 1ra corrida del dia (13 h) lleva todo;
+//      las siguientes, solo lo nuevo. Mientras esos templates no esten
+//      APPROVED, cae al envio viejo de 1 mensaje por PV y por tipo.
 //      Si no se corrige: 1 recordatorio por dia habil, sin tope (MAX_AVISOS=0).
 //
 // Destinatarios: `tasador_usuarios` (telefono_wa). El vendedor sale de
@@ -104,6 +108,19 @@ const TEMPLATES: Record<string, string> = {
   [TIPO_PLAZO]: "pv_plazo_excedido",
   [TIPO_SIN_MES]: "pv_plazo_sin_mes",
 };
+
+// Envio agrupado (Fer, 05/10/2026: "mejor un mensaje x vendedor"): en vez de un
+// WhatsApp por PV, cada vendedor recibe uno con todas sus PVs y los fijos un
+// resumen por vendedor. PVFECHA_AGRUPAR=0 vuelve al envio de 1 por PV.
+const TEMPLATE_VENDEDOR = "pv_cobros_vendedor";
+const TEMPLATE_RESUMEN = "pv_cobros_resumen";
+const AGRUPAR = (Deno.env.get("PVFECHA_AGRUPAR") ?? "1") !== "0";
+// Largo del detalle ({{3}}): Meta corta el cuerpo entero en 1.024 caracteres y
+// el texto fijo de los templates ocupa ~280.
+const MAX_DETALLE = Number(Deno.env.get("PVFECHA_MAX_DETALLE") ?? "700");
+// Tope logico por corrida: si se pasa, no manda nada y avisa a Fer y Matias.
+const TOPE_MENSAJES = Number(Deno.env.get("PVFECHA_TOPE_MENSAJES") ?? "30");
+const VIGIA_USUARIOS = Deno.env.get("PVFECHA_VIGIA_USUARIOS") ?? "fngonzalez,mlubrano";
 
 // Renglones de la PV: los carga el vendedor con origen VTOKM.
 const ORIGEN_PV = "VTOKM";
@@ -254,13 +271,16 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const solo = String(par("solo") ?? "").trim();
-    if (solo) return json(await pruebaDirigida(env, solo.replace(/^\+/, "").replace(/[\s-]/g, "")));
+    const solo = String(par("solo") ?? "").trim().replace(/^\+/, "").replace(/[\s-]/g, "");
+    // ?solo=<E164>&agrupado=1 -> los mensajes agrupados de HOY, con datos reales,
+    // a ese numero (no sella nada ni le llega a nadie mas).
+    if (solo && !flag("agrupado")) return json(await pruebaDirigida(env, solo));
 
     const tipo = String(par("tipo") ?? "").trim();
     return json(await procesar(env, {
-      dry: flag("dry"),
-      forzar: flag("forzar"),
+      previa: solo || undefined,
+      dry: flag("dry") || !!solo,
+      forzar: flag("forzar") || !!solo,
       dias: Number(par("dias") ?? VENTANA_DIAS) || VENTANA_DIAS,
       desde: String(par("desde") ?? DESDE).slice(0, 10),
       desdePlazo: String(par("desde_plazo") ?? PLAZO_DESDE).slice(0, 10),
@@ -298,7 +318,7 @@ type PV = { vendedorid: number; vendedor: string; fecha: string; anulada: boolea
 
 async function procesar(
   env: Env,
-  opts: { dry: boolean; forzar: boolean; dias: number; desde: string; desdePlazo: string; tipos: string[] },
+  opts: { dry: boolean; forzar: boolean; dias: number; desde: string; desdePlazo: string; tipos: string[]; previa?: string },
 ) {
   const ahora = new Date();
   const hoyAR = fechaAR(ahora);
@@ -466,11 +486,10 @@ async function procesar(
     return { ...resumen, enviados: 0, detalle: "fuera de horario de aviso (o dia no habil)" };
   }
 
-  // ── Envio: 1 mensaje por PV y por tipo ────────────────────────────────────
-  const grupos = new Map<string, Alerta[]>();
   // Los vencidos no se reclaman los sabados (Fer, 19/09/2026). Los otros
   // controles si salen: son correcciones de carga que el vendedor puede hacer.
   const esSabado = diaSemana(hoyAR) === 6;
+  const listos: Alerta[] = [];
   for (const a of aAvisar) {
     if (a.tipo === TIPO_VENCIDO && esSabado && !opts.forzar) continue;
     if (a.tipo !== TIPO_VENCIDO && !opts.forzar && (a.avisos ?? 0) === 0) {
@@ -478,13 +497,34 @@ async function procesar(
       const r = renglones.find((x) => x.detcashid === Number(a.detcashid));
       if (r && esDeHoy(r.fecha, hoyAR) && minutosDesde(r.fecha) < GRACIA_MIN) continue;
     }
+    listos.push(a);
+  }
+
+  const padron = await padronUsuarios(env);
+
+  // ── Envio agrupado: 1 mensaje por destinatario (Fer, 05/10/2026) ──────────
+  // El vendedor recibe todas sus PVs juntas y los fijos un resumen por vendedor.
+  // Mientras Meta no apruebe los dos templates sigue el envio de 1 por PV, asi
+  // la espera de aprobacion no deja a nadie sin aviso.
+  let modo = "por_pv";
+  if (AGRUPAR && listos.length) {
+    const estado = await estadoTemplatesAgrupados(env);
+    // En seco se muestra el agrupado aunque Meta no lo haya aprobado todavia.
+    if (estado.ok || (opts.dry && !opts.previa)) {
+      return { ...resumen, modo: "agrupado", ...await enviarAgrupado(env, listos, padron, hoyAR, feriados, opts) };
+    }
+    modo = `por_pv (${estado.detalle})`;
+  }
+
+  // ── Envio: 1 mensaje por PV y por tipo ────────────────────────────────────
+  const grupos = new Map<string, Alerta[]>();
+  for (const a of listos) {
     const k = clave(a.referencia, a.tipo);
     const lista = grupos.get(k) ?? [];
     lista.push(a);
     grupos.set(k, lista);
   }
 
-  const padron = await padronUsuarios(env);
   const enviados: unknown[] = [];
   const errores: unknown[] = [];
 
@@ -534,7 +574,209 @@ async function procesar(
     }
   }
 
-  return { ...resumen, grupos_avisados: grupos.size, enviados, errores };
+  return { ...resumen, modo, grupos_avisados: grupos.size, enviados, errores };
+}
+
+// ── Envio agrupado ──────────────────────────────────────────────────────────
+//
+// Cada alerta se reparte entre sus destinatarios de siempre (`destinatarios()`),
+// pero en vez de un mensaje por PV se junta todo lo de cada persona:
+//   - el vendedor -> `pv_cobros_vendedor`, con el detalle de cada PV suya
+//   - los fijos (y los de `plazo_sin_mes`) -> `pv_cobros_resumen`, las PVs
+//     agrupadas por vendedor
+// La primera corrida del dia (13 h) lleva todo lo pendiente; las siguientes solo
+// lo que aparecio despues, porque lo ya avisado hoy no vuelve a entrar.
+async function enviarAgrupado(
+  env: Env, listos: Alerta[],
+  padron: Awaited<ReturnType<typeof padronUsuarios>>,
+  hoyAR: string, feriados: Map<string, string>,
+  opts: { dry: boolean; previa?: string },
+) {
+  const deResumen = new Set([...padron.fijos, ...SIN_MES_DESTINATARIOS]);
+  const porDestino = new Map<string, { u: Usuario; resumen: boolean; alertas: Alerta[] }>();
+  for (const a of listos) {
+    for (const d of destinatarios(padron, a.vendedorid, a.tipo)) {
+      const k = d.telefono_wa;
+      const e = porDestino.get(k) ?? { u: d, resumen: deResumen.has(d.usuario), alertas: [] };
+      e.alertas.push(a);
+      porDestino.set(k, e);
+    }
+  }
+
+  const mensajes = [...porDestino.values()].map((e) => {
+    const pvs = new Set(e.alertas.map((a) => a.referencia)).size;
+    const cantidad = `${pvs} ${pvs === 1 ? "PV" : "PVs"}`;
+    const detalle = e.resumen ? detalleResumen(e.alertas) : detalleVendedor(e.alertas, hoyAR, feriados);
+    return {
+      ...e,
+      template: e.resumen ? TEMPLATE_RESUMEN : TEMPLATE_VENDEDOR,
+      vars: [primerNombre(e.u.nombre), cantidad, detalle],
+    };
+  });
+
+  // Prueba con datos reales a un solo numero: el mensaje del vendedor con mas
+  // PVs y un resumen. No sella nada.
+  if (opts.previa) {
+    const muestra = [
+      mensajes.filter((m) => !m.resumen).sort((a, b) => b.alertas.length - a.alertas.length)[0],
+      mensajes.find((m) => m.resumen),
+    ].filter(Boolean) as typeof mensajes;
+    const out = [];
+    for (const m of muestra) {
+      out.push({ como_si_fuera: m.u.nombre, template: m.template, vars: m.vars, resultado: await enviarTemplate(env, m.template, opts.previa, m.vars) });
+    }
+    return { previa: opts.previa, enviados: out };
+  }
+
+  const detalleDry = mensajes.map((m) => ({
+    destinatario: m.u.nombre, template: m.template, vars: m.vars, largo: m.vars[2].length,
+  }));
+  if (opts.dry) return { mensajes: mensajes.length, enviados: detalleDry };
+
+  // Tope logico: con el agrupado son ~1 mensaje por vendedor + 3 fijos. Pasarse
+  // es un error (destinatarios duplicados, un loop): no se manda nada y se avisa.
+  if (mensajes.length > TOPE_MENSAJES) {
+    await avisarVigia(mensajes.length, detalleDry.map((d) => d.destinatario));
+    return { mensajes: mensajes.length, enviados: [], errores: [`tope de ${TOPE_MENSAJES} mensajes superado: no se mando nada`] };
+  }
+
+  const okPorAlerta = new Map<string, string[]>();
+  const enviados: unknown[] = [];
+  const errores: unknown[] = [];
+  for (const m of mensajes) {
+    const r = await enviarTemplate(env, m.template, m.u.telefono_wa, m.vars);
+    if (!r.ok) { errores.push({ destinatario: m.u.nombre, template: m.template, error: r.error }); continue; }
+    enviados.push({ destinatario: m.u.nombre, template: m.template, pvs: m.vars[1] });
+    for (const a of m.alertas) {
+      const k = `${a.detcashid}|${a.tipo}`;
+      okPorAlerta.set(k, [...(okPorAlerta.get(k) ?? []), m.u.nombre]);
+    }
+  }
+  // Se sella solo lo que le llego al menos a alguien: si Meta rechazo todo, la
+  // corrida siguiente lo reintenta.
+  for (const a of listos) {
+    const ok = okPorAlerta.get(`${a.detcashid}|${a.tipo}`);
+    if (!ok) continue;
+    await sb(env, `pv_fechas_alertas?detcashid=eq.${a.detcashid}&tipo=eq.${a.tipo}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        avisos: (a.avisos ?? 0) + 1,
+        ultimo_aviso_at: new Date().toISOString(),
+        ultimo_aviso_dia: hoyAR,
+        ultimo_envio: { destinos: ok, detalle: lineaAlerta(a, hoyAR, feriados), agrupado: true },
+      }),
+    });
+  }
+  return { mensajes: mensajes.length, enviados, errores };
+}
+
+// La linea de una alerta sin el numero de PV (el agrupado lo pone adelante).
+function lineaAlerta(a: Alerta, hoyAR: string, feriados: Map<string, string>) {
+  if (a.tipo === TIPO_FECHA) return `${lineaFecha(a)}, día no bancario`;
+  if (a.tipo === TIPO_PLAZO) return `fuera de plazo: ${lineaPlazo(a, feriados)}`;
+  if (a.tipo === TIPO_SIN_MES) return `sin mes de patentamiento: ${lineaPlazo(a, feriados)}`;
+  return lineaVencido(a, hoyAR);
+}
+
+const nroPV = (ref: string) => ref.replace(/^PV\s*/i, "");
+const enumerar = (xs: string[]) => xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} y ${xs[xs.length - 1]}`;
+
+// Junta items hasta el largo maximo y cierra con "y N PVs mas" en vez de
+// cortar una PV por la mitad. Meta corta el cuerpo entero en 1.024 caracteres.
+function armar(items: { texto: string; pvs: number }[], max: number) {
+  let out = "";
+  let usados = 0;
+  for (let i = 0; i < items.length; i++) {
+    const sig = out ? `${out} · ${items[i].texto}` : items[i].texto;
+    const restan = items.slice(i + 1).reduce((s, x) => s + x.pvs, 0);
+    if (sig.length > max - (restan ? 30 : 0)) break;
+    out = sig;
+    usados = i + 1;
+  }
+  if (!usados) return recortar(items[0]?.texto ?? "", max);
+  const faltan = items.slice(usados).reduce((s, x) => s + x.pvs, 0);
+  return faltan ? `${out} · y ${faltan} ${faltan === 1 ? "PV" : "PVs"} más` : out;
+}
+
+// Mensaje del vendedor: cada PV con lo suyo. Las PVs que deben exactamente lo
+// mismo van juntas ("08771/3, 08772/3 y 08773/3: Seña: faltan $200.000...").
+function detalleVendedor(alertas: Alerta[], hoyAR: string, feriados: Map<string, string>) {
+  const porPV = new Map<string, Alerta[]>();
+  for (const a of alertas) porPV.set(a.referencia, [...(porPV.get(a.referencia) ?? []), a]);
+  const porTexto = new Map<string, { pvs: string[]; desde: string }>();
+  for (const [ref, as] of porPV) {
+    as.sort((x, y) => x.vencimiento.localeCompare(y.vencimiento));
+    const texto = as.map((a) => lineaAlerta(a, hoyAR, feriados)).join("; ");
+    const g = porTexto.get(texto) ?? { pvs: [], desde: as[0].vencimiento };
+    g.pvs.push(nroPV(ref));
+    porTexto.set(texto, g);
+  }
+  const items = [...porTexto.entries()]
+    .sort((x, y) => x[1].desde.localeCompare(y[1].desde))
+    .map(([texto, g]) => ({
+      texto: `PV ${enumerar(g.pvs.sort())}: ${texto}${g.pvs.length > 1 ? " (en cada una)" : ""}`,
+      pvs: g.pvs.length,
+    }));
+  return armar(items, MAX_DETALLE);
+}
+
+// Resumen para los fijos: PVs por vendedor, el que mas tiene primero. Sin
+// aclaracion = pago vencido (lo mas comun); los otros controles van marcados.
+function detalleResumen(alertas: Alerta[]) {
+  const ETIQUETA: Record<string, string> = {
+    [TIPO_FECHA]: "fecha no bancaria", [TIPO_PLAZO]: "fuera de plazo", [TIPO_SIN_MES]: "sin mes de patentamiento",
+  };
+  const porVend = new Map<string, Map<string, Set<string>>>();
+  for (const a of alertas) {
+    const v = a.vendedor_nombre || "sin vendedor";
+    const pvs = porVend.get(v) ?? new Map<string, Set<string>>();
+    const tipos = pvs.get(a.referencia) ?? new Set<string>();
+    tipos.add(a.tipo);
+    pvs.set(a.referencia, tipos);
+    porVend.set(v, pvs);
+  }
+  const items = [...porVend.entries()]
+    .sort((x, y) => y[1].size - x[1].size || x[0].localeCompare(y[0]))
+    .map(([v, pvs]) => {
+      const lista = [...pvs.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([ref, tipos]) => {
+        const marcas = [...tipos].map((t) => ETIQUETA[t]).filter(Boolean);
+        return marcas.length ? `${nroPV(ref)} (${marcas.join(" + ")})` : nroPV(ref);
+      });
+      return { texto: `${v} (${pvs.size}): ${lista.join(", ")}`, pvs: pvs.size };
+    });
+  return armar(items, MAX_DETALLE);
+}
+
+async function estadoTemplatesAgrupados(env: Env) {
+  const ts = (await listarTemplates(env)).templates ?? [];
+  const faltan = [TEMPLATE_VENDEDOR, TEMPLATE_RESUMEN]
+    .map((n) => ({ n, t: ts.find((x: { name: string }) => x.name === n) }))
+    .filter(({ t }) => !t || t.status !== "APPROVED" || t.category !== "UTILITY")
+    .map(({ n, t }) => `${n} ${t ? `${t.status}/${t.category}` : "no existe"}`);
+  return { ok: !faltan.length, detalle: faltan.join(", ") };
+}
+
+// Error de tope -> WhatsApp a Fer y Matias por el template de controles.
+async function avisarVigia(cantidad: number, destinos: string[]) {
+  const secret = Deno.env.get("STOCK_NOTIF_SECRET");
+  const url = Deno.env.get("SUPABASE_URL");
+  if (!secret || !url) return;
+  try {
+    await fetch(`${url}/functions/v1/notify-ml-excepciones`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-stock-secret": secret },
+      body: JSON.stringify({
+        tipo: "resultado", control: "Avisos de cobro de PVs", cantidad: String(cantidad),
+        resumen: `frené el envío: iban a salir ${cantidad} mensajes y el tope es ${TOPE_MENSAJES}`,
+        detalle: `destinatarios: ${destinos.slice(0, 40).join(", ")}`,
+        accion: "Revisá notify-pv-fecha-no-habil antes de que vuelva a correr.",
+        usuarios: VIGIA_USUARIOS,
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+  } catch (e) {
+    console.error("avisarVigia:", e);
+  }
 }
 
 // Repasa las alertas abiertas contra lo que dice HOY la replica. Dos cosas:
@@ -1211,12 +1453,37 @@ const CUERPOS: Record<string, { header: string; body: string; ejemplo: string[] 
   },
 };
 
+// Los del envio agrupado: 3 variables ({{1}} destinatario · {{2}} "9 PVs" ·
+// {{3}} detalle en una sola linea, porque Meta no acepta saltos de linea en un
+// parametro).
+const CUERPOS_AGRUPADOS: Record<string, { header: string; body: string; ejemplo: string[] }> = {
+  [TEMPLATE_VENDEDOR]: {
+    header: "PVs con pagos para revisar",
+    body: "Hola {{1}}, tenés {{2}} con pagos para revisar: {{3}}. Por favor verificá cada caso con el cliente. Si el pago se reprogramó, actualizá la fecha en la PV; si la fecha cae en un día no bancario o fuera de plazo, corregila.",
+    ejemplo: [
+      "Julián", "3 PVs",
+      "PV 08771/3 y 08772/3: Seña: faltan $200.000 de $5.000.000, venció el 11/09 (hace 24 días) (en cada una) · PV 08782/3: Cancelación $33.500.000, venció el 28/09 (hace 7 días)",
+    ],
+  },
+  [TEMPLATE_RESUMEN]: {
+    header: "Resumen de PVs con pagos para revisar",
+    body: "Hola {{1}}, estas son las PVs con pagos para revisar ({{2}}), agrupadas por vendedor: {{3}}. Si no tiene aclaración, es un pago vencido que todavía no figura cobrado. Cada vendedor recibió el detalle de las suyas.",
+    ejemplo: [
+      "Daniel", "11 PVs",
+      "Julian Naddeo (9): 08769/3, 08771/3, 08772/3, 08773/3, 08774/3, 08775/3, 08781/3, 08782/3, 08784/3 · Loisi Antonio (1): 08153/1 · Castro Jose (1): 08161/1 (fuera de plazo)",
+    ],
+  },
+};
+
 async function crearTemplates(env: Env) {
   const existentes = new Set(((await listarTemplates(env)).templates ?? []).map((t: { name: string }) => t.name));
   const out: unknown[] = [];
-  for (const [tipo, nombre] of Object.entries(TEMPLATES)) {
+  const todos: [string, { header: string; body: string; ejemplo: string[] }][] = [
+    ...Object.entries(TEMPLATES).map(([tipo, nombre]) => [nombre, CUERPOS[tipo]] as [string, typeof CUERPOS[string]]),
+    ...Object.entries(CUERPOS_AGRUPADOS),
+  ];
+  for (const [nombre, c] of todos) {
     if (existentes.has(nombre)) { out.push({ template: nombre, ya_existia: true }); continue; }
-    const c = CUERPOS[tipo];
     const res = await fetch(`${META_API_URL}/${env.WABA_ID}/message_templates`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.WA_TOKEN}`, "Content-Type": "application/json" },
