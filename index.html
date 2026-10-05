@@ -1513,6 +1513,9 @@ function elegirFlujo(flujo) {
   // precio virtual y entran a la cola del tasador físico. Lo que las distingue
   // es `flujo_carga`, porque en la del portal el auto todavía no llegó.
   wizardData.es_presencial = (flujo === 'portal');
+  // El portal no pide fotos. Si venía del flujo virtual y había cargado alguna,
+  // la soltamos acá: si no, se subirían sin que la pantalla las muestre.
+  if (flujo === 'portal') { fotos = []; fotoPreviews = []; }
   document.getElementById('flujoModal')?.remove();
   document.body.style.overflow = '';
   renderWizard();
@@ -2242,7 +2245,11 @@ function renderStep9() { // Precio ofrecido con FyF
   `;
 }
 
-function renderStep10() { // Fotos
+function renderStep10() { // Fotos (o solo el resumen, en el flujo portal)
+  // En el flujo portal el auto todavía no vino: no hay nada que fotografiar.
+  // Las fotos las saca el tasador físico cuando el cliente trae la unidad, así
+  // que acá no se piden y el paso queda solo como resumen antes de enviar.
+  const sinFotos = wizardData.flujo_carga === 'portal';
   // Las fotos cargadas + UN solo slot para sumar. Antes se pintaban los 10
   // recuadros siempre; con el tope en 20 eso quedaba como una pared de
   // cuadrados punteados, sobre todo en el celular.
@@ -2271,9 +2278,16 @@ function renderStep10() { // Fotos
   const precioOfrecido = getWizardVal('precioOfrecido');
   return `
     ${stepNum()}
-    <h2>Fotos y envío</h2>
-    <label>Fotos del vehículo (${fotoPreviews.length} de ${MAX_FOTOS})</label>
-    <div class="fotos-grid">${slots}</div>
+    <h2>${sinFotos ? 'Resumen y envío' : 'Fotos y envío'}</h2>
+    ${sinFotos ? `
+      <div style="padding:12px 14px; background:#EFF6FF; border:1px solid #93C5FD; border-left-width:5px; border-radius:8px; font-size:13px; color:#1E40AF; line-height:1.5">
+        <strong>Sin fotos en esta etapa.</strong><br>
+        El auto todavía no vino, así que las fotos las saca el tasador cuando el cliente traiga la unidad al turno.
+      </div>
+    ` : `
+      <label>Fotos del vehículo (${fotoPreviews.length} de ${MAX_FOTOS})</label>
+      <div class="fotos-grid">${slots}</div>
+    `}
     <div style="margin-top:20px; padding:16px; background:var(--vw-grey-1); border-radius:8px; font-size:13px;">
       <strong>Resumen:</strong><br>
       <strong>Cliente:</strong> ${clienteNombre}<br>
