@@ -1,3 +1,8 @@
 
 # artefactos del CLI de Supabase
 supabase/.temp/
+
+# Tabla de InfoAuto: dato licenciado. Este repo se publica SIN auth
+# (tasador.titogonzalez.online sirve cualquier archivo), asi que dejarla aca
+# seria distribuirla. Va por Supabase, detras del login.
+infoauto.json

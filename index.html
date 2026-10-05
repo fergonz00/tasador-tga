@@ -823,6 +823,34 @@ const FYF = 1300000;
 // Antes había 0,88 en dos lugares y 0,86 en un tercero (con un comentario que
 // decía −14% al lado de un 0,86); por eso ahora es una sola constante.
 const FG_TOMA = 0.83;
+
+// ============ INFOAUTO ============
+// Guía de precios de InfoAuto, la otra tabla del mercado. La sumó Fazzini como
+// referencia (Fer, 4/5-10-2026). Misma forma que el CCA: versión × año.
+//
+// El valor NO se busca acá: viene en la fila de la tasación, en la columna
+// `precio_infoauto` (y `precio_infoauto_version`, para poder auditar contra qué
+// versión de InfoAuto se matcheó). Lo completa
+// `kavak-cotizador/infoauto_subir.py`, que baja la grilla, la mapea a las
+// claves marca|modelo|versión de la planilla del CCA, la deja en la tabla
+// `infoauto_precios` y de ahí la pasa a las tasaciones. Se corre una vez por
+// mes, cuando InfoAuto actualiza.
+//
+// ⚠️ Por qué no es un archivo acá al lado: este sitio **sirve cualquier archivo
+// sin login** (index.html y privacy.html responden 200 abiertos). Un
+// `infoauto.json` en el repo quedaba públicamente descargable, y los términos
+// de InfoAuto (4.4) limitan el dato a uso exclusivo e interno. `infoauto_precios`
+// tiene RLS y ninguna policy: sólo la lee service_role, o sea el db-proxy con la
+// sesión del operador. La anon que está en este HTML no ve nada.
+// ⚠️ Factor de toma de InfoAuto: 0,85 (−15%), elegido por Fer el 5-10-2026.
+// IMPORTANTE para quien lea este número: NO está calibrado contra Kavak como el
+// del CCA. Medido sobre los 101 autos que tienen las dos cargadas, InfoAuto está
+// +16,6% arriba del CCA, y su toma con 0,85 queda **+12,7% por encima de lo que
+// paga Kavak** (el CCA de toma queda a −1,6%). Para alinearlo haría falta 0,75.
+// Se deja en 0,85 porque así lo decidió Fer; por eso la caja lo muestra
+// etiquetado y Kavak sigue siendo la referencia que manda.
+const INFOAUTO_TOMA = 0.85;
+
 const DEFAULT_COTIZ = 1350;
 
 // Moneda de cada fila del CCA: viene de la columna `moneda` de la planilla
@@ -3680,6 +3708,12 @@ function _argdCalc(t, equivModelo) {
   const ccaBase = cca ? ((cca.moneda === 'USD') ? cca.precio * cotiz : cca.precio) : null;
   const ccaToma = ccaBase ? ccaBase * (1 + ajuste / 100) * 0.86 : null;
 
+  // InfoAuto: la otra tabla. Mismo tratamiento que el CCA (ajuste por km y
+  // después el factor de toma), pero con SU factor, que es 0,85.
+  const iaBase = t.precio_infoauto ? Number(t.precio_infoauto) : null;
+  const iaAjustado = iaBase ? iaBase * (1 + ajuste / 100) : null;
+  const iaToma = iaAjustado ? iaAjustado * INFOAUTO_TOMA : null;
+
   let fgMercado = null, fgAjustado = null, fgToma = null, precio0km = null;
   const rotacion = Number(t.rotacion_anual) || 9;
   const vw = equivModelo ? vwData.find(v => v.modelo === equivModelo) : null;
@@ -3692,7 +3726,8 @@ function _argdCalc(t, equivModelo) {
   }
   return { ajuste, rotacion, ccaBase, ccaToma, fgMercado, fgAjustado, fgToma, precio0km,
            ccaAjustado: ccaBase ? ccaBase * (1 + ajuste / 100) : null,
-           ccaMoneda: cca ? cca.moneda : null };
+           ccaMoneda: cca ? cca.moneda : null,
+           iaBase, iaAjustado, iaToma };
 }
 
 function renderArgdList(data) {
@@ -3924,6 +3959,13 @@ function renderArgdCard(t) {
         <div class="sub">${c.ccaBase
           ? 'Público: $ ' + formatNum(Math.round(c.ccaAjustado)) + '<br>Toma -14% · km ' + (c.ajuste >= 0 ? '+' : '') + c.ajuste + '%'
           : 'CCA no tiene esta versión'}</div>
+      </div>
+      <div class="precio-box cca" style="flex:1; min-width:150px">
+        <div class="label">InfoAuto</div>
+        <div class="valor">${c.iaToma ? '$ ' + formatNum(Math.round(c.iaToma)) : 'Sin dato'}</div>
+        <div class="sub">${c.iaBase
+          ? 'Público: $ ' + formatNum(Math.round(c.iaAjustado)) + '<br>Toma -' + Math.round((1 - INFOAUTO_TOMA) * 100) + '% · km ' + (c.ajuste >= 0 ? '+' : '') + c.ajuste + '%'
+          : 'InfoAuto no tiene esta versión'}</div>
       </div>
       <div class="precio-box vw" style="flex:1; min-width:150px">
         <div class="label">Fórmula FG</div>
