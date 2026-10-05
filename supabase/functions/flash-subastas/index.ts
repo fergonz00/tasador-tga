@@ -37,20 +37,31 @@ const CCA_CSV = "https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHss
 const VW_CSV = "https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=1899724741";
 const CERO_KM_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQH_9OtgijB7xV7qZEHoogNXq8TE5gLxz4RNb2DvxbbQ1o2A_Be2my532IJF0nxpJCUkghJrEa3TeDw/pub?gid=647749443&single=true&output=csv";
 const FYF = 1300000;
-// ⚠️ Factor de toma de la Formula FG. **0,87 = 15% de margen** (1 / 1,15).
-// Fer, 5-10-2026: "en FG quiero margen del 15%, no 30%. Nunca vendo un usado
-// con margen del 30%, maximo 15 o un toque mas".
+// ⚠️ Factor de toma de la Formula FG. **1,00: la toma ES la FG mercado.**
+// Fer, 5-10-2026, despues de medirlo: "ok 1.00".
 //
-// Antes era 0,83, que son 20,5% de margen. Se habia calibrado para que la FG
-// de toma cayera cerca de lo que paga Kavak, y por eso quedaba sistematicamente
-// por debajo: la FG daba -15/-17% contra la permuta de Kavak en los SUV.
+// El 15% de margen que pide Fer ya esta adentro de la FG mercado, porque la FG
+// **no es un precio de venta, es un precio de compra**. Medido contra la
+// vidriera de Kavak (kavak-cotizador/kavak_venta.py lee su tienda por GET, 90
+// publicaciones, 13 autos cruzados con los candidatos de ML): lo que Kavak
+// PUBLICA esta **+15,7% arriba de la FG mercado** y +17% arriba de su propia
+// oferta de permuta. Bajarle un 13% o un 17% mas duplicaba el margen.
 //
-// Lo que cerro la discusion fue medir a cuanto VENDE Kavak los mismos autos
-// (kavak-cotizador/kavak_venta.py, 90 publicaciones): **su spread entre lo que
-// paga y lo que publica es +15,3% de mediana**. O sea que el precio de compra
-// de Kavak YA es un precio de toma con 15% adentro, el mismo criterio que usa
-// Fer. Con 0,87 las dos referencias quedan alineadas.
-const FG_TOMA = 0.87;
+// Margen implicito contra esa vidriera, por factor:
+//     0,83  (26-09 a 5-10)  ->  +39,4%
+//     0,87  (5-10, a mitad) ->  +33,0%   <- justo el 30% que Fer rechaza
+//     1,00  (este)          ->  +15,7%   <- el que pidio
+// Fer: "nunca vendo un usado con margen del 30%, maximo 15 o un toque mas".
+//
+// ⚠️ Donde esto NO cierra: en los autos viejos y baratos la FG ya queda
+// ARRIBA de la vidriera de Kavak (Gol Trend 2014: retail/FG = 0,86), asi que
+// con 1,00 se sobrepaga. Avisado el 5-10-2026. Si aparece, la salida es un
+// factor por tramo de antiguedad, no volver a bajarle el factor a todos.
+//
+// Vive en CUATRO lugares y se mueven juntos: tasador-tga/index.html,
+// tasador-tga/supabase/functions/flash-subastas/index.ts,
+// tasador-argendreams/index.html, kavak-cotizador/flash_subastas.py.
+const FG_TOMA = 1.00;
 const CCA_TOMA = 0.86;
 const ANIO_ACTUAL = 2026;
 const PICKUPS = ["AMAROK", "HILUX", "RANGER", "SAVEIRO", "S-10", "S10", "MONTANA", "STRADA", "TORO", "FRONTIER", "ALASKAN"];
