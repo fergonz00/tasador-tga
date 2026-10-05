@@ -876,7 +876,53 @@ let fotos = []; // array of File objects
 let fotoPreviews = []; // array of data URLs
 let allTasaciones = [];
 let currentStep = 0;
-const TOTAL_STEPS = 14; // cliente, marca, [si VW: ¿compró en TGA?], año, modelo, version, 0kmEquiv, km, patente+provincia, color+kavak, 0km consulta, precio ofrecido, fotos, comentario opcional del vendedor
+const MAX_FOTOS = 20;
+const TOTAL_STEPS = 15; // cliente, marca, [si VW: ¿compró en TGA?], año, modelo, version, 0kmEquiv, km, patente+provincia, color+kavak, [¿compra unidad?], 0km consulta, precio ofrecido, fotos, comentario opcional del vendedor
+
+// ============ FLUJO PORTAL / ¿COMPRA UNIDAD? (habilitado por usuario) ============
+// Dos cambios que por ahora son solo para Inés Alonso. Se suman usuarios acá y
+// listo: no hay nada más hardcodeado.
+//  1) Al abrir "Nueva" elige si la tasación es VIRTUAL (el camino de siempre) o
+//     DEL PORTAL (el cliente consultó por la web y no está presente: saltea la
+//     etapa de precio virtual, se le agenda el turno y pasa derecho a la
+//     inspección del tasador físico).
+//  2) Entre el paso de color/Kavak y el del 0km se le pregunta si el cliente va
+//     a adquirir una unidad. Si no, se saltean los pasos del 0km y del precio
+//     ofrecido, porque no aplican: solo viene a vender el usado.
+const USUARIOS_FLUJO_PORTAL = ['ialonso', 'mlubrano'];
+
+function usuarioHabilitadoPortal() {
+  const u = (currentUser && (currentUser.usuario || '')).toLowerCase();
+  return USUARIOS_FLUJO_PORTAL.includes(u);
+}
+// El paso "¿compra unidad?" solo se le muestra a los usuarios habilitados, en
+// las dos ramas (virtual y portal).
+function preguntaCompraUnidadActiva() {
+  return usuarioHabilitadoPortal();
+}
+// true solo cuando contestó explícitamente que NO compra unidad.
+function clienteSoloVende() {
+  return wizardData.clienteCompraUnidad === false;
+}
+
+// Cartel para el tasador: de esta operación solo sale la COMPRA del usado, el
+// cliente no se lleva ninguna unidad. Cambia cómo encarar la inspección y el
+// precio, así que va remarcado en todas las pantallas donde aparece la
+// tasación. `cliente_compra_unidad` es null en todo lo viejo: solo se muestra
+// cuando contestaron explícitamente que no.
+function badgeSoloVende(tas) {
+  if (!tas || tas.cliente_compra_unidad !== false) return '';
+  return '<span style="background:#9A3412; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">SOLO COMPRA</span>';
+}
+
+// Versión grande, para la pantalla de inspección del tasador físico.
+function avisoSoloVende(tas) {
+  if (!tas || tas.cliente_compra_unidad !== false) return '';
+  return `<div style="margin-bottom:14px; background:#FFF7ED; border:2px solid #EA580C; border-left-width:6px; border-radius:8px; padding:12px 14px">
+    <div style="font-size:13px; font-weight:800; color:#9A3412; letter-spacing:0.3px">⚠ SOLO COMPRA DEL USADO</div>
+    <div style="font-size:13px; color:#9A3412; margin-top:4px; line-height:1.45">El cliente no se lleva ninguna unidad: vino únicamente a vender su auto. No hay 0km ni precio ofrecido en esta tasación.</div>
+  </div>`;
+}
 const PROVINCIAS_AR = [
   'CABA', 'Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba', 'Corrientes',
   'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones',
@@ -1417,6 +1463,68 @@ function initWizard() {
   fotos = [];
   fotoPreviews = [];
   renderWizard();
+  // A los habilitados se les pregunta primero de qué tipo es la tasación.
+  // Al resto no les cambia nada: arrancan en el flujo virtual de siempre.
+  if (usuarioHabilitadoPortal()) mostrarSelectorFlujo();
+}
+
+// ============ SELECTOR VIRTUAL / PORTAL ============
+// Virtual = el camino de siempre: la carga el vendedor, el admin le pone precio
+// virtual y después se agenda la inspección.
+// Portal = el cliente consultó por la web y no está presente: no hay etapa de
+// precio virtual, se le agenda el turno al enviar y pasa derecho a la cola del
+// tasador físico.
+function mostrarSelectorFlujo() {
+  document.getElementById('flujoModal')?.remove();
+  const actual = wizardData.flujo_carga || 'virtual';
+  const html = `
+    <div id="flujoModal" class="modal-overlay">
+      <div class="modal-box" style="max-width:520px">
+        <div class="modal-header">
+          <div style="flex:1; min-width:0">
+            <div style="font-size:16px; font-weight:700; color:var(--vw-blue)">¿Qué tipo de tasación es?</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">Define el recorrido de la tasación. Se puede cambiar antes de empezar a cargar datos.</div>
+          </div>
+        </div>
+        <div class="modal-body">
+          <button onclick="elegirFlujo('virtual')" style="width:100%; text-align:left; padding:16px; margin-bottom:10px; background:#fff; border:2px solid ${actual === 'virtual' ? 'var(--vw-blue)' : 'var(--vw-grey-2)'}; border-radius:10px; cursor:pointer; font-family:var(--sans)">
+            <div style="font-weight:700; font-size:15px; color:var(--vw-blue)">Tasación virtual</div>
+            <div style="font-size:13px; color:var(--vw-grey-4); margin-top:4px; line-height:1.45">El camino de siempre. La cargás, el admin le pone el precio virtual de referencia y recién después se agenda la inspección física.</div>
+          </button>
+          <button onclick="elegirFlujo('portal')" style="width:100%; text-align:left; padding:16px; background:#fff; border:2px solid ${actual === 'portal' ? '#EA580C' : 'var(--vw-grey-2)'}; border-radius:10px; cursor:pointer; font-family:var(--sans)">
+            <div style="font-weight:700; font-size:15px; color:#EA580C">Tasación del portal</div>
+            <div style="font-size:13px; color:var(--vw-grey-4); margin-top:4px; line-height:1.45">El cliente consultó por la web y todavía no trajo el auto. No pasa por el precio virtual: al enviarla le agendás el turno y queda esperando la inspección del tasador.</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.body.style.overflow = 'hidden';
+}
+
+function elegirFlujo(flujo) {
+  wizardData.flujo_carga = flujo;
+  // El portal comparte el ruteo de la presencial: las dos saltean la etapa de
+  // precio virtual y entran a la cola del tasador físico. Lo que las distingue
+  // es `flujo_carga`, porque en la del portal el auto todavía no llegó.
+  wizardData.es_presencial = (flujo === 'portal');
+  document.getElementById('flujoModal')?.remove();
+  document.body.style.overflow = '';
+  renderWizard();
+}
+
+// Chip del primer paso: deja ver en qué flujo está y volver a elegir sin perder
+// nada, porque todavía no cargó ningún dato.
+function chipFlujo() {
+  if (!usuarioHabilitadoPortal()) return '';
+  const esPortal = wizardData.flujo_carga === 'portal';
+  const color = esPortal ? '#EA580C' : 'var(--vw-blue)';
+  const texto = esPortal ? 'Tasación del portal' : 'Tasación virtual';
+  return `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px">
+    <span style="background:${color}; color:white; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:700; letter-spacing:0.3px">${texto}</span>
+    <button onclick="mostrarSelectorFlujo()" style="background:none; border:none; color:var(--vw-grey-4); font-size:12px; text-decoration:underline; cursor:pointer; font-family:var(--sans); padding:0">cambiar</button>
+  </div>`;
 }
 
 // ============ FLUJO "CLIENTE PRESENCIAL" ============
@@ -1502,17 +1610,32 @@ function iniciarWizardPresencial(vendedorOverride) {
   showToast('Modo tasación presencial');
 }
 
+// Numeración honesta: cuenta solo los pasos que este vendedor va a ver.
+// Antes era `currentStep + 1` sobre el total fijo, así que al saltearse el paso
+// del VW el cartel iba 2 -> 4. Ahora hay hasta tres salteables (VW, ¿compra
+// unidad?, y el par 0km + precio ofrecido), así que la cuenta se calcula.
+function stepNum() {
+  let total = 0, pos = 0;
+  for (let i = 0; i < TOTAL_STEPS; i++) {
+    if (shouldSkipStep(i)) continue;
+    total++;
+    if (i <= currentStep) pos = total;
+  }
+  return `<div class="step-num">Paso ${pos} de ${total}</div>`;
+}
+
 function renderWizard() {
-  // Progress bar
+  // Progress bar: un punto por paso que se va a ver, no por índice.
   let dots = '';
   for (let i = 0; i < TOTAL_STEPS; i++) {
+    if (shouldSkipStep(i)) continue;
     const cls = i < currentStep ? 'done' : i === currentStep ? 'current' : '';
     dots += `<div class="dot ${cls}"></div>`;
   }
   document.getElementById('progressBar').innerHTML = dots;
 
   const container = document.getElementById('wizardContainer');
-  const steps = [renderStepCliente, renderStep0, renderStepVwCompra, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7, renderStep8, renderStep9, renderStep10, renderStep11];
+  const steps = [renderStepCliente, renderStep0, renderStepVwCompra, renderStep1, renderStep2, renderStep3, renderStep4, renderStep5, renderStep6, renderStep7, renderStepCompraUnidad, renderStep8, renderStep9, renderStep10, renderStep11];
   container.innerHTML = '';
   const div = document.createElement('div');
   div.className = 'wizard-step active';
@@ -1524,7 +1647,8 @@ function renderWizard() {
 function renderStepCliente() { // Nombre y apellido del cliente (primer paso del wizard)
   const cur = getWizardVal('clienteNombre');
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
+    ${chipFlujo()}
     <h2>Datos del cliente</h2>
     <label>Nombre y apellido del cliente</label>
     <input type="text" id="wClienteNombre" placeholder="Ej: Juan Pérez" oninput="validateStep()" value="${cur}" autocomplete="off">
@@ -1538,7 +1662,7 @@ function renderStepCliente() { // Nombre y apellido del cliente (primer paso del
 function renderStep0() { // Marca
   const marcas = [...new Set(ccaData.map(r => r.marca))].sort();
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Marca del vehículo</h2>
     <label>Seleccioná la marca</label>
     <select id="wMarca" onchange="validateStep()">
@@ -1556,7 +1680,7 @@ function renderStep1() { // Año
   const anios = [];
   for (let a = 2026; a >= 2012; a--) anios.push(a);
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Año del vehículo</h2>
     <label>Seleccioná el año</label>
     <select id="wAnio" onchange="validateStep()">
@@ -1591,7 +1715,7 @@ function renderStep2() { // Modelo
   });
   const modelos = [...new Set(filtered.map(r => r.modelo))].sort();
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Modelo</h2>
     <label>${marca} — Año ${anio}</label>
     <select id="wModelo" onchange="validateStep()">
@@ -1625,7 +1749,7 @@ function renderStep3() { // Versión CCA
   });
   const versiones = filtered.map(r => r.version).sort();
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Versión</h2>
     <label>${marca} ${modelo} — Año ${anio}</label>
     <select id="wVersion" onchange="validateStep()">
@@ -1646,7 +1770,7 @@ function renderStep4() { // 0km equivalente del usado (marca auto-detectada del 
 
   if (!tieneData) {
     return `
-      <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+      ${stepNum()}
       <h2>0km equivalente del usado</h2>
       <div style="padding:16px; background:var(--vw-grey-1); border-radius:8px; font-size:14px; color:var(--vw-grey-4); line-height:1.5">
         No tenemos precios 0km cargados para <strong>${marcaUsado || '—'}</strong>. Podés continuar al siguiente paso.
@@ -1668,7 +1792,7 @@ function renderStep4() { // 0km equivalente del usado (marca auto-detectada del 
   const showVersion = !!curModelo && marcaUsado !== 'VOLKSWAGEN';
 
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>0km equivalente del usado</h2>
     <label>¿${marcaUsado} tiene un 0km equivalente?</label>
     <select id="wEquivModelo" onchange="onEquivModeloChange()">
@@ -1731,7 +1855,7 @@ function onEquivModeloChange() {
 
 function renderStep5() { // Kilómetros
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Kilómetros</h2>
     <label>Kilómetros actuales del vehículo</label>
     <input type="number" id="wKm" placeholder="Ej: 45000" oninput="validateStep()" min="0" max="250000">
@@ -1747,7 +1871,7 @@ function renderStep6() { // Patente + Provincia de radicación
   const curPatente = getWizardVal('patente');
   const curProv = getWizardVal('provinciaRadicacion');
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Datos de titularidad</h2>
     <label>Patente del vehículo</label>
     <input type="text" id="wPatente" placeholder="Ej: AB123CD o ABC123" oninput="onPatenteInput()" value="${curPatente}" maxlength="10" style="text-transform:uppercase">
@@ -1772,7 +1896,7 @@ function onPatenteInput() {
 
 function renderStep7() { // Color + Kavak
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Color y precio Kavak</h2>
     <label>Color del vehículo</label>
     <input type="text" id="wColor" placeholder="Ej: Blanco, Gris Platino" oninput="validateStep()">
@@ -1785,11 +1909,68 @@ function renderStep7() { // Color + Kavak
   `;
 }
 
+function renderStepCompraUnidad() { // ¿El cliente adquiere una unidad? (solo usuarios habilitados)
+  if (!preguntaCompraUnidadActiva()) {
+    // Paso inaplicable: el auto-skip de nextStep/prevStep se encarga. Render
+    // mínimo por si queda parado acá.
+    return `${stepNum()}<p style="padding:20px">Salteando paso (no aplica)...</p>`;
+  }
+  const v = wizardData.clienteCompraUnidad;
+  const selSi = v === true ? 'checked' : '';
+  const selNo = v === false ? 'checked' : '';
+  return `
+    <style>
+      .cu-opt { display:flex; align-items:center; gap:12px; padding:14px 18px; border:2px solid var(--vw-grey-2); border-radius:10px; cursor:pointer; font-weight:600; transition:all .15s; background:#fff; }
+      .cu-opt input { position:absolute; opacity:0; pointer-events:none; }
+      .cu-opt .tick { width:24px; height:24px; border-radius:50%; border:2px solid var(--vw-grey-3); display:inline-flex; align-items:center; justify-content:center; font-size:14px; color:transparent; font-weight:bold; flex-shrink:0; }
+      .cu-opt:hover { border-color:var(--vw-blue); }
+      .cu-opt:has(input:checked) { border-color:var(--vw-blue); background:#EFF6FF; color:var(--vw-blue); }
+      .cu-opt:has(input:checked) .tick { background:var(--vw-blue); border-color:var(--vw-blue); color:#fff; }
+    </style>
+    ${stepNum()}
+    <h2>Intención de compra</h2>
+    <label>¿El cliente tiene intención de adquirir una unidad en el concesionario?</label>
+    <div style="display:flex; gap:12px; margin-top:10px">
+      <label class="cu-opt" style="flex:1">
+        <input type="radio" name="wCompraUnidad" value="si" ${selSi} onchange="onCompraUnidadChange()">
+        <span class="tick">✓</span>
+        <span>Sí</span>
+      </label>
+      <label class="cu-opt" style="flex:1">
+        <input type="radio" name="wCompraUnidad" value="no" ${selNo} onchange="onCompraUnidadChange()">
+        <span class="tick">✓</span>
+        <span>No</span>
+      </label>
+    </div>
+    <div id="wCompraUnidadAviso" style="margin-top:16px; ${v === false ? '' : 'display:none'}">
+      <div style="padding:12px 14px; background:#FFF7ED; border:1px solid #FDBA74; border-radius:8px; font-size:13px; color:#9A3412">
+        <strong>El cliente solo vende su usado.</strong><br>
+        Se saltean los pasos del 0km que consulta y del precio ofrecido, porque no
+        aplican. La tasación le va a quedar remarcada al tasador.
+      </div>
+    </div>
+    <div class="wizard-nav">
+      <button class="btn-back" onclick="prevStep()">Atrás</button>
+      <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
+    </div>
+  `;
+}
+
+function onCompraUnidadChange() {
+  const sel = (document.querySelector('input[name="wCompraUnidad"]:checked') || {}).value;
+  const aviso = document.getElementById('wCompraUnidadAviso');
+  if (aviso) aviso.style.display = (sel === 'no') ? '' : 'none';
+  // Se guarda ya para que el aviso y el salteo de pasos queden consistentes
+  // incluso si vuelve con "Atrás" sin pasar por saveCurrentStep.
+  wizardData.clienteCompraUnidad = sel === 'si' ? true : sel === 'no' ? false : null;
+  validateStep();
+}
+
 function renderStepVwCompra() { // Solo si usado es VW: ¿lo compró en Tito Gonzalez?
   const marcaUsado = (wizardData.marca || '').toUpperCase();
   if (marcaUsado !== 'VOLKSWAGEN') {
     // Step inaplicable - el auto-skip en nextStep/prevStep se encarga. Render minimal por si queda parado.
-    return `<div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div><p style="padding:20px">Salteando paso (no aplica)...</p>`;
+    return `${stepNum()}<p style="padding:20px">Salteando paso (no aplica)...</p>`;
   }
   const comprado = wizardData.vwCompradoTGA;
   const lugar = wizardData.vwLugarCompra || '';
@@ -1805,7 +1986,7 @@ function renderStepVwCompra() { // Solo si usado es VW: ¿lo compró en Tito Gon
       .vw-opt:has(input:checked) { border-color:var(--vw-blue); background:#EFF6FF; color:var(--vw-blue); }
       .vw-opt:has(input:checked) .tick { background:var(--vw-blue); border-color:var(--vw-blue); color:#fff; }
     </style>
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Origen del VW usado</h2>
     <label>¿El cliente compró este VW en Tito Gonzalez?</label>
     <div style="display:flex; gap:12px; margin-top:10px">
@@ -1841,7 +2022,7 @@ function onVwCompradoChange() {
 function renderStep8() { // Modelo 0km que consulta el cliente
   const modelos0km = tgaData.length > 0 ? tgaData : vwData.map(v => ({ modelo: v.modelo }));
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>0km que consulta el cliente</h2>
     <label>¿Qué modelo 0km está averiguando?</label>
     <select id="wModelo0km" onchange="validateStep()">
@@ -1862,7 +2043,7 @@ function renderStep9() { // Precio ofrecido con FyF
   const precio = wizardData.precioOfrecido || defaultPrecio;
   const hint = (precio === defaultPrecio && defaultPrecio) ? '<div style="margin-top:6px; font-size:12px; color:var(--vw-grey-4)">Precargado con la oferta vigente — modificá si hace falta.</div>' : '';
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Precio ofrecido al cliente</h2>
     <label>Precio con flete y formulario que le ofreciste (con FyF incluido)</label>
     <input type="number" id="wPrecioOfrecido" placeholder="Ej: 39000000" value="${precio}" min="0" oninput="validateStep()">
@@ -1875,20 +2056,20 @@ function renderStep9() { // Precio ofrecido con FyF
 }
 
 function renderStep10() { // Fotos
+  // Las fotos cargadas + UN solo slot para sumar. Antes se pintaban los 10
+  // recuadros siempre; con el tope en 20 eso quedaba como una pared de
+  // cuadrados punteados, sobre todo en el celular.
   let slots = '';
-  for (let i = 0; i < 10; i++) {
-    if (fotoPreviews[i]) {
-      slots += `<div class="foto-slot">
-        <img src="${fotoPreviews[i]}">
-        <div class="remove-foto" onclick="removeFoto(${i})">×</div>
-      </div>`;
-    } else if (i === fotoPreviews.length) {
-      slots += `<div class="foto-slot" onclick="document.getElementById('fotoInput').click()">
-        <span class="plus">+</span>
-      </div>`;
-    } else {
-      slots += `<div class="foto-slot"><span class="plus" style="opacity:0.3">+</span></div>`;
-    }
+  fotoPreviews.forEach((src, i) => {
+    slots += `<div class="foto-slot">
+      <img src="${src}">
+      <div class="remove-foto" onclick="removeFoto(${i})">×</div>
+    </div>`;
+  });
+  if (fotoPreviews.length < MAX_FOTOS) {
+    slots += `<div class="foto-slot" onclick="document.getElementById('fotoInput').click()">
+      <span class="plus">+</span>
+    </div>`;
   }
   const clienteNombre = getWizardVal('clienteNombre');
   const marca = getWizardVal('marca');
@@ -1902,9 +2083,9 @@ function renderStep10() { // Fotos
   const modelo0km = getWizardVal('modelo0km');
   const precioOfrecido = getWizardVal('precioOfrecido');
   return `
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Fotos y envío</h2>
-    <label>Fotos del vehículo (hasta 10)</label>
+    <label>Fotos del vehículo (${fotoPreviews.length} de ${MAX_FOTOS})</label>
     <div class="fotos-grid">${slots}</div>
     <div style="margin-top:20px; padding:16px; background:var(--vw-grey-1); border-radius:8px; font-size:13px;">
       <strong>Resumen:</strong><br>
@@ -1912,8 +2093,9 @@ function renderStep10() { // Fotos
       <strong>Usado:</strong> ${marca} ${modelo} ${anio} — ${version}<br>
       ${formatNum(km)} km — ${color}<br>
       <strong>Patente:</strong> ${patente} — <strong>Radicado en:</strong> ${provincia}<br>
-      <strong>0km:</strong> ${modelo0km}<br>
-      Precio ofrecido con FyF: $ ${formatNum(precioOfrecido)}
+      ${clienteSoloVende()
+        ? '<span style="color:#9A3412; font-weight:700">El cliente solo vende su usado</span> — no consulta 0km'
+        : `<strong>0km:</strong> ${modelo0km}<br>Precio ofrecido con FyF: $ ${formatNum(precioOfrecido)}`}
     </div>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -1937,7 +2119,7 @@ function renderStep11() { // Comentario opcional del vendedor (GNC, modelo no ex
       .com-opt:has(input:checked) { border-color:var(--vw-blue); background:#EFF6FF; color:var(--vw-blue); }
       .com-opt:has(input:checked) .tick { background:var(--vw-blue); border-color:var(--vw-blue); color:#fff; }
     </style>
-    <div class="step-num">Paso ${currentStep + 1} de ${TOTAL_STEPS}</div>
+    ${stepNum()}
     <h2>Observaciones</h2>
     <label>¿Algún comentario adicional sobre el usado?</label>
     <div style="margin-top:6px; font-size:12px; color:var(--vw-grey-4)">Por ejemplo: tiene GNC, el modelo no coincide exactamente con el listado, motor modificado, alguna particularidad que el tasador deba saber, etc.</div>
@@ -1959,7 +2141,7 @@ function renderStep11() { // Comentario opcional del vendedor (GNC, modelo no ex
     </div>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
-      <button class="btn-submit" id="btnNext" disabled onclick="submitTasacion()">Enviar tasación</button>
+      <button class="btn-submit" id="btnNext" disabled onclick="submitTasacion()">${wizardData.flujo_carga === 'portal' ? 'Enviar tasación y agendar turno' : 'Enviar tasación'}</button>
     </div>
   `;
 }
@@ -2031,9 +2213,17 @@ function saveCurrentStep() {
       wizardData.color = val('wColor');
       wizardData.kavak = val('wKavak');
       break;
-    case 10: wizardData.modelo0km = val('wModelo0km'); break;
-    case 11: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
-    case 13: {
+    case 10: {
+      // ¿El cliente adquiere una unidad? Solo se pregunta a los habilitados;
+      // para el resto el paso se saltea y el campo queda en null.
+      if (!preguntaCompraUnidadActiva()) { wizardData.clienteCompraUnidad = null; break; }
+      const sel = (document.querySelector('input[name="wCompraUnidad"]:checked') || {}).value;
+      wizardData.clienteCompraUnidad = sel === 'si' ? true : sel === 'no' ? false : null;
+      break;
+    }
+    case 11: wizardData.modelo0km = val('wModelo0km'); break;
+    case 12: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
+    case 14: {
       // Comentario opcional del vendedor (SI/NO + textarea)
       const sel = (document.querySelector('input[name="wComentarioSiNo"]:checked') || {}).value;
       if (sel === 'si') {
@@ -2105,10 +2295,16 @@ function validateStep() {
       break;
     }
     case 9: valid = !!val('wColor') && !!val('wKavak') && parseInt(val('wKavak')) > 0; break;
-    case 10: valid = !!val('wModelo0km'); break;
-    case 11: valid = !!val('wPrecioOfrecido') && parseInt(val('wPrecioOfrecido')) > 0; break;
-    case 12: valid = true; break; // fotos: opcionales, siempre puede pasar de pantalla
-    case 13: {
+    case 10: {
+      if (!preguntaCompraUnidadActiva()) { valid = true; break; }
+      const sel = (document.querySelector('input[name="wCompraUnidad"]:checked') || {}).value;
+      valid = sel === 'si' || sel === 'no';
+      break;
+    }
+    case 11: valid = !!val('wModelo0km'); break;
+    case 12: valid = !!val('wPrecioOfrecido') && parseInt(val('wPrecioOfrecido')) > 0; break;
+    case 13: valid = true; break; // fotos: opcionales, siempre puede pasar de pantalla
+    case 14: {
       // Comentario opcional del vendedor: si NO → válido; si SI → requiere texto
       const sel = (document.querySelector('input[name="wComentarioSiNo"]:checked') || {}).value;
       if (sel === 'no') { valid = true; break; }
@@ -2126,6 +2322,11 @@ function shouldSkipStep(idx) {
     const marcaUsado = (wizardData.marca || '').toUpperCase();
     return marcaUsado !== 'VOLKSWAGEN';
   }
+  // Paso 10 (¿el cliente adquiere una unidad?) solo para los usuarios habilitados
+  if (idx === 10) return !preguntaCompraUnidadActiva();
+  // Si el cliente SOLO vende su usado, el 0km que consulta (11) y el precio
+  // ofrecido (12) no existen: no hay unidad que ofrecerle.
+  if (idx === 11 || idx === 12) return clienteSoloVende();
   return false;
 }
 
@@ -2147,7 +2348,7 @@ function prevStep() {
 // ============ FOTOS ============
 function handleFotos(files) {
   for (const f of files) {
-    if (fotos.length >= 10) break;
+    if (fotos.length >= MAX_FOTOS) break;
     fotos.push(f);
     const reader = new FileReader();
     reader.onload = e => {
@@ -2326,9 +2527,13 @@ async function submitTasacion() {
     let precioFormulaVwToma = precioFormulaVw ? precioFormulaVw * (1 + ajusteKm/100) * FG_TOMA : null;
     let precioVw0km = fg ? fg.precio0km : null; // en ARS (pesificado si era USD)
 
-    // 0km consulta data (VW que compra el cliente)
-    const modelo0km = wizardData.modelo0km || null;
-    const precioOfrecido = parseFloat(wizardData.precioOfrecido) || null;
+    // 0km consulta data (VW que compra el cliente). Si contestó que el cliente
+    // NO adquiere unidad, estos dos pasos se saltearon: van en null aunque
+    // hubiera quedado algo cargado de un paso anterior (puede haber contestado
+    // "Sí", llenado el 0km y vuelto con "Atrás" a cambiar la respuesta).
+    const soloVende = clienteSoloVende();
+    const modelo0km = soloVende ? null : (wizardData.modelo0km || null);
+    const precioOfrecido = soloVende ? null : (parseFloat(wizardData.precioOfrecido) || null);
 
     document.getElementById('loadingText').textContent = 'Guardando tasación...';
 
@@ -2363,6 +2568,11 @@ async function submitTasacion() {
       usado_vw_lugar_compra: (marca.toUpperCase() === 'VOLKSWAGEN' && wizardData.vwCompradoTGA === false) ? (wizardData.vwLugarCompra || null) : null,
       vendedor_comentario: (wizardData.comentarioVendedorSiNo === true && (wizardData.comentarioVendedor || '').trim()) ? wizardData.comentarioVendedor.trim() : null,
       es_presencial: wizardData.es_presencial === true,
+      // null cuando no se preguntó (usuarios sin el paso habilitado).
+      cliente_compra_unidad: (wizardData.clienteCompraUnidad === true || wizardData.clienteCompraUnidad === false)
+        ? wizardData.clienteCompraUnidad
+        : null,
+      flujo_carga: wizardData.flujo_carga || null,
       fotos: fotoUrls,
       estado: 'pendiente'
     };
@@ -2379,7 +2589,8 @@ async function submitTasacion() {
     }
 
     hideLoading();
-    showToast('Tasación enviada correctamente');
+    const eraPortal = wizardData.flujo_carga === 'portal';
+    showToast(eraPortal ? 'Tasación guardada — elegí el turno' : 'Tasación enviada correctamente');
 
     // Disparamos análisis IA en background (no bloqueante). Corre aunque no haya fotos:
     // si no hay fotos, analiza solo el modelo (semáforo + problemas de fábrica).
@@ -2391,6 +2602,14 @@ async function submitTasacion() {
     fotoPreviews = [];
     currentStep = 0;
     renderWizard();
+
+    // Portal: el cliente no está, hay que darle fecha para que traiga el auto.
+    // Se abre el modal de turnos que ya existe (muestra los días hábiles, pinta
+    // en gris los horarios tomados y avisa por WhatsApp al tasador físico). Lee
+    // la tasación de la base por id, así que no le molesta el reset de arriba.
+    // Si lo cierra sin elegir, la tasación queda igual y puede agendar después
+    // desde "Mis tasaciones".
+    if (eraPortal) abrirAgendarTurno(tasId);
   } catch(e) {
     hideLoading();
     console.error(e);
@@ -2655,7 +2874,11 @@ function renderMisTasacionesList() {
                   </div>
                 `;
               }
-              if (!t.precio_toma_virtual) {
+              // Las del portal no pasan por la etapa de precio virtual, así que
+              // este cartel sería un callejón sin salida: nunca va a llegar ese
+              // precio. Caen al botón de agendar de más abajo. El resto (y las
+              // presenciales) sigue igual que siempre.
+              if (!t.precio_toma_virtual && t.flujo_carga !== 'portal') {
                 return `
                   <div style="margin-top:12px; padding:8px 12px; background:var(--vw-grey-1); border-radius:6px; font-size:12px; color:var(--vw-grey-4); text-align:center; font-style:italic">
                     🕓 Esperando precio virtual del admin para poder agendar inspección
@@ -8164,6 +8387,7 @@ function renderFisicoList() {
               ${patenteLbl}
               ${estadoFisicoBadge}
               ${turnoBadge}
+              ${badgeSoloVende(t)}
             </div>
             <div style="font-weight:700; font-size:15px; margin-bottom:2px">${t.cliente_nombre || '—'}</div>
             <div style="font-size:13px; color:var(--vw-grey-4)">${t.marca || ''} ${t.modelo || ''} ${t.anio || ''} — ${t.version || ''}</div>
@@ -8606,7 +8830,7 @@ function renderInspeccionFormulario(tas, prev) {
     const ccaStr = ccaBrutoARS ? '$ ' + formatNum(Math.round(ccaBrutoARS)) : '—';
     contextoHTML = `
       <div style="margin-bottom:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow); border-left:4px solid #EA580C">
-        <span style="background:#EA580C; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">CLIENTE PRESENCIAL</span>
+        <span style="background:#EA580C; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">${tas.flujo_carga === 'portal' ? 'TASACIÓN DEL PORTAL' : 'CLIENTE PRESENCIAL'}</span>
         <div style="font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin:10px 0 8px 0">Precios de referencia</div>
         <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:10px">
           <div style="padding:10px; background:var(--vw-grey-1); border-radius:6px">
@@ -8667,6 +8891,7 @@ function renderInspeccionFormulario(tas, prev) {
 
   const body = document.getElementById('fisicoInspBody');
   body.innerHTML = `
+    ${avisoSoloVende(tas)}
     ${contextoHTML}
     ${datosVehiculoHTML}
     ${marcadorVisualHTML}
