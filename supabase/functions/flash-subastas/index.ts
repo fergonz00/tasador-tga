@@ -37,7 +37,20 @@ const CCA_CSV = "https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHss
 const VW_CSV = "https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=1899724741";
 const CERO_KM_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQH_9OtgijB7xV7qZEHoogNXq8TE5gLxz4RNb2DvxbbQ1o2A_Be2my532IJF0nxpJCUkghJrEa3TeDw/pub?gid=647749443&single=true&output=csv";
 const FYF = 1300000;
-const FG_TOMA = 0.83;
+// ⚠️ Factor de toma de la Formula FG. **0,87 = 15% de margen** (1 / 1,15).
+// Fer, 5-10-2026: "en FG quiero margen del 15%, no 30%. Nunca vendo un usado
+// con margen del 30%, maximo 15 o un toque mas".
+//
+// Antes era 0,83, que son 20,5% de margen. Se habia calibrado para que la FG
+// de toma cayera cerca de lo que paga Kavak, y por eso quedaba sistematicamente
+// por debajo: la FG daba -15/-17% contra la permuta de Kavak en los SUV.
+//
+// Lo que cerro la discusion fue medir a cuanto VENDE Kavak los mismos autos
+// (kavak-cotizador/kavak_venta.py, 90 publicaciones): **su spread entre lo que
+// paga y lo que publica es +15,3% de mediana**. O sea que el precio de compra
+// de Kavak YA es un precio de toma con 15% adentro, el mismo criterio que usa
+// Fer. Con 0,87 las dos referencias quedan alineadas.
+const FG_TOMA = 0.87;
 const CCA_TOMA = 0.86;
 const ANIO_ACTUAL = 2026;
 const PICKUPS = ["AMAROK", "HILUX", "RANGER", "SAVEIRO", "S-10", "S10", "MONTANA", "STRADA", "TORO", "FRONTIER", "ALASKAN"];

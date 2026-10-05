@@ -821,12 +821,20 @@ const CALLMEBOT_KEY = '6552632';
 const TGA_CSV_URL = 'https://docs.google.com/spreadsheets/d/1MJWeHCTbxdqBJwifzgNbHssLLsxAwaSkb66Zc9yv3ko/gviz/tq?tqx=out:csv&gid=1074000110';
 const PRECIOS_0KM_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQH_9OtgijB7xV7qZEHoogNXq8TE5gLxz4RNb2DvxbbQ1o2A_Be2my532IJF0nxpJCUkghJrEa3TeDw/pub?gid=647749443&single=true&output=csv';
 const FYF = 1300000;
-// Factor de toma de la Fórmula FG. Calibrado 26-09-2026 para que la FG de toma
-// caiga lo más cerca posible de lo que paga Kavak: con 0,83 la mediana de
-// FG_toma/Kavak da 1,004 sobre las 60 tasaciones que tienen las dos cargadas.
-// Antes había 0,88 en dos lugares y 0,86 en un tercero (con un comentario que
-// decía −14% al lado de un 0,86); por eso ahora es una sola constante.
-const FG_TOMA = 0.83;
+// ⚠️ Factor de toma de la Formula FG. **0,87 = 15% de margen** (1 / 1,15).
+// Fer, 5-10-2026: "en FG quiero margen del 15%, no 30%. Nunca vendo un usado
+// con margen del 30%, maximo 15 o un toque mas".
+//
+// Antes era 0,83, que son 20,5% de margen. Se habia calibrado para que la FG
+// de toma cayera cerca de lo que paga Kavak, y por eso quedaba sistematicamente
+// por debajo: la FG daba -15/-17% contra la permuta de Kavak en los SUV.
+//
+// Lo que cerro la discusion fue medir a cuanto VENDE Kavak los mismos autos
+// (kavak-cotizador/kavak_venta.py, 90 publicaciones): **su spread entre lo que
+// paga y lo que publica es +15,3% de mediana**. O sea que el precio de compra
+// de Kavak YA es un precio de toma con 15% adentro, el mismo criterio que usa
+// Fer. Con 0,87 las dos referencias quedan alineadas.
+const FG_TOMA = 0.87;
 
 // ============ INFOAUTO ============
 // Guía de precios de InfoAuto, la otra tabla del mercado. La sumó Fazzini como
