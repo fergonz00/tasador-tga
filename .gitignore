@@ -6,3 +6,8 @@ supabase/.temp/
 # (tasador.titogonzalez.online sirve cualquier archivo), asi que dejarla aca
 # seria distribuirla. Va por Supabase, detras del login.
 infoauto.json
+
+# Archivos de trabajo del chequeo mensual del CCA
+scripts/_cca_ultimo.pdf
+scripts/_cca_estado.json
+scripts/_actualizar_cca.log
