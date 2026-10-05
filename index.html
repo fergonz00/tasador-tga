@@ -5025,6 +5025,15 @@ function renderAdminCard(t) {
   const ccaAjustado = ccaPublico ? ccaPublico * (1 + ajuste/100) : null;
   const ccaToma = ccaAjustado ? ccaAjustado * 0.86 : null;
 
+  // InfoAuto. ⚠️ Esta es la TERCERA card que muestra las referencias y es la que
+  // ve Fer en los autos para evaluar: me faltaba justo esta. Las otras dos son
+  // `renderArgdCard` (las externas de ML y Argendreams) y
+  // `renderPreciosReferenciaHTML` (la card "esperando"). Si se agrega una
+  // referencia nueva hay que ponerla en las TRES.
+  const iaPublico = t.precio_infoauto ? Number(t.precio_infoauto) : null;
+  const iaAjustado = iaPublico ? iaPublico * (1 + ajuste/100) : null;
+  const iaToma = iaAjustado ? iaAjustado * INFOAUTO_TOMA : null;
+
   // Formula FG — dinámico con rotación editable por tasación (default 9, alta 7, baja 11).
   const rotacion = Number(t.rotacion_anual) || 9;
   let vwMercado = null;
@@ -5272,6 +5281,13 @@ function renderAdminCard(t) {
               <div class="sub">Público: ${ccaAjustado ? '$ ' + formatNum(Math.round(ccaAjustado)) : '-'}<br>Toma -14%</div>
               ${_pctPide(t, ccaToma)}
               ${descRowHTML(ccaToma)}
+            </div>
+            <div class="precio-box cca">
+              <div class="metodo">InfoAuto</div>
+              <div class="valor">${iaToma ? '$ ' + formatNum(Math.round(iaToma)) : 'N/A'}</div>
+              <div class="sub">Público: ${iaAjustado ? '$ ' + formatNum(Math.round(iaAjustado)) : '-'}<br>Toma -${Math.round((1 - INFOAUTO_TOMA) * 100)}%</div>
+              ${_pctPide(t, iaToma)}
+              ${descRowHTML(iaToma)}
             </div>
             <div class="precio-box vw">
               <div class="metodo">Fórmula FG</div>
