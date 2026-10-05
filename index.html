@@ -4117,6 +4117,14 @@ function renderPreciosReferenciaHTML(t) {
   const ccaAjustado = ccaPublico ? ccaPublico * (1 + ajuste/100) : null;
   const ccaToma = ccaAjustado ? ccaAjustado * 0.86 : null;
 
+  // InfoAuto: viene en la fila (lo pone el trigger `tasaciones_infoauto` en el
+  // momento en que entra la tasación, o el refresco mensual si ese día InfoAuto
+  // todavía no tenía la versión). Mismo tratamiento que el CCA pero con SU
+  // factor de toma, que NO está calibrado contra Kavak — ver INFOAUTO_TOMA.
+  const iaPublico = t.precio_infoauto ? Number(t.precio_infoauto) : null;
+  const iaAjustado = iaPublico ? iaPublico * (1 + ajuste/100) : null;
+  const iaTomaRef = iaAjustado ? iaAjustado * INFOAUTO_TOMA : null;
+
   // Fórmula FG
   const rotacion = Number(t.rotacion_anual) || 9;
   let vwMercado = null;
@@ -4153,6 +4161,12 @@ function renderPreciosReferenciaHTML(t) {
         <div class="valor">${ccaToma ? '$ ' + formatNum(Math.round(ccaToma)) : 'N/A'}</div>
         <div class="sub">Público: ${ccaAjustado ? '$ ' + formatNum(Math.round(ccaAjustado)) : '-'}<br>Toma -14%</div>
         ${descRowHTML(ccaToma)}
+      </div>
+      <div class="precio-box cca">
+        <div class="metodo">InfoAuto</div>
+        <div class="valor">${iaTomaRef ? '$ ' + formatNum(Math.round(iaTomaRef)) : 'N/A'}</div>
+        <div class="sub">Público: ${iaAjustado ? '$ ' + formatNum(Math.round(iaAjustado)) : '-'}<br>Toma -${Math.round((1 - INFOAUTO_TOMA) * 100)}%</div>
+        ${descRowHTML(iaTomaRef)}
       </div>
       <div class="precio-box vw">
         <div class="metodo">Fórmula FG</div>
