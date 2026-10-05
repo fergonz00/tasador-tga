@@ -44,6 +44,7 @@ import re
 import statistics
 import subprocess
 import sys
+import time
 import urllib.request
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
@@ -173,6 +174,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true")
     ap.add_argument("--forzar", action="store_true")
+    ap.add_argument("--verificar", action="store_true",
+                    help="el chequeo mensual: avisa SIEMPRE, haya novedad o no. "
+                         "Fer lo pidio el 5-10-2026 -- 'los 5 de cada mes "
+                         "chequees la pagina desde donde se baja el pdf de cca "
+                         "para que el precio este ok y actualizado'. La corrida "
+                         "diaria es silenciosa cuando no hay nada nuevo, asi "
+                         "que sin esto no hay forma de saber si el circuito "
+                         "sigue vivo o si se quedo con una tabla vieja")
     args = ap.parse_args()
 
     import aviso
@@ -197,6 +206,33 @@ def main():
         return 1
     if ed == est.get("edicion") and sha == est.get("sha") and not args.forzar:
         print("misma edicion que la ultima procesada: no hago nada.")
+        if args.verificar:
+            # ⚠️ Avisar aunque no haya novedad es el punto del chequeo mensual.
+            # Y si la edicion en uso NO es la del mes corriente, eso SI es un
+            # problema: el CCA ya deberia haber publicado.
+            mes_ahora = int(time.strftime("%m"))
+            anio_ahora = time.strftime("%Y")
+            try:
+                m_ed = MESES.index(ed.split()[0]) + 1
+                a_ed = ed.split()[1]
+            except Exception:
+                m_ed, a_ed = 0, ""
+            al_dia = (a_ed == anio_ahora and m_ed == mes_ahora)
+            viva = [h for h in hojas() if h.get("gid") == GID_VIVA]
+            filas = (viva[0].get("filas") - 1) if viva else 0
+            detalle = ("la tabla en uso es la de %s, %d versiones, en la pestaña %s"
+                       % (ed, filas, viva[0].get("nombre") if viva else "?"))
+            if al_dia:
+                print('aviso:', aviso.resultado("la tabla de precios del CCA",
+                                ["chequee la pagina del CCA: la edicion de %s "
+                                 "sigue siendo la ultima y es la que estamos "
+                                 "usando" % ed], [detalle], []))
+            else:
+                print('aviso:', aviso.resultado("la tabla de precios del CCA", [],
+                                ["chequee la pagina del CCA y la ultima edicion "
+                                 "publicada sigue siendo la de %s. " % ed + detalle],
+                                ["el CCA todavia no publico la edicion de este "
+                                 "mes; si pasan varios dias, mirar la pagina a mano"]))
         return 0
 
     mes, anio = ed.split()
@@ -242,7 +278,7 @@ def main():
     confirmado = viva[0] if viva else {}
     guardar_estado({"edicion": ed, "sha": sha, "filas": len(nuevas),
                     "pestania": confirmado.get("nombre"),
-                    "procesado_at": __import__("time").strftime("%Y-%m-%d %H:%M")})
+                    "procesado_at": time.strftime("%Y-%m-%d %H:%M")})
     aviso.resultado(
         "la tabla de precios del CCA",
         ["publique la edicion de %s: %d versiones en la pestaña %s"
