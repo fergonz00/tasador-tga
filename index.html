@@ -845,6 +845,15 @@ const FYF = 1300000;
 // Vive en CUATRO lugares y se mueven juntos: tasador-tga/index.html,
 // tasador-tga/supabase/functions/flash-subastas/index.ts,
 // tasador-argendreams/index.html, kavak-cotizador/flash_subastas.py.
+// ⚠️ Primer divisor de la Formula FG: **el escalon de 0km a usado**, el golpe
+// que se come el auto por dejar de ser nuevo. Se aplica UNA vez, antes de
+// contar los años (de eso se encarga la rotacion, 1,09 por año por defecto).
+//
+// Fer, 5-10-2026: "el primer 1.05 hacelo dividido 1.1". Era 1,05 desde que
+// existe la formula. Baja la FG mercado un 4,5% parejo en todos los autos
+// (1,05/1,10 = 0,9545), y con FG_TOMA en 1,00 baja igual la toma.
+const FG_0KM_A_USADO = 1.10;
+
 const FG_TOMA = 1.00;
 
 // ============ INFOAUTO ============
@@ -2699,7 +2708,7 @@ function calcFormulaFG(marca, modelo, version, anio) {
   const precio0km = (moneda === 'USD') ? precioRaw * getCotiz() : precioRaw;
   const anioActual = 2026;
   const anios = Math.max(0, anioActual - anio);
-  const precioMercado = precio0km / 1.05 / Math.pow(1.09, anios);
+  const precioMercado = precio0km / FG_0KM_A_USADO / Math.pow(1.09, anios);
   return { precio0km, precioMercado, moneda: 'ARS', precioRaw, monedaRaw: moneda };
 }
 
@@ -4176,7 +4185,7 @@ function _argdCalc(t, equivModelo) {
   if (vw) {
     precio0km = vw.precio_0km;
     const anios = Math.max(0, 2026 - (t.anio || 2026));
-    fgMercado = precio0km / 1.05 / Math.pow(1 + rotacion / 100, anios);
+    fgMercado = precio0km / FG_0KM_A_USADO / Math.pow(1 + rotacion / 100, anios);
     fgAjustado = fgMercado * (1 + ajuste / 100);
     fgToma = fgAjustado * FG_TOMA;
   }
@@ -4587,7 +4596,7 @@ function renderPreciosReferenciaHTML(t) {
   if (t.equiv_0km_precio != null && t.equiv_0km_moneda) {
     const p0 = (t.equiv_0km_moneda === 'USD') ? t.equiv_0km_precio * cotiz : t.equiv_0km_precio;
     const anios = Math.max(0, 2026 - (t.anio || 2026));
-    vwMercado = p0 / 1.05 / Math.pow(1 + rotacion/100, anios);
+    vwMercado = p0 / FG_0KM_A_USADO / Math.pow(1 + rotacion/100, anios);
   } else {
     vwMercado = t.precio_formula_vw || null;
   }
@@ -5077,7 +5086,7 @@ function renderAdminCard(t) {
   if (t.equiv_0km_precio != null && t.equiv_0km_moneda) {
     const precio0kmArs = (t.equiv_0km_moneda === 'USD') ? t.equiv_0km_precio * cotiz : t.equiv_0km_precio;
     const anios = Math.max(0, 2026 - (t.anio || 2026));
-    vwMercado = precio0kmArs / 1.05 / Math.pow(1 + rotacion/100, anios);
+    vwMercado = precio0kmArs / FG_0KM_A_USADO / Math.pow(1 + rotacion/100, anios);
   } else {
     vwMercado = t.precio_formula_vw || null;
   }
@@ -5705,7 +5714,7 @@ function _fgConRotacion(t, rotacion) {
   const cotiz = getCotiz();
   const p0 = (t.equiv_0km_moneda === 'USD') ? t.equiv_0km_precio * cotiz : t.equiv_0km_precio;
   const anios = Math.max(0, 2026 - (t.anio || 2026));
-  const mercado = p0 / 1.05 / Math.pow(1 + (Number(rotacion) || 9) / 100, anios);
+  const mercado = p0 / FG_0KM_A_USADO / Math.pow(1 + (Number(rotacion) || 9) / 100, anios);
   const ajuste = (t.ajuste_km_override != null) ? Number(t.ajuste_km_override)
                                                 : calcAjusteKm(t.kilometros, t.anio, t.modelo);
   return { mercado, toma: mercado * (1 + ajuste / 100) * FG_TOMA };

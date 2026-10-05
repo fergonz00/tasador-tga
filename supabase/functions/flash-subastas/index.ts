@@ -61,6 +61,15 @@ const FYF = 1300000;
 // Vive en CUATRO lugares y se mueven juntos: tasador-tga/index.html,
 // tasador-tga/supabase/functions/flash-subastas/index.ts,
 // tasador-argendreams/index.html, kavak-cotizador/flash_subastas.py.
+// ⚠️ Primer divisor de la Formula FG: **el escalon de 0km a usado**, el golpe
+// que se come el auto por dejar de ser nuevo. Se aplica UNA vez, antes de
+// contar los años (de eso se encarga la rotacion, 1,09 por año por defecto).
+//
+// Fer, 5-10-2026: "el primer 1.05 hacelo dividido 1.1". Era 1,05 desde que
+// existe la formula. Baja la FG mercado un 4,5% parejo en todos los autos
+// (1,05/1,10 = 0,9545), y con FG_TOMA en 1,00 baja igual la toma.
+const FG_0KM_A_USADO = 1.10;
+
 const FG_TOMA = 1.00;
 const CCA_TOMA = 0.86;
 const ANIO_ACTUAL = 2026;
@@ -329,7 +338,7 @@ async function armarFila(fl: Flash, s: any, lot: any, tablas: { cca: CCA[]; vw: 
   const precioCca = r ? r.precios[anio] * 1000 : null;     // la planilla viene en miles
   const monedaCca = r ? r.moneda : "ARS";
   const eq = equiv0km(mC, modC, verC, tablas.vw, tablas.cerokm);
-  const fg = eq ? eq.precio / 1.05 / Math.pow(1.09, Math.max(0, ANIO_ACTUAL - anio)) : null;
+  const fg = eq ? eq.precio / FG_0KM_A_USADO / Math.pow(1.09, Math.max(0, ANIO_ACTUAL - anio)) : null;
   const fgArs = eq && eq.moneda === "ARS";
   const fotos = conFotos ? await copiarFotos(fl, lot.car_id) : [];
   const comision = parseFloat(s.commission || "5") || 5;
