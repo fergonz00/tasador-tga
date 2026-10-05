@@ -9349,8 +9349,10 @@ function onInspEstadoChange(grupoKey) {
 // para no pisar los nombres de archivo.
 function renderFotosInspeccion() {
   const cont = document.getElementById('fisicoFotosGrid');
-  if (!cont) return;
-  const fotos = (fisicoTasacionActual && fisicoTasacionActual.fotos) || [];
+  // Sin inspección abierta no hay nada que dibujar: pintar el "+" sería ofrecer
+  // subir fotos sin saber a qué tasación.
+  if (!cont || !fisicoTasacionActual) return;
+  const fotos = fisicoTasacionActual.fotos || [];
   let html = fotos.map((url, i) => `
     <div class="foto-slot">
       <img src="${url}" onclick="showPhoto('${url}')">
