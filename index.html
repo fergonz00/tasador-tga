@@ -1554,6 +1554,25 @@ function resolverCcaDesdeVersion(txt) {
   return { marca: cand[0].marca, modelo: cand[0].modelo, version: cand[0].version };
 }
 
+// Las opciones del paso "0km que consulta". Se usa en el render y en la
+// precarga, para que no se desincronicen.
+function opciones0km() {
+  return (tgaData.length > 0 ? tgaData : vwData.map(v => ({ modelo: v.modelo })));
+}
+
+// El CRM guarda el 0km con el nombre corto ("Polo Track"); el tasador lista el
+// nombre comercial completo ("VW Polo Track MSI MT G1 MY26"). NO se adivina por
+// aproximación: el nombre corto no dice la versión ni el año de modelo, y elegir
+// mal el trim en silencio es peor que hacerla elegir. Solo se precarga si el
+// texto coincide exacto; si no, se le muestra lo que dice el CRM y ella busca
+// cuál es. Esto vale únicamente para los casos que vienen de Usados.
+function resolver0kmDesdeTexto(txt) {
+  const n = _normCca(txt);
+  if (!n) return null;
+  return opciones0km().map(m => m.modelo).filter(Boolean)
+    .find(o => _normCca(o) === n) || null;
+}
+
 async function precargarDesdeUsado(id) {
   showLoading('Trayendo el caso del CRM...');
   try {
@@ -1577,7 +1596,10 @@ async function precargarDesdeUsado(id) {
     marcar('color', u.color || '');
     // Kavak: la oferta de compra directa es la que pide el wizard.
     marcar('kavak', u.kavak_inmediata != null ? String(Math.round(u.kavak_inmediata)) : '');
-    marcar('modelo0km', u.cero_km || '');
+    // El 0km hay que resolverlo contra la lista comercial del tasador.
+    marcar('modelo0km', resolver0kmDesdeTexto(u.cero_km) || '');
+    // Guardamos el texto crudo del CRM para mostrarlo como pista si no resolvió.
+    if (u.cero_km) wizardData.cero_km_crm = u.cero_km;
     // Si el CRM ya le ofreció un 0km, la intención de compra arranca en "Sí".
     if (u.cero_km) marcar('clienteCompraUnidad', true);
 
@@ -2179,7 +2201,12 @@ function onVwCompradoChange() {
 }
 
 function renderStep8() { // Modelo 0km que consulta el cliente
-  const modelos0km = tgaData.length > 0 ? tgaData : vwData.map(v => ({ modelo: v.modelo }));
+  const modelos0km = opciones0km();
+  // Si el caso vino del CRM y el nombre corto no se pudo resolver a una opción
+  // comercial única, se lo mostramos para que elija sin volver al CRM.
+  const pista0km = (wizardData.cero_km_crm && !getWizardVal('modelo0km'))
+    ? `<div style="margin-top:6px; font-size:12px; color:#9A3412">En el CRM figura <strong>${_escapeHtmlUsr(wizardData.cero_km_crm)}</strong> — elegí la versión que corresponda.</div>`
+    : '';
   return `
     ${stepNum()}
     <h2>0km que consulta el cliente</h2>
@@ -2188,6 +2215,7 @@ function renderStep8() { // Modelo 0km que consulta el cliente
       <option value="">— Elegí el modelo 0km —</option>
       ${modelos0km.map(m => `<option value="${m.modelo}" ${m.modelo === getWizardVal('modelo0km') ? 'selected' : ''}>${m.modelo}</option>`).join('')}
     </select>
+    ${pista0km}
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
       <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
