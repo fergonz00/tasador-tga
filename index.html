@@ -1462,6 +1462,10 @@ function initWizard() {
   currentStep = 0;
   fotos = [];
   fotoPreviews = [];
+  // Si viene con ?usado=<id> desde la solapa Usados del CRM, no se pregunta
+  // nada: entra derecho como tasación del portal, con los datos precargados.
+  const idUsado = usadoIdDeLaURL();
+  if (idUsado && !usadoLead) { precargarDesdeUsado(idUsado); return; }
   renderWizard();
   // A los habilitados se les pregunta primero de qué tipo es la tasación.
   // Al resto no les cambia nada: arrancan en el flujo virtual de siempre.
@@ -1512,6 +1516,139 @@ function elegirFlujo(flujo) {
   document.getElementById('flujoModal')?.remove();
   document.body.style.overflow = '';
   renderWizard();
+}
+
+// ============ PRECARGA DESDE LA SOLAPA USADOS DEL CRM ============
+// El botón "Solicitar turno" del CRM abre el tasador con ?usado=<id>. En el link
+// viaja SOLO el id: la fila la trae la RPC `usado_lead_para_tasacion`, que valida
+// la firma de sesión y la lista de habilitados. Así no hay datos del cliente ni
+// precios en la URL, el historial, ni en logs intermedios.
+let usadoLead = null;          // la fila del CRM, para el panel de contexto
+let usadoPrecargado = {};      // qué campos vinieron del CRM, para marcarlos
+
+function usadoIdDeLaURL() {
+  const v = new URLSearchParams(location.search).get('usado');
+  return /^\d+$/.test(v || '') ? v : null;
+}
+
+// El CRM guarda la versión del CCA en texto. Viene de dos formas: la versión
+// sola ("5P 1,0 HIGH 2017") o con el modelo adelante ("POLO 5P 1,6 MSI TRACK
+// 2023"). Normalizando y probando las dos, los 19 casos cargados resuelven a una
+// única fila del CCA, que es la que da marca + modelo + versión de una.
+function _normCca(s) {
+  return String(s == null ? '' : s).toUpperCase()
+    .replace(/!/g, '').replace(/,/g, '.')
+    .replace(/[^A-Z0-9. ]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+function resolverCcaDesdeVersion(txt) {
+  const n = _normCca(txt);
+  if (!n || !ccaData.length) return null;
+  let cand = ccaData.filter(r => _normCca(r.version) === n);
+  if (!cand.length) cand = ccaData.filter(r => _normCca((r.modelo || '') + ' ' + r.version) === n);
+  if (!cand.length) return null;
+  // Si cae en más de un modelo, no adivinamos: que lo elija ella.
+  const claves = [...new Set(cand.map(r => `${r.marca}|${r.modelo}|${r.version}`))];
+  if (claves.length > 1) return null;
+  return { marca: cand[0].marca, modelo: cand[0].modelo, version: cand[0].version };
+}
+
+async function precargarDesdeUsado(id) {
+  showLoading('Trayendo el caso del CRM...');
+  try {
+    const filas = await rpcUsuarios('usado_lead_para_tasacion', { p_id: Number(id) });
+    const u = (filas && filas[0]) || null;
+    if (!u) throw new Error('No se encontró el caso');
+    usadoLead = u;
+
+    // Flujo portal, sin preguntar: el dueño consultó por la web y el auto no está.
+    wizardData = { flujo_carga: 'portal', es_presencial: true, usado_lead_id: u.id };
+    usadoPrecargado = {};
+
+    const marcar = (campo, valor) => {
+      if (valor === null || valor === undefined || valor === '') return;
+      wizardData[campo] = valor;
+      usadoPrecargado[campo] = true;
+    };
+
+    marcar('anio', u.anio != null ? String(u.anio) : '');
+    marcar('km', u.km != null ? String(u.km) : '');
+    marcar('color', u.color || '');
+    // Kavak: la oferta de compra directa es la que pide el wizard.
+    marcar('kavak', u.kavak_inmediata != null ? String(Math.round(u.kavak_inmediata)) : '');
+    marcar('modelo0km', u.cero_km || '');
+    // Si el CRM ya le ofreció un 0km, la intención de compra arranca en "Sí".
+    if (u.cero_km) marcar('clienteCompraUnidad', true);
+
+    const cca = resolverCcaDesdeVersion(u.cca_version);
+    if (cca) {
+      marcar('marca', cca.marca);
+      marcar('modelo', cca.modelo);
+      marcar('version', cca.version);
+    }
+
+    // Observaciones: lo que contestó el dueño y lo que ya le ofrecimos. Es
+    // justo lo que el tasador necesita saber antes de verlo.
+    const obs = [];
+    if (u.respuesta) obs.push('Contestó: ' + u.respuesta);
+    if (u.ofrecimos != null) obs.push('Ya le ofrecimos $ ' + formatNum(Math.round(u.ofrecimos)) + ' por el usado.');
+    if (u.pide != null) obs.push('Pedía $ ' + formatNum(Math.round(u.pide)) + ' en el aviso.');
+    if (u.nota) obs.push('Nota del CRM: ' + u.nota);
+    if (obs.length) {
+      wizardData.comentarioVendedorSiNo = true;
+      wizardData.comentarioVendedor = obs.join(' · ');
+      usadoPrecargado.comentarioVendedor = true;
+    }
+
+    hideLoading();
+    renderWizard();
+    // Si el CCA no resolvió la versión, hay que decirlo: si no, ella supone que
+    // marca/modelo/versión están puestos y pasa de largo tres pasos vacíos.
+    showToast(cca
+      ? 'Caso del CRM cargado — revisá y confirmá cada paso'
+      : 'Caso cargado, pero la versión no coincidió con el CCA: elegí marca, modelo y versión a mano');
+  } catch (e) {
+    hideLoading();
+    console.error('precargarDesdeUsado:', e);
+    // Si falla, el wizard arranca vacío en vez de quedar en blanco.
+    renderWizard();
+    showToast('No se pudo traer el caso del CRM: ' + (e.message || ''));
+  }
+}
+
+// Panel fijo con lo que el CRM sabe del caso. Se muestra en todos los pasos para
+// que pueda confirmar contra el dato original sin cambiar de pestaña.
+function panelUsado() {
+  const u = usadoLead;
+  if (!u) return '';
+  const fila = (k, v) => v == null || v === '' ? '' :
+    `<div><span style="color:var(--vw-grey-4)">${k}:</span> <strong>${_escapeHtmlUsr(String(v))}</strong></div>`;
+  return `
+    <div style="margin-bottom:16px; background:#FFF7ED; border:1px solid #FDBA74; border-left-width:5px; border-radius:8px; padding:12px 14px">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px">
+        <span style="background:#EA580C; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">CASO DEL CRM · ML</span>
+        <span style="font-size:11px; color:#9A3412; font-weight:600">${_escapeHtmlUsr(u.estado || '')}</span>
+      </div>
+      <div style="font-weight:700; font-size:14px; color:#9A3412; margin-bottom:6px">${_escapeHtmlUsr(u.titulo || '')}</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:4px 14px; font-size:12px; color:#7C2D12">
+        ${fila('Pedía', u.pide != null ? '$ ' + formatNum(Math.round(u.pide)) : null)}
+        ${fila('Le ofrecimos', u.ofrecimos != null ? '$ ' + formatNum(Math.round(u.ofrecimos)) : null)}
+        ${fila('Kavak compra', u.kavak_inmediata != null ? '$ ' + formatNum(Math.round(u.kavak_inmediata)) : null)}
+        ${fila('CCA', u.cca_valor != null ? '$ ' + formatNum(Math.round(u.cca_valor)) : null)}
+        ${fila('Localidad', u.localidad)}
+        ${fila('0km ofrecido', u.cero_km)}
+      </div>
+      ${u.respuesta ? `<div style="margin-top:8px; font-size:12px; color:#7C2D12; font-style:italic">“${_escapeHtmlUsr(u.respuesta)}”</div>` : ''}
+      ${u.link ? `<div style="margin-top:8px"><a href="${_escapeHtmlUsr(u.link)}" target="_blank" rel="noopener" style="font-size:12px; color:#1D4ED8; font-weight:600">Ver el aviso en MercadoLibre →</a></div>` : ''}
+    </div>
+  `;
+}
+
+// Sellito al lado de un campo que vino precargado del CRM.
+function selloML(campo) {
+  if (!usadoPrecargado[campo]) return '';
+  return '<span style="background:#FEF3C7; color:#92400E; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px; vertical-align:middle; margin-left:6px">ML</span>';
 }
 
 // Chip del primer paso: deja ver en qué flujo está y volver a elegir sin perder
@@ -1639,7 +1776,8 @@ function renderWizard() {
   container.innerHTML = '';
   const div = document.createElement('div');
   div.className = 'wizard-step active';
-  div.innerHTML = steps[currentStep]();
+  // El panel del caso del CRM va arriba del paso, en todos los pasos.
+  div.innerHTML = panelUsado() + steps[currentStep]();
   container.appendChild(div);
   validateStep();
 }
@@ -1664,10 +1802,10 @@ function renderStep0() { // Marca
   return `
     ${stepNum()}
     <h2>Marca del vehículo</h2>
-    <label>Seleccioná la marca</label>
+    <label>Seleccioná la marca${selloML("marca")}</label>
     <select id="wMarca" onchange="validateStep()">
       <option value="">— Elegí una marca —</option>
-      ${marcas.map(m => `<option value="${m}">${m}</option>`).join('')}
+      ${marcas.map(m => `<option value="${m}" ${m === getWizardVal('marca') ? 'selected' : ''}>${m}</option>`).join('')}
     </select>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -1682,10 +1820,10 @@ function renderStep1() { // Año
   return `
     ${stepNum()}
     <h2>Año del vehículo</h2>
-    <label>Seleccioná el año</label>
+    <label>Seleccioná el año${selloML("anio")}</label>
     <select id="wAnio" onchange="validateStep()">
       <option value="">— Elegí el año —</option>
-      ${anios.map(a => `<option value="${a}">${a}</option>`).join('')}
+      ${anios.map(a => `<option value="${a}" ${String(a) === String(getWizardVal('anio')) ? 'selected' : ''}>${a}</option>`).join('')}
     </select>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -1717,10 +1855,10 @@ function renderStep2() { // Modelo
   return `
     ${stepNum()}
     <h2>Modelo</h2>
-    <label>${marca} — Año ${anio}</label>
+    <label>${marca} — Año ${anio}${selloML("modelo")}</label>
     <select id="wModelo" onchange="validateStep()">
       <option value="">— Elegí el modelo —</option>
-      ${modelos.map(m => `<option value="${m}">${m}</option>`).join('')}
+      ${modelos.map(m => `<option value="${m}" ${m === getWizardVal('modelo') ? 'selected' : ''}>${m}</option>`).join('')}
     </select>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -1751,10 +1889,10 @@ function renderStep3() { // Versión CCA
   return `
     ${stepNum()}
     <h2>Versión</h2>
-    <label>${marca} ${modelo} — Año ${anio}</label>
+    <label>${marca} ${modelo} — Año ${anio}${selloML("version")}</label>
     <select id="wVersion" onchange="validateStep()">
       <option value="">— Elegí la versión —</option>
-      ${versiones.map(v => `<option value="${v}">${v}</option>`).join('')}
+      ${versiones.map(v => `<option value="${v}" ${v === getWizardVal('version') ? 'selected' : ''}>${v}</option>`).join('')}
     </select>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -1857,8 +1995,8 @@ function renderStep5() { // Kilómetros
   return `
     ${stepNum()}
     <h2>Kilómetros</h2>
-    <label>Kilómetros actuales del vehículo</label>
-    <input type="number" id="wKm" placeholder="Ej: 45000" oninput="validateStep()" min="0" max="250000">
+    <label>Kilómetros actuales del vehículo${selloML("km")}</label>
+    <input type="number" id="wKm" placeholder="Ej: 45000" oninput="validateStep()" min="0" max="250000" value="${getWizardVal('km')}">
     <div id="wKmError" style="display:none; color:var(--red); font-size:13px; margin-top:6px; font-weight:600">⚠️ El kilometraje máximo permitido es 250.000 km.</div>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -1873,14 +2011,22 @@ function renderStep6() { // Patente + Provincia de radicación
   return `
     ${stepNum()}
     <h2>Datos de titularidad</h2>
-    <label>Patente del vehículo</label>
-    <input type="text" id="wPatente" placeholder="Ej: AB123CD o ABC123" oninput="onPatenteInput()" value="${curPatente}" maxlength="10" style="text-transform:uppercase">
+    <label>Patente del vehículo${usadoLead ? '<span style="background:#FEF3C7; color:#92400E; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px; vertical-align:middle; margin-left:6px">ML</span>' : ''}</label>
+    <input type="text" id="wPatente" placeholder="Ej: AB123CD o ABC123" oninput="onPatenteInput()" value="${curPatente}" maxlength="10" style="text-transform:uppercase" ${wizardData.patenteDespues ? 'disabled' : ''}>
     <div style="margin-top:4px; font-size:12px; color:var(--vw-grey-4)">Se usa para buscar rápido la tasación más adelante.</div>
+    ${usadoLead ? `
+      <label style="display:flex; align-items:flex-start; gap:9px; margin-top:12px; padding:10px 12px; background:var(--vw-grey-1); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--vw-grey-5)">
+        <input type="checkbox" id="wPatenteDespues" ${wizardData.patenteDespues ? 'checked' : ''} onchange="onPatenteDespuesChange()" style="margin-top:2px; width:16px; height:16px; flex-shrink:0">
+        <span>Todavía no tengo la patente — la cargo cuando traiga el auto<br>
+          <span style="font-weight:400; font-size:12px; color:var(--vw-grey-4)">El aviso de MercadoLibre no la muestra. Tildando esto podés sacar el turno igual.</span>
+        </span>
+      </label>` : ''}
     <label style="margin-top:20px">Provincia donde está radicado</label>
     <select id="wProvincia" onchange="validateStep()">
       <option value="">— Elegí la provincia —</option>
       ${PROVINCIAS_AR.map(p => `<option value="${p}" ${p===curProv?'selected':''}>${p}</option>`).join('')}
     </select>
+    ${usadoLead && usadoLead.localidad ? `<div style="margin-top:4px; font-size:12px; color:#9A3412">En el aviso dice <strong>${_escapeHtmlUsr(usadoLead.localidad)}</strong> — elegí la provincia que corresponda.</div>` : ''}
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
       <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
@@ -1894,14 +2040,27 @@ function onPatenteInput() {
   validateStep();
 }
 
+// "La cargo cuando traiga el auto": libera el paso sin patente. Solo aparece en
+// los casos que vienen del CRM, donde el aviso de ML no la muestra.
+function onPatenteDespuesChange() {
+  const chk = document.getElementById('wPatenteDespues');
+  wizardData.patenteDespues = !!(chk && chk.checked);
+  const inp = document.getElementById('wPatente');
+  if (inp) {
+    inp.disabled = wizardData.patenteDespues;
+    if (wizardData.patenteDespues) inp.value = '';
+  }
+  validateStep();
+}
+
 function renderStep7() { // Color + Kavak
   return `
     ${stepNum()}
     <h2>Color y precio Kavak</h2>
-    <label>Color del vehículo</label>
-    <input type="text" id="wColor" placeholder="Ej: Blanco, Gris Platino" oninput="validateStep()">
-    <label style="margin-top:16px">Precio Kavak (compra)</label>
-    <input type="number" id="wKavak" placeholder="Precio que ofrece Kavak" min="0" oninput="validateStep()">
+    <label>Color del vehículo${selloML("color")}</label>
+    <input type="text" id="wColor" placeholder="Ej: Blanco, Gris Platino" oninput="validateStep()" value="${getWizardVal('color')}">
+    <label style="margin-top:16px">Precio Kavak (compra)${selloML("kavak")}</label>
+    <input type="number" id="wKavak" placeholder="Precio que ofrece Kavak" min="0" oninput="validateStep()" value="${getWizardVal('kavak')}">
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
       <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
@@ -2024,10 +2183,10 @@ function renderStep8() { // Modelo 0km que consulta el cliente
   return `
     ${stepNum()}
     <h2>0km que consulta el cliente</h2>
-    <label>¿Qué modelo 0km está averiguando?</label>
+    <label>¿Qué modelo 0km está averiguando?${selloML("modelo0km")}</label>
     <select id="wModelo0km" onchange="validateStep()">
       <option value="">— Elegí el modelo 0km —</option>
-      ${modelos0km.map(m => `<option value="${m.modelo}">${m.modelo}</option>`).join('')}
+      ${modelos0km.map(m => `<option value="${m.modelo}" ${m.modelo === getWizardVal('modelo0km') ? 'selected' : ''}>${m.modelo}</option>`).join('')}
     </select>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -2121,7 +2280,7 @@ function renderStep11() { // Comentario opcional del vendedor (GNC, modelo no ex
     </style>
     ${stepNum()}
     <h2>Observaciones</h2>
-    <label>¿Algún comentario adicional sobre el usado?</label>
+    <label>¿Algún comentario adicional sobre el usado?${selloML("comentarioVendedor")}</label>
     <div style="margin-top:6px; font-size:12px; color:var(--vw-grey-4)">Por ejemplo: tiene GNC, el modelo no coincide exactamente con el listado, motor modificado, alguna particularidad que el tasador deba saber, etc.</div>
     <div style="display:flex; gap:12px; margin-top:14px">
       <label class="com-opt" style="flex:1">
@@ -2205,10 +2364,13 @@ function saveCurrentStep() {
       break;
     }
     case 7: wizardData.km = val('wKm'); break;
-    case 8:
-      wizardData.patente = val('wPatente').toUpperCase();
+    case 8: {
+      const chk = document.getElementById('wPatenteDespues');
+      wizardData.patenteDespues = !!(chk && chk.checked);
+      wizardData.patente = wizardData.patenteDespues ? '' : val('wPatente').toUpperCase();
       wizardData.provinciaRadicacion = val('wProvincia');
       break;
+    }
     case 9:
       wizardData.color = val('wColor');
       wizardData.kavak = val('wKavak');
@@ -2287,8 +2449,12 @@ function validateStep() {
       break;
     }
     case 8: {
-      const pat = val('wPatente').toUpperCase();
       const prov = val('wProvincia');
+      // Si tildó "la cargo cuando traiga el auto" (solo en casos del CRM),
+      // alcanza con la provincia.
+      const chk = document.getElementById('wPatenteDespues');
+      if (chk && chk.checked) { valid = !!prov; break; }
+      const pat = val('wPatente').toUpperCase();
       // Patente AR moderna: AB123CD / vieja: ABC123. Aceptamos ambos con regex laxo (>=6 alfanuméricos)
       const patValida = /^[A-Z0-9]{6,8}$/.test(pat);
       valid = patValida && !!prov;
@@ -2573,6 +2739,8 @@ async function submitTasacion() {
         ? wizardData.clienteCompraUnidad
         : null,
       flujo_carga: wizardData.flujo_carga || null,
+      // De qué caso de la solapa Usados salió, si salió de ahí.
+      usado_lead_id: wizardData.usado_lead_id || null,
       fotos: fotoUrls,
       estado: 'pendiente'
     };
