@@ -513,6 +513,9 @@ async function procesar(
     if (estado.ok || (opts.dry && !opts.previa)) {
       return { ...resumen, modo: "agrupado", ...await enviarAgrupado(env, listos, padron, hoyAR, feriados, opts) };
     }
+    if (estado.reintentar && !opts.dry) {
+      return { ...resumen, modo: "sin_envio", enviados: [], errores: [estado.detalle] };
+    }
     modo = `por_pv (${estado.detalle})`;
   }
 
@@ -748,12 +751,16 @@ function detalleResumen(alertas: Alerta[]) {
 }
 
 async function estadoTemplatesAgrupados(env: Env) {
-  const ts = (await listarTemplates(env)).templates ?? [];
+  const lista = await listarTemplates(env);
+  // Si Meta no contesta, NO se cae al envio de 1 por PV (eso es solo para la
+  // espera de aprobacion): se reintenta en la corrida siguiente.
+  if (lista.error || !lista.templates?.length) return { ok: false, reintentar: true, detalle: `no se pudo leer la WABA: ${JSON.stringify(lista.error ?? "vacia")}` };
+  const ts = lista.templates;
   const faltan = [TEMPLATE_VENDEDOR, TEMPLATE_RESUMEN]
     .map((n) => ({ n, t: ts.find((x: { name: string }) => x.name === n) }))
     .filter(({ t }) => !t || t.status !== "APPROVED" || t.category !== "UTILITY")
     .map(({ n, t }) => `${n} ${t ? `${t.status}/${t.category}` : "no existe"}`);
-  return { ok: !faltan.length, detalle: faltan.join(", ") };
+  return { ok: !faltan.length, reintentar: false, detalle: faltan.join(", ") };
 }
 
 // Error de tope -> WhatsApp a Fer y Matias por el template de controles.
