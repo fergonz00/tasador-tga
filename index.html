@@ -927,10 +927,13 @@ function usuarioHabilitadoPortal() {
   const u = (currentUser && (currentUser.usuario || '')).toLowerCase();
   return USUARIOS_FLUJO_PORTAL.includes(u);
 }
-// El paso "¿compra unidad?" solo se le muestra a los usuarios habilitados, en
-// las dos ramas (virtual y portal).
+// El paso "¿compra unidad?" va para TODOS los vendedores desde el 06/10 (antes
+// era solo para los de USUARIOS_FLUJO_PORTAL). El dato sirve igual en cualquier
+// tasación: si el cliente no se lleva unidad, no hay 0km que preguntar y el
+// tasador necesita saberlo. La bifurcación Virtual/Portal sigue siendo solo de
+// los habilitados — por eso este interruptor está separado.
 function preguntaCompraUnidadActiva() {
-  return usuarioHabilitadoPortal();
+  return true;
 }
 // true solo cuando contestó explícitamente que NO compra unidad.
 function clienteSoloVende() {
@@ -2572,7 +2575,7 @@ function shouldSkipStep(idx) {
     const marcaUsado = (wizardData.marca || '').toUpperCase();
     return marcaUsado !== 'VOLKSWAGEN';
   }
-  // Paso 10 (¿el cliente adquiere una unidad?) solo para los usuarios habilitados
+  // Paso 10 (¿el cliente adquiere una unidad?): hoy lo ven todos los vendedores
   if (idx === 10) return !preguntaCompraUnidadActiva();
   // Si el cliente SOLO vende su usado, el 0km que consulta (11) y el precio
   // ofrecido (12) no existen: no hay unidad que ofrecerle.
