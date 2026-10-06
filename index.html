@@ -3217,7 +3217,7 @@ function renderPreciosVendedor(t) {
   }
   if (t.precio_toma_virtual && !t.precio_toma_final) {
     const fecha = t.precio_toma_virtual_at ? new Date(t.precio_toma_virtual_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
-    const yaInspeccionada = !!(t.analisis_fisico && t.precio_sugerido_fisico);
+    const yaInspeccionada = tieneInspeccion(t);
     html += `
       <div style="margin-top:12px; padding:12px 14px; background:#EFF6FF; border-radius:8px; border:1px solid #BFDBFE">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap">
@@ -3449,7 +3449,7 @@ function renderAdminList(tasaciones) {
   } else if (adminFiltroEstado === 'virtual') {
     data = data.filter(t => t.precio_toma_virtual && !t.precio_toma_final && !t.no_avanza_motivo && !t.virtual_no_apto);
   } else if (adminFiltroEstado === 'esperando') {
-    data = data.filter(t => t.analisis_fisico && t.precio_sugerido_fisico && !t.precio_toma_final && !t.no_avanza_motivo && !t.virtual_no_apto);
+    data = data.filter(t => tieneInspeccion(t) && !t.precio_toma_final && !t.no_avanza_motivo && !t.virtual_no_apto);
   } else if (adminFiltroEstado === 'usado_rechazado') {
     data = data.filter(t => !!t.virtual_no_apto);
   } else if (adminFiltroEstado === 'no_deja_usado') {
@@ -5211,7 +5211,7 @@ function renderAdminCard(t) {
   } else if (t.precio_toma_virtual && !t.precio_toma_final) {
     badgesHeader.push(`<span style="display:inline-block;padding:2px 8px;background:#FEF3C7;color:#92400E;border-radius:4px;font-size:10px;font-weight:700;margin-top:4px">📅 SIN TURNO</span>`);
   }
-  if (t.analisis_fisico && t.precio_sugerido_fisico && !t.precio_toma_final) {
+  if (tieneInspeccion(t) && !t.precio_toma_final) {
     badgesHeader.push(`<span style="display:inline-block;padding:2px 8px;background:#EDE9FE;color:#5B21B6;border-radius:4px;font-size:10px;font-weight:700;margin-top:4px">🔍 ESPERANDO PRECIO FINAL</span>`);
   }
   const badgesHTML = badgesHeader.length > 0 ? `<div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:2px">${badgesHeader.join('')}</div>` : '';
@@ -5481,7 +5481,7 @@ function renderAdminCard(t) {
       ${renderInspeccionFisicaAdmin(t)}
 
       ${(() => {
-        const hayInspeccion = !!(t.analisis_fisico && typeof t.analisis_fisico === 'object' && t.precio_sugerido_fisico);
+        const hayInspeccion = tieneInspeccion(t);
         const fechaFin = t.tasado_at ? new Date(t.tasado_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) : '';
         const dis = hayInspeccion ? '' : 'disabled';
         const inputBg = hayInspeccion ? 'white' : 'var(--vw-grey-1)';
@@ -6060,7 +6060,7 @@ function renderInspeccionFisicaAdmin(t) {
   const af = (t.analisis_fisico && typeof t.analisis_fisico === 'object') ? t.analisis_fisico : null;
   // La opinión del tasador va arriba de la inspección (entre los precios y el bloque
   // violeta): es lo primero que tiene que leer el admin antes de cerrar el precio.
-  const opinionHTML = (af && t.precio_sugerido_fisico) ? renderOpinionTasadorHTML(af, t.tasado_fisico_por) : '';
+  const opinionHTML = (af && tieneInspeccion(t)) ? renderOpinionTasadorHTML(af, t.tasado_fisico_por) : '';
   return opinionHTML + _renderInspeccionFisicaAdminBloque(t, af);
 }
 
@@ -7390,7 +7390,7 @@ async function loadAgenda() {
   const list = document.getElementById('agendaList');
   list.innerHTML = '<div style="text-align:center; padding:40px; color:var(--vw-grey-3)">Cargando...</div>';
   try {
-    const data = await sbFetch('tasaciones?turno_fecha=not.is.null&order=turno_fecha.asc,turno_hora.asc&select=id,marca,modelo,anio,version,patente,cliente_nombre,vendedor_id,vendedor_nombre,turno_fecha,turno_hora,turno_creado_por,estado_fisico,precio_sugerido_fisico,precio_toma_final');
+    const data = await sbFetch('tasaciones?turno_fecha=not.is.null&order=turno_fecha.asc,turno_hora.asc&select=id,marca,modelo,anio,version,patente,cliente_nombre,vendedor_id,vendedor_nombre,turno_fecha,turno_hora,turno_creado_por,estado_fisico,precio_sugerido_fisico,precio_toma_final,tasado_fisico_at');
     agendaData = data;
     renderAgenda();
   } catch(e) {
@@ -7422,7 +7422,7 @@ function renderAgenda() {
   // Antes filtrábamos por estado_fisico === 'tasada_fisico', pero ese valor no se setea
   // en ningún lado (Fazzini graba 'pendiente_revision'), así que las inspeccionadas
   // quedaban como pendientes para siempre. Ahora usamos el mismo criterio que Fazzini.
-  const _inspAgenda = (t) => !!(t.precio_sugerido_fisico || t.precio_toma_final);
+  const _inspAgenda = (t) => !!(t.tasado_fisico_at || t.precio_sugerido_fisico || t.precio_toma_final);
   if (fEstado === 'pendientes') data = data.filter(t => !_inspAgenda(t));
   else if (fEstado === 'inspeccionadas') data = data.filter(t => _inspAgenda(t));
 
@@ -8381,7 +8381,7 @@ async function guardarPrecioFinal(id) {
 
   // Verificación: tiene que haber inspección física
   const tas = (allTasaciones || []).find(x => x.id === id);
-  const hayInspeccion = !!(tas && tas.analisis_fisico && typeof tas.analisis_fisico === 'object' && tas.precio_sugerido_fisico);
+  const hayInspeccion = tieneInspeccion(tas);
   if (!hayInspeccion) {
     showToast('Esperá la inspección física antes de cerrar el precio final.');
     return;
@@ -8567,7 +8567,7 @@ function renderFisicoList() {
   //   todas           → todo lo del workflow Fazzini (con turno o presencial)
   //   usado_tomado    → operación cerrada con usado tomado (universo amplio)
   //   usado_no_apto   → admin marcó NO APTO (puede haber sido antes o después del turno)
-  const tieneInsp = (t) => !!(t.analisis_fisico && typeof t.analisis_fisico === 'object' && t.precio_sugerido_fisico);
+  const tieneInsp = (t) => tieneInspeccion(t);
   const _vivaParaFazzini = (t) => !t.no_avanza_motivo && !t.virtual_no_apto && !t.turno_cancelado_motivo;
 
   if (fisicoFiltroEstadoVal === 'usado_tomado') {
@@ -8649,7 +8649,7 @@ function renderFisicoList() {
       estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#D1FAE5;color:#065F46;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">TASADO FINAL POR EL ADMIN</span>';
       btnLabel = 'Ver detalle';
       btnBg = '#065F46';
-    } else if (t.analisis_fisico && t.precio_sugerido_fisico) {
+    } else if (tieneInspeccion(t)) {
       estadoFisicoBadge = '<span style="display:inline-block;padding:3px 10px;background:#EDE9FE;color:#5B21B6;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase">ESPERANDO ADMIN</span>';
       btnLabel = 'Ver inspección';
       btnBg = '#5B21B6';
@@ -8694,7 +8694,7 @@ function renderFisicoList() {
     // Precios contextuales en la card según estado
     let preciosLine = '';
     if (t.precio_toma_final) {
-      preciosLine = `<div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px">Sugerido por vos: <strong style="font-family:var(--mono); color:#5B21B6">$ ${formatNum(t.precio_sugerido_fisico || 0)}</strong> · Final del admin: <strong style="font-family:var(--mono); color:var(--green); font-size:13px">$ ${formatNum(t.precio_toma_final)}</strong></div>`;
+      preciosLine = `<div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px">Sugerido por vos: <strong style="font-family:var(--mono); color:#5B21B6">${t.precio_sugerido_fisico ? '$ ' + formatNum(t.precio_sugerido_fisico) : 'sin precio'}</strong> · Final del admin: <strong style="font-family:var(--mono); color:var(--green); font-size:13px">$ ${formatNum(t.precio_toma_final)}</strong></div>`;
     } else if (t.precio_sugerido_fisico) {
       preciosLine = `<div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px">Tu precio sugerido: <strong style="font-family:var(--mono); color:#5B21B6">$ ${formatNum(t.precio_sugerido_fisico)}</strong></div>`;
     } else if (t.precio_toma_virtual) {
@@ -8821,7 +8821,7 @@ function renderInspeccionSoloLectura(tas, prev) {
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-bottom:14px">
       ${precioBox('Virtual (admin)', tas.precio_toma_virtual, 'var(--vw-blue)', '')}
       ${precioBox('Kavak', _kavakParaFisico(tas).valor ? Math.round(_kavakParaFisico(tas).valor) : null, '#7E22CE', _kavakParaFisico(tas).fuente)}
-      ${precioBox('Sugerido por vos', tas.precio_sugerido_fisico, '#5B21B6', '')}
+      ${precioBox('Sugerido por vos', tas.precio_sugerido_fisico, '#5B21B6', tas.precio_sugerido_fisico ? '' : 'no cargaste precio')}
       ${precioBox('Final (admin)', tas.precio_toma_final, 'var(--green)', tas.tasado_por ? 'por ' + tas.tasado_por : '')}
     </div>
   `;
@@ -8961,7 +8961,7 @@ function renderInspeccionSoloLectura(tas, prev) {
 function renderInspeccionFormulario(tas, prev) {
   // Una vez que Jorge ya guardó la inspección (hay analisis_fisico + precio sugerido),
   // queda en solo lectura. Si hay que corregir algo, lo resuelve el admin.
-  if ((tas.analisis_fisico && tas.precio_sugerido_fisico) || tas.precio_toma_final) {
+  if (tieneInspeccion(tas) || tas.precio_toma_final) {
     renderInspeccionSoloLectura(tas, prev);
     return;
   }
@@ -9039,6 +9039,8 @@ function renderInspeccionFormulario(tas, prev) {
   const pruebaRealizo = (prev.prueba_dinamica && prev.prueba_dinamica.realizo) || '';
   const obsGen = prev.observaciones_grales || '';
   const precioFisico = tas.precio_toma_fisico || tas.precio_sugerido_fisico || '';
+  // Si en una inspección anterior se marcó "no pongo precio", el tilde vuelve puesto.
+  const sinPrecioPrev = !!prev.sin_precio_sugerido;
   const pinturaEstadoPrev = tas.pintura_estado || (prev.pintura_estado || '');
   const pinturaObsPrev = tas.pintura_obs || (prev.pintura_obs || '');
   // Pre-carga: si la tasación ya tiene tipo_vehiculo lo respeta; si no, lo infiere por esPickup.
@@ -9097,7 +9099,13 @@ function renderInspeccionFormulario(tas, prev) {
 
       <div style="margin-bottom:14px; padding:12px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px">
         <label style="display:block; font-size:13px; font-weight:700; margin-bottom:6px; color:#92400E">Precio sugerido de toma <span style="font-weight:400; color:var(--vw-grey-4)">(neto, ya descontando arreglos)</span></label>
-        <input type="number" id="inspPrecioFisico" placeholder="Ej: 8500000" value="${precioFisico}" min="0" oninput="actualizarPrecioImplicito()" style="width:100%; padding:10px; font-size:18px; font-family:var(--mono); font-weight:700; box-sizing:border-box; border:1px solid #FDE68A; border-radius:6px">
+        <input type="number" id="inspPrecioFisico" placeholder="Ej: 8500000" value="${sinPrecioPrev ? '' : precioFisico}" min="0" ${sinPrecioPrev ? 'disabled' : ''} oninput="actualizarPrecioImplicito()" style="width:100%; padding:10px; font-size:18px; font-family:var(--mono); font-weight:700; box-sizing:border-box; border:1px solid #FDE68A; border-radius:6px">
+        <label style="display:flex; align-items:flex-start; gap:9px; margin-top:10px; cursor:pointer; font-size:13px; font-weight:600; color:#92400E">
+          <input type="checkbox" id="inspSinPrecio" ${sinPrecioPrev ? 'checked' : ''} onchange="onSinPrecioChange()" style="margin-top:2px; width:16px; height:16px; flex-shrink:0">
+          <span>No pongo precio — ya está definido<br>
+            <span style="font-weight:400; font-size:12px; color:var(--vw-grey-4)">La inspección se guarda igual: lo que importa acá es la revisión.</span>
+          </span>
+        </label>
         <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:12px">
           <div style="padding:8px; background:white; border-radius:4px">
             <div style="color:var(--vw-grey-4); font-weight:600; text-transform:uppercase; letter-spacing:0.5px; font-size:10px">Arreglos estimados</div>
@@ -9366,6 +9374,19 @@ function actualizarTotalArreglos() {
   actualizarPrecioImplicito();
 }
 
+// "No pongo precio": hay casos donde el valor ya está definido y lo que hace
+// falta es la revisión. Se bloquea el campo para que no quede un número a medias
+// y la inspección se guarda igual, sin precio sugerido.
+function onSinPrecioChange() {
+  const chk = document.getElementById('inspSinPrecio');
+  const inp = document.getElementById('inspPrecioFisico');
+  if (!inp) return;
+  const sin = !!(chk && chk.checked);
+  inp.disabled = sin;
+  if (sin) inp.value = '';
+  actualizarPrecioImplicito();
+}
+
 // Calcula y muestra el precio "implícito en buen estado" = precio sugerido + total arreglos.
 function actualizarPrecioImplicito() {
   const inputPrecio = document.getElementById('inspPrecioFisico');
@@ -9569,8 +9590,11 @@ async function guardarInspeccion(tasId, opinion) {
     });
   });
 
-  if (!precioSugerido || precioSugerido <= 0) {
-    showToast('Ingresá un precio sugerido válido');
+  // Con el tilde puesto la inspección se guarda sin precio: el valor ya está
+  // definido y lo que importa es la revisión.
+  const sinPrecio = !!document.getElementById('inspSinPrecio')?.checked;
+  if (!sinPrecio && (!precioSugerido || precioSugerido <= 0)) {
+    showToast('Ingresá un precio sugerido válido, o tildá "No pongo precio"');
     return;
   }
 
@@ -9612,7 +9636,10 @@ async function guardarInspeccion(tasId, opinion) {
     observaciones_grales: observaciones,
     marcadores,
     total_arreglos: totalArreglos,
-    precio_implicito_bruto: precioSugerido + totalArreglos,
+    // Marca que el tasador decidio no poner precio. Es lo que permite saber que
+    // la inspeccion esta hecha aunque precio_sugerido_fisico quede en null.
+    sin_precio_sugerido: sinPrecio,
+    precio_implicito_bruto: sinPrecio ? null : precioSugerido + totalArreglos,
     opinion: {
       recomendacion: opinion.recomendacion,
       salida: opinion.salida,
@@ -9631,7 +9658,7 @@ async function guardarInspeccion(tasId, opinion) {
     pintura_obs: pinturaObs || null,
     tipo_vehiculo: tipoVehiculo,
     numero_interno: numeroInterno,
-    precio_sugerido_fisico: precioSugerido,
+    precio_sugerido_fisico: sinPrecio ? null : precioSugerido,
     estado_fisico: 'pendiente_revision',
     tasado_fisico_por: currentUser.nombre,
     tasado_fisico_at: new Date().toISOString()
@@ -9764,6 +9791,22 @@ function showLoading(text) {
 }
 function hideLoading() {
   document.getElementById('loadingOverlay').classList.remove('show');
+}
+
+// ============ ¿LA INSPECCIÓN ESTÁ HECHA? ============
+// Durante mucho tiempo esto se preguntaba como "tiene analisis_fisico Y tiene
+// precio_sugerido_fisico", repetido en once pantallas. Desde que el tasador
+// puede tildar "no pongo precio" (hay casos donde el valor ya está definido y lo
+// que importa es la revisión), esa cuenta dejaba la inspección como inexistente
+// y la tasación volvía a figurar pendiente. Ahora se pregunta en un solo lugar.
+//   - tasado_fisico_at es la marca más confiable: se graba en cada guardado.
+//   - el resto es para las vistas que no traen esa columna en el select.
+function tieneInspeccion(t) {
+  if (!t) return false;
+  if (t.tasado_fisico_at) return true;
+  const af = t.analisis_fisico;
+  if (!af || typeof af !== 'object') return false;
+  return !!(t.precio_sugerido_fisico || af.sin_precio_sugerido);
 }
 
 // ============ ARREGLOS DE LA INSPECCIÓN ============
