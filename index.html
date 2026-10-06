@@ -342,7 +342,26 @@ input, select, textarea { font-family: var(--font); }
   z-index: 1000; cursor: pointer;
 }
 .photo-modal.show { display: flex; }
-.photo-modal img { max-width: 95%; max-height: 90vh; object-fit: contain; border-radius: 8px; }
+.photo-modal img { max-width: 80%; max-height: 86vh; object-fit: contain; border-radius: 8px; }
+/* Flechas del visor. En el celular se achican y se pegan a los bordes. */
+.foto-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 52px; height: 72px; padding: 0;
+  background: rgba(255,255,255,.9); color: var(--vw-blue);
+  border: none; border-radius: 8px;
+  font-size: 34px; line-height: 1; font-weight: 700;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.4);
+}
+.foto-nav:hover { background: #fff; }
+.foto-nav[disabled] { opacity: .25; cursor: default; }
+#fotoAnterior { left: 16px; }
+#fotoSiguiente { right: 16px; }
+@media (max-width: 640px) {
+  .photo-modal img { max-width: 92%; }
+  .foto-nav { width: 40px; height: 58px; font-size: 26px; }
+  #fotoAnterior { left: 6px; }
+  #fotoSiguiente { right: 6px; }
+}
 
 /* Toast */
 .toast {
@@ -793,10 +812,17 @@ input, select, textarea { font-family: var(--font); }
 </div>
 
 <!-- Photo modal -->
-<div id="photoModal" class="photo-modal" onclick="this.classList.remove('show')">
-  <img id="photoModalImg" src="">
-  <button id="photoModalDescargar" onclick="event.stopPropagation(); descargarFoto(document.getElementById('photoModalImg').src)"
-          style="position:absolute; top:18px; right:18px; padding:10px 16px; background:white; color:var(--vw-blue); border:none; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.4)">⬇ Descargar</button>
+<div id="photoModal" class="photo-modal" onclick="if(event.target===this)cerrarFoto()">
+  <button class="foto-nav" id="fotoAnterior" onclick="event.stopPropagation(); moverFoto(-1)" title="Anterior (←)">‹</button>
+  <img id="photoModalImg" src="" onclick="event.stopPropagation()">
+  <button class="foto-nav" id="fotoSiguiente" onclick="event.stopPropagation(); moverFoto(1)" title="Siguiente (→)">›</button>
+  <div id="fotoContador" style="position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.6); color:white; padding:6px 14px; border-radius:20px; font-size:13px; font-weight:600"></div>
+  <button id="photoModalEliminar" onclick="event.stopPropagation(); eliminarFotoActual()" title="Eliminar esta foto"
+          style="position:absolute; top:18px; right:216px; padding:10px 16px; background:white; color:var(--red); border:none; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.4)">× Eliminar</button>
+  <button id="photoModalDescargar" onclick="event.stopPropagation(); descargarFotoActual()"
+          style="position:absolute; top:18px; right:84px; padding:10px 16px; background:white; color:var(--vw-blue); border:none; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.4)">⬇ Descargar</button>
+  <button onclick="event.stopPropagation(); cerrarFoto()" title="Cerrar (Esc)"
+          style="position:absolute; top:18px; right:18px; width:44px; height:42px; background:white; color:var(--vw-grey-4); border:none; border-radius:8px; font-weight:700; font-size:18px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.4)">✕</button>
 </div>
 
 <!-- Toast -->
@@ -9475,7 +9501,7 @@ function renderFotosInspeccion() {
   const fotos = fisicoTasacionActual.fotos || [];
   let html = fotos.map((url, i) => `
     <div class="foto-slot">
-      <img src="${url}" onclick="showPhoto('${url}')">
+      <img src="${url}" onclick="showPhotoInsp(${i})">
       <div class="remove-foto" onclick="event.stopPropagation(); quitarFotoInspeccion(${i})">×</div>
     </div>`).join('');
   if (fotos.length < MAX_FOTOS) {
@@ -9907,6 +9933,12 @@ async function descargarTodasLasFotos(tasId) {
 // Grilla de fotos del admin: marca cuáles sacó el tasador y deja descargarlas,
 // de a una o todas juntas.
 function fotosAdminHTML(tas) {
+  // El contenedor lleva el id de la tasación para poder repintar SOLO la grilla
+  // al borrar una foto, sin re-renderizar la tarjeta (que se cerraría).
+  return `<div id="fotosAdmin-${tas && tas.id}">${_fotosAdminCuerpo(tas)}</div>`;
+}
+
+function _fotosAdminCuerpo(tas) {
   const fotos = (tas && tas.fotos) || [];
   if (!fotos.length) return '<div style="font-size:13px;color:var(--vw-grey-3)">Sin fotos</div>';
   const nTasador = fotos.filter(esFotoDelTasador).length;
@@ -9915,10 +9947,12 @@ function fotosAdminHTML(tas) {
     : `${fotos.length} foto${fotos.length > 1 ? 's' : ''}`;
   const items = fotos.map((f, i) => `
     <div style="position:relative">
-      <img src="${f}" onclick="showPhoto('${f}')">
+      <img src="${f}" onclick="showPhotoDe('${tas.id}', ${i})">
       ${esFotoDelTasador(f) ? '<span style="position:absolute; left:4px; bottom:4px; background:#EA580C; color:#fff; font-size:9px; font-weight:700; padding:1px 5px; border-radius:3px; letter-spacing:.5px; pointer-events:none">TASADOR</span>' : ''}
       <button onclick="event.stopPropagation(); descargarFotoDe('${tas.id}', ${i})" title="Descargar esta foto"
               style="position:absolute; top:4px; right:4px; width:26px; height:26px; padding:0; background:rgba(255,255,255,.92); color:var(--vw-blue); border:none; border-radius:5px; cursor:pointer; font-size:13px; line-height:26px">⬇</button>
+      <button onclick="event.stopPropagation(); eliminarFotoDe('${tas.id}', ${i})" title="Eliminar esta foto"
+              style="position:absolute; top:4px; left:4px; width:26px; height:26px; padding:0; background:rgba(255,255,255,.92); color:var(--red); border:none; border-radius:5px; cursor:pointer; font-size:14px; line-height:26px; font-weight:700">×</button>
     </div>`).join('');
   return `
     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px">
@@ -9929,10 +9963,161 @@ function fotosAdminHTML(tas) {
     <div class="fotos-admin-grid">${items}</div>`;
 }
 
-function showPhoto(url) {
-  document.getElementById('photoModalImg').src = url;
+function repintarFotosAdmin(tasId) {
+  const cont = document.getElementById('fotosAdmin-' + tasId);
+  if (cont) cont.innerHTML = _fotosAdminCuerpo(_buscarTasacion(tasId));
+}
+
+// Saca la foto de la tasación. El archivo QUEDA en el storage: solo se la quita
+// de la lista, así que un borrado por error se puede deshacer volviendo a poner
+// la URL. Repinta la grilla sin tocar el resto de la tarjeta.
+async function eliminarFotoDe(tasId, i) {
+  const tas = _buscarTasacion(tasId);
+  const fotos = (tas && tas.fotos) || [];
+  if (!fotos[i]) return false;
+  const deQuien = esFotoDelTasador(fotos[i]) ? 'del tasador' : 'del vendedor';
+  if (!confirm(`¿Eliminar esta foto ${deQuien}?\n\nSe saca de la tasación. El archivo queda guardado.`)) return false;
+  const nuevas = fotos.filter((_, n) => n !== i);
+  try {
+    showLoading('Eliminando foto...');
+    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fotos: nuevas })
+    });
+    // Actualizamos todas las listas que la tengan en memoria, para no recargar.
+    [typeof allTasaciones !== 'undefined' && allTasaciones,
+     typeof misTasacionesData !== 'undefined' && misTasacionesData,
+     typeof fisicoData !== 'undefined' && fisicoData,
+     typeof agendaData !== 'undefined' && agendaData].forEach(l => {
+      const t = (l || []).find(x => String(x.id) === String(tasId));
+      if (t) t.fotos = nuevas;
+    });
+    hideLoading();
+    repintarFotosAdmin(tasId);
+    // Si la inspección del tasador está abierta sobre esta misma tasación, su
+    // grilla también tiene que reflejarlo.
+    if (typeof fisicoTasacionActual !== 'undefined' && fisicoTasacionActual
+        && String(fisicoTasacionActual.id) === String(tasId)
+        && typeof renderFotosInspeccion === 'function') {
+      renderFotosInspeccion();
+    }
+    showToast('Foto eliminada');
+    return true;
+  } catch (e) {
+    hideLoading();
+    console.error('eliminarFotoDe:', e);
+    showToast('No se pudo eliminar la foto');
+    return false;
+  }
+}
+
+// ============ VISOR DE FOTOS ============
+// Antes abría una sola imagen y había que cerrar y volver a entrar para ver la
+// siguiente. Ahora el visor se queda con la lista completa y se pasa con las
+// flechas, el teclado o deslizando en el celular.
+let _fotosVisor = [];
+let _fotoVisorIdx = 0;
+let _fotoVisorTas = null;   // la tasación dueña, para nombrar bien la descarga
+
+function showPhoto(url, lista, tas) {
+  _fotosVisor = (Array.isArray(lista) && lista.length) ? lista.slice() : [url];
+  const i = _fotosVisor.indexOf(url);
+  _fotoVisorIdx = i >= 0 ? i : 0;
+  _fotoVisorTas = tas || null;
+  _pintarFotoVisor();
   document.getElementById('photoModal').classList.add('show');
 }
+
+// Desde la grilla del admin: la lista sale de la tasación.
+function showPhotoDe(tasId, i) {
+  const tas = _buscarTasacion(tasId);
+  const fotos = (tas && tas.fotos) || [];
+  if (!fotos[i]) return;
+  showPhoto(fotos[i], fotos, tas);
+}
+
+// Desde la grilla de la inspección del tasador físico.
+function showPhotoInsp(i) {
+  const tas = fisicoTasacionActual;
+  const fotos = (tas && tas.fotos) || [];
+  if (!fotos[i]) return;
+  showPhoto(fotos[i], fotos, tas);
+}
+
+function _pintarFotoVisor() {
+  const img = document.getElementById('photoModalImg');
+  const cont = document.getElementById('fotoContador');
+  const ant = document.getElementById('fotoAnterior');
+  const sig = document.getElementById('fotoSiguiente');
+  const url = _fotosVisor[_fotoVisorIdx];
+  if (img) img.src = url || '';
+  const hayVarias = _fotosVisor.length > 1;
+  if (cont) {
+    const quien = esFotoDelTasador(url) ? ' · del tasador' : '';
+    cont.textContent = hayVarias ? `${_fotoVisorIdx + 1} de ${_fotosVisor.length}${quien}` : (quien ? quien.replace(' · ', '') : '');
+    cont.style.display = (hayVarias || quien) ? '' : 'none';
+  }
+  // Con una sola foto no tiene sentido mostrar flechas.
+  [ant, sig].forEach(b => { if (b) b.style.display = hayVarias ? '' : 'none'; });
+  if (ant) ant.disabled = _fotoVisorIdx === 0;
+  if (sig) sig.disabled = _fotoVisorIdx === _fotosVisor.length - 1;
+}
+
+function moverFoto(paso) {
+  const n = _fotoVisorIdx + paso;
+  if (n < 0 || n >= _fotosVisor.length) return;
+  _fotoVisorIdx = n;
+  _pintarFotoVisor();
+}
+
+function cerrarFoto() {
+  document.getElementById('photoModal').classList.remove('show');
+}
+
+async function descargarFotoActual() {
+  const url = _fotosVisor[_fotoVisorIdx];
+  if (!url) return;
+  await descargarFoto(url, _nombreDeFoto(url, _fotoVisorTas, _fotoVisorIdx));
+}
+
+// Eliminar sin salir del visor: borra la que se está mirando y sigue en la
+// siguiente. Si era la última, cierra.
+async function eliminarFotoActual() {
+  const tas = _fotoVisorTas;
+  if (!tas || !tas.id) { showToast('No se puede eliminar desde acá'); return; }
+  const idx = _fotoVisorIdx;
+  const borro = await eliminarFotoDe(tas.id, idx);
+  if (!borro) return;   // canceló o falló: el visor queda como estaba
+  // eliminarFotoDe ya actualizó tas.fotos en memoria.
+  const quedan = (tas.fotos || []);
+  if (!quedan.length) { cerrarFoto(); return; }
+  _fotosVisor = quedan.slice();
+  _fotoVisorIdx = Math.min(idx, _fotosVisor.length - 1);
+  _pintarFotoVisor();
+}
+
+// Teclado: flechas para pasar, Escape para cerrar.
+document.addEventListener('keydown', e => {
+  const modal = document.getElementById('photoModal');
+  if (!modal || !modal.classList.contains('show')) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); moverFoto(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); moverFoto(1); }
+  else if (e.key === 'Escape') cerrarFoto();
+});
+
+// Deslizar en el celular.
+(function () {
+  const modal = document.getElementById('photoModal');
+  if (!modal) return;
+  let x0 = null;
+  modal.addEventListener('touchstart', e => { x0 = e.changedTouches[0].clientX; }, { passive: true });
+  modal.addEventListener('touchend', e => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0;
+    x0 = null;
+    if (Math.abs(dx) > 50) moverFoto(dx < 0 ? 1 : -1);
+  }, { passive: true });
+})();
 
 function showToast(msg) {
   const t = document.getElementById('toast');
