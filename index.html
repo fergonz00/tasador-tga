@@ -4805,6 +4805,14 @@ function renderAdminCardEsperando(t) {
         ${precioVirtualHTML}
         ${renderPreciosReferenciaHTML(t)}
         ${renderInspeccionFisicaAdmin(t)}
+        ${/* Esta tarjeta era la ÚNICA de las tres del admin que no mostraba las
+             fotos, y es justo donde se cierra el precio final: el admin tenía
+             la inspección del tasador pero no sus fotos. Las otras dos
+             (renderAdminCard y renderArgdCard) ya las traen. */''}
+        <div style="margin-top:14px">
+          <div style="font-size:12px; font-weight:700; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">Fotos</div>
+          ${fotosAdminHTML(t)}
+        </div>
         ${precioFinalHTML}
       </div>
     </div>
