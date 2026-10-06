@@ -2882,6 +2882,15 @@ async function submitTasacion() {
       flujo_carga: wizardData.flujo_carga || null,
       // De qué caso de la solapa Usados salió, si salió de ahí.
       usado_lead_id: wizardData.usado_lead_id || null,
+      // Lo que pedía en el aviso y el link, copiados acá para que el admin los
+      // tenga sin consultar la tabla del CRM (que esta cerrada a la anon key).
+      origen_datos: usadoLead ? {
+        portal: {
+          pide: usadoLead.pide != null ? Number(usadoLead.pide) : null,
+          link: usadoLead.link || null,
+          titulo: usadoLead.titulo || null
+        }
+      } : null,
       fotos: fotoUrls,
       estado: 'pendiente'
     };
@@ -4810,6 +4819,7 @@ function renderAdminCardEsperando(t) {
     badgesHeader.push(`<span style="display:inline-block;padding:2px 8px;background:${bg};color:${col};border-radius:4px;font-size:10px;font-weight:700;margin-top:4px">${lbl}</span>`);
   }
   badgesHeader.push(`<span style="display:inline-block;padding:2px 8px;background:#EDE9FE;color:#5B21B6;border-radius:4px;font-size:10px;font-weight:700;margin-top:4px">🔍 ESPERANDO PRECIO FINAL</span>`);
+  badgesHeader.push(chipUsadoDelPortal(t));
   const badgesHTML = `<div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:2px">${badgesHeader.join('')}</div>`;
 
   return `
@@ -4827,6 +4837,7 @@ function renderAdminCardEsperando(t) {
         <span class="arrow" id="arrow-${t.id}">▼</span>
       </div>
       <div class="card-body" id="body-${t.id}">
+        ${cajaUsadoDelPortal(t)}
         ${datosCompactosHTML}
         ${precioVirtualHTML}
         ${renderPreciosReferenciaHTML(t)}
@@ -5248,6 +5259,7 @@ function renderAdminCard(t) {
   if (tieneInspeccion(t) && !t.precio_toma_final) {
     badgesHeader.push(`<span style="display:inline-block;padding:2px 8px;background:#EDE9FE;color:#5B21B6;border-radius:4px;font-size:10px;font-weight:700;margin-top:4px">🔍 ESPERANDO PRECIO FINAL</span>`);
   }
+  badgesHeader.push(chipUsadoDelPortal(t));
   const badgesHTML = badgesHeader.length > 0 ? `<div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:2px">${badgesHeader.join('')}</div>` : '';
 
   // Badge del estado real del flujo (no el campo legacy 'estado')
@@ -5293,6 +5305,8 @@ function renderAdminCard(t) {
         ${btnBorrarIndiv}
       </div>
       <div class="card-body" id="body-${t.id}">
+
+${cajaUsadoDelPortal(t)}
 
       ${fotosHTML}
 
@@ -9825,6 +9839,39 @@ function showLoading(text) {
 }
 function hideLoading() {
   document.getElementById('loadingOverlay').classList.remove('show');
+}
+
+// ============ USADO DEL PORTAL (viene de la solapa Usados del CRM) ============
+// Lo que pedía el dueño en MercadoLibre y el link al aviso se guardan en la
+// tasación al crearla (origen_datos.portal), para que el admin los tenga sin
+// consultar la tabla del CRM, que ademas esta cerrada a la llave publica.
+function datosDelPortal(t) {
+  const d = (t && t.origen_datos && t.origen_datos.portal) || null;
+  if (!d && !(t && t.usado_lead_id)) return null;
+  return d || {};
+}
+function esUsadoDelPortal(t) {
+  return !!datosDelPortal(t);
+}
+// Chip azul para el encabezado de las tarjetas del admin.
+function chipUsadoDelPortal(t) {
+  if (!esUsadoDelPortal(t)) return '';
+  return '<span style="display:inline-block;padding:2px 8px;background:#DBEAFE;color:#1E40AF;border-radius:4px;font-size:10px;font-weight:700;margin-top:4px">🔵 USADO DEL PORTAL</span>';
+}
+// Caja azul con lo del aviso: cuánto pedía y el link para ir a verlo.
+function cajaUsadoDelPortal(t) {
+  const d = datosDelPortal(t);
+  if (!d) return '';
+  const pide = d.pide != null ? '$ ' + formatNum(Math.round(d.pide)) : null;
+  return `
+    <div style="margin-top:10px; padding:10px 12px; background:#EFF6FF; border:1px solid #93C5FD; border-left-width:5px; border-radius:6px">
+      <div style="font-size:11px; font-weight:700; color:#1E40AF; letter-spacing:.5px">USADO DEL PORTAL · MERCADOLIBRE</div>
+      ${d.titulo ? `<div style="font-size:13px; color:#1E3A8A; margin-top:4px; font-weight:600">${_escapeHtmlUsr(d.titulo)}</div>` : ''}
+      <div style="display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-top:6px; font-size:12px; color:#1E3A8A">
+        ${pide ? `<div>Pedía en el aviso: <strong style="font-family:var(--mono); font-size:14px">${pide}</strong></div>` : '<div style="font-style:italic">Sin precio del aviso</div>'}
+        ${d.link ? `<a href="${_escapeHtmlUsr(d.link)}" target="_blank" rel="noopener" style="color:#1D4ED8; font-weight:700">Ver la publicación →</a>` : ''}
+      </div>
+    </div>`;
 }
 
 // ============ ¿LA INSPECCIÓN ESTÁ HECHA? ============
