@@ -1694,6 +1694,10 @@ function panelUsado() {
   if (!u) return '';
   const fila = (k, v) => v == null || v === '' ? '' :
     `<div><span style="color:var(--vw-grey-4)">${k}:</span> <strong>${_escapeHtmlUsr(String(v))}</strong></div>`;
+  // El aviso de ML no trae el nombre del dueño (la tabla del CRM no tiene ni
+  // nombre ni apellido), así que el único que hay es el que ella carga en el
+  // primer paso. Lo repetimos acá para tenerlo a la vista al llamarlo.
+  const cliente = (wizardData.clienteNombre || '').trim();
   return `
     <div style="margin-bottom:16px; background:#FFF7ED; border:1px solid #FDBA74; border-left-width:5px; border-radius:8px; padding:12px 14px">
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px">
@@ -1701,7 +1705,9 @@ function panelUsado() {
         <span style="font-size:11px; color:#9A3412; font-weight:600">${_escapeHtmlUsr(u.estado || '')}</span>
       </div>
       <div style="font-weight:700; font-size:14px; color:#9A3412; margin-bottom:6px">${_escapeHtmlUsr(u.titulo || '')}</div>
+      ${cliente ? `<div style="font-size:13px; color:#7C2D12; margin-bottom:6px">Cliente: <strong>${_escapeHtmlUsr(cliente)}</strong></div>` : ''}
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:4px 14px; font-size:12px; color:#7C2D12">
+        ${fila('Kilómetros', u.km != null ? formatNum(u.km) + ' km' : null)}
         ${fila('Pedía', u.pide != null ? '$ ' + formatNum(Math.round(u.pide)) : null)}
         ${fila('Le ofrecimos', u.ofrecimos != null ? '$ ' + formatNum(Math.round(u.ofrecimos)) : null)}
         ${fila('Kavak compra', u.kavak_inmediata != null ? '$ ' + formatNum(Math.round(u.kavak_inmediata)) : null)}
