@@ -921,7 +921,7 @@ const TOTAL_STEPS = 15; // cliente, marca, [si VW: ¿compró en TGA?], año, mod
 //  2) Entre el paso de color/Kavak y el del 0km se le pregunta si el cliente va
 //     a adquirir una unidad. Si no, se saltean los pasos del 0km y del precio
 //     ofrecido, porque no aplican: solo viene a vender el usado.
-const USUARIOS_FLUJO_PORTAL = ['ialonso', 'mlubrano'];
+const USUARIOS_FLUJO_PORTAL = ['ialonso', 'gbuena', 'mlubrano'];
 
 function usuarioHabilitadoPortal() {
   const u = (currentUser && (currentUser.usuario || '')).toLowerCase();
@@ -6769,6 +6769,18 @@ async function confirmarTurno(tasId, fechaISO, hora) {
     // WhatsApp: evento "visita_fisica_agendada" — avisa al admin y a Fazzini del turno
     // (dispara tanto en turnos nuevos como en cambios; la cancelación no tiene template)
     notifyWA(tasId, 'visita_fisica_agendada');
+
+    // Si la tasación salió de un caso de la solapa Usados del CRM, el caso pasa
+    // solo a "Turno asignado". Antes había que acordarse de moverlo a mano.
+    // No bloquea ni rompe el guardado del turno si falla: el turno ya está.
+    const leadId = (turnoAnterior && turnoAnterior.usado_lead_id) || null;
+    if (leadId) {
+      rpcUsuarios('usado_lead_turno_asignado', {
+        p_id: leadId, p_fecha: fechaISO, p_hora: hora
+      }).then(r => {
+        if (r === 'ok') showToast('El caso quedó en "Turno asignado" en el CRM');
+      }).catch(e => console.error('usado_lead_turno_asignado:', e));
+    }
 
     // Refresh de las vistas que estén abiertas
     const misSec = document.getElementById('misTasacionesSection');
