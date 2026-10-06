@@ -4722,12 +4722,28 @@ function renderAdminCardEsperando(t) {
   `;
 
   // Recuadro precio virtual (solo lectura, ya cargado)
+  // Arreglos que encontró el tasador y cuánto queda el virtual después de
+  // descontarlos. El precio virtual se carga suponiendo buen estado, así que lo
+  // que cuesta arreglar se resta: es la misma cuenta que hace el tasador al
+  // revés (él muestra "implícito en buen estado" = su precio + arreglos).
+  const arreglosT = totalArreglosDe(t);
+  const virtualNeto = t.precio_toma_virtual != null ? t.precio_toma_virtual - arreglosT : null;
   const precioVirtualHTML = t.precio_toma_virtual ? `
     <div style="margin-top:10px; padding:10px 12px; background:#FFFBEB; border-radius:6px; border:1px solid #FDE68A">
       <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap">
         <span style="font-size:11px; font-weight:700; color:#92400E">PRECIO VIRTUAL QUE CARGASTE</span>
         <span style="font-family:var(--mono); font-weight:700; font-size:18px; color:#92400E">$ ${formatNum(t.precio_toma_virtual)}</span>
       </div>
+      ${arreglosT > 0 ? `
+        <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px dashed #FDE68A">
+          <span style="font-size:11px; font-weight:700; color:#92400E">ARREGLOS DE LA INSPECCIÓN</span>
+          <span style="font-family:var(--mono); font-weight:700; font-size:15px; color:#B91C1C">− $ ${formatNum(arreglosT)}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px solid #FDE68A">
+          <span style="font-size:11px; font-weight:700; color:#92400E">VALOR CON LOS ARREGLOS</span>
+          <span style="font-family:var(--mono); font-weight:700; font-size:18px; color:${virtualNeto >= 0 ? '#065F46' : '#B91C1C'}">$ ${formatNum(virtualNeto)}</span>
+        </div>
+      ` : ''}
     </div>
   ` : '';
 
@@ -9748,6 +9764,24 @@ function showLoading(text) {
 }
 function hideLoading() {
   document.getElementById('loadingOverlay').classList.remove('show');
+}
+
+// ============ ARREGLOS DE LA INSPECCIÓN ============
+// Total de lo que cuesta arreglar lo que encontró el tasador: los marcadores
+// sobre la silueta más los items del checklist. Si la inspección guardó su
+// propio total, ese manda. Misma cuenta que ya hacían la ficha del admin y la
+// inspección en solo lectura, puesta en un solo lugar.
+function totalArreglosDe(tas) {
+  const af = (tas && tas.analisis_fisico) || {};
+  const marcadores = Array.isArray(af.marcadores) ? af.marcadores : [];
+  const items = af.items || {};
+  let total = 0;
+  marcadores.forEach(m => total += Number(m.costo) || 0);
+  Object.keys(items).forEach(g => Object.keys(items[g] || {}).forEach(k => {
+    total += Number((items[g][k] || {}).costo) || 0;
+  }));
+  if (af.total_arreglos != null) total = Number(af.total_arreglos) || total;
+  return total;
 }
 
 // ============ FOTOS PARA EL ADMIN: VER Y DESCARGAR ============
