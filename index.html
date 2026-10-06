@@ -1514,13 +1514,14 @@ function mostrarSelectorFlujo() {
   document.getElementById('flujoModal')?.remove();
   const actual = wizardData.flujo_carga || 'virtual';
   const html = `
-    <div id="flujoModal" class="modal-overlay">
+    <div id="flujoModal" class="modal-overlay" onclick="if(event.target===this)cerrarSelectorFlujo()">
       <div class="modal-box" style="max-width:520px">
         <div class="modal-header">
           <div style="flex:1; min-width:0">
             <div style="font-size:16px; font-weight:700; color:var(--vw-blue)">¿Qué tipo de tasación es?</div>
             <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">Define el recorrido de la tasación. Se puede cambiar antes de empezar a cargar datos.</div>
           </div>
+          <button onclick="cerrarSelectorFlujo()" title="Cerrar" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0; color:var(--vw-grey-4)">✕</button>
         </div>
         <div class="modal-body">
           <button onclick="elegirFlujo('virtual')" style="width:100%; text-align:left; padding:16px; margin-bottom:10px; background:#fff; border:2px solid ${actual === 'virtual' ? 'var(--vw-blue)' : 'var(--vw-grey-2)'}; border-radius:10px; cursor:pointer; font-family:var(--sans)">
@@ -1537,6 +1538,15 @@ function mostrarSelectorFlujo() {
   `;
   document.body.insertAdjacentHTML('beforeend', html);
   document.body.style.overflow = 'hidden';
+}
+
+// Cerrar sin elegir: si al final no va a cargar nada, no tiene por qué quedar
+// atrapada en el modal. Queda en el flujo virtual, que es el de siempre, y
+// desde el chip del primer paso puede volver a abrir esto cuando quiera.
+function cerrarSelectorFlujo() {
+  document.getElementById('flujoModal')?.remove();
+  document.body.style.overflow = '';
+  renderWizard();
 }
 
 function elegirFlujo(flujo) {
