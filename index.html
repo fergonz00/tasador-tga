@@ -795,6 +795,8 @@ input, select, textarea { font-family: var(--font); }
 <!-- Photo modal -->
 <div id="photoModal" class="photo-modal" onclick="this.classList.remove('show')">
   <img id="photoModalImg" src="">
+  <button id="photoModalDescargar" onclick="event.stopPropagation(); descargarFoto(document.getElementById('photoModalImg').src)"
+          style="position:absolute; top:18px; right:18px; padding:10px 16px; background:white; color:var(--vw-blue); border:none; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.4)">⬇ Descargar</button>
 </div>
 
 <!-- Toast -->
@@ -4386,10 +4388,7 @@ function renderArgdCard(t) {
   const c = _argdCalc(t, equivSel);
   const d = t.origen_datos || {};
 
-  const fotos = (t.fotos || []);
-  const fotosHTML = fotos.length
-    ? `<div class="fotos-admin-grid">${fotos.map(f => `<img src="${f}" onclick="showPhoto('${f}')">`).join('')}</div>`
-    : '<div style="font-size:13px;color:var(--vw-grey-3)">Sin fotos</div>';
+  const fotosHTML = fotosAdminHTML(t);
 
   const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
 
@@ -5136,10 +5135,7 @@ function renderAdminCard(t) {
   const kavak = t.precio_kavak || null;
 
   // Fotos
-  const fotosArr = t.fotos || [];
-  const fotosHTML = fotosArr.length > 0 ?
-    `<div class="fotos-admin-grid">${fotosArr.map(f => `<img src="${f}" onclick="showPhoto('${f}')">`).join('')}</div>` :
-    '<div style="font-size:13px;color:var(--vw-grey-3)">Sin fotos</div>';
+  const fotosHTML = fotosAdminHTML(t);
 
   // Fecha
   const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
@@ -9752,6 +9748,100 @@ function showLoading(text) {
 }
 function hideLoading() {
   document.getElementById('loadingOverlay').classList.remove('show');
+}
+
+// ============ FOTOS PARA EL ADMIN: VER Y DESCARGAR ============
+// Las fotos del vendedor y las que saca el tasador en la inspección viven en la
+// misma columna. Se distinguen por el nombre del archivo: las de la inspección
+// se suben como `fisico_<hora>_<n>`.
+function esFotoDelTasador(url) {
+  return /\/fisico_/.test(String(url || ''));
+}
+
+function _buscarTasacion(id) {
+  const en = l => (l || []).find(t => String(t.id) === String(id));
+  return en(typeof allTasaciones !== 'undefined' && allTasaciones)
+    || en(typeof misTasacionesData !== 'undefined' && misTasacionesData)
+    || en(typeof fisicoData !== 'undefined' && fisicoData)
+    || en(typeof agendaData !== 'undefined' && agendaData)
+    || null;
+}
+
+function _nombreDeFoto(url, tas, i) {
+  const ext = (String(url).split('?')[0].split('.').pop() || 'jpg').slice(0, 5);
+  const base = String((tas && (tas.patente || tas.cliente_nombre)) || 'tasacion')
+    .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'tasacion';
+  const quien = esFotoDelTasador(url) ? 'tasador' : 'vendedor';
+  return `${base}_${quien}_${String((i || 0) + 1).padStart(2, '0')}.${ext}`;
+}
+
+// Descarga de verdad. El atributo `download` de un <a> NO funciona con un
+// archivo de otro dominio: el navegador lo ignora y abre la imagen en vez de
+// bajarla. Por eso se trae el blob y se baja desde un object URL (verificado
+// que el storage de Supabase permite CORS).
+async function descargarFoto(url, nombre) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    const o = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = o;
+    a.download = nombre || _nombreDeFoto(url, null, 0);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(o), 2000);
+    return true;
+  } catch (e) {
+    console.error('descargarFoto:', e);
+    showToast('No se pudo descargar la foto');
+    return false;
+  }
+}
+
+async function descargarFotoDe(tasId, i) {
+  const tas = _buscarTasacion(tasId);
+  const url = tas && (tas.fotos || [])[i];
+  if (!url) { showToast('No se encontró la foto'); return; }
+  await descargarFoto(url, _nombreDeFoto(url, tas, i));
+}
+
+async function descargarTodasLasFotos(tasId) {
+  const tas = _buscarTasacion(tasId);
+  const fotos = (tas && tas.fotos) || [];
+  if (!fotos.length) { showToast('No hay fotos'); return; }
+  showToast(`Descargando ${fotos.length} fotos...`);
+  for (let i = 0; i < fotos.length; i++) {
+    await descargarFoto(fotos[i], _nombreDeFoto(fotos[i], tas, i));
+    // Pausa entre archivos: el navegador frena las descargas en ráfaga.
+    await new Promise(r => setTimeout(r, 400));
+  }
+}
+
+// Grilla de fotos del admin: marca cuáles sacó el tasador y deja descargarlas,
+// de a una o todas juntas.
+function fotosAdminHTML(tas) {
+  const fotos = (tas && tas.fotos) || [];
+  if (!fotos.length) return '<div style="font-size:13px;color:var(--vw-grey-3)">Sin fotos</div>';
+  const nTasador = fotos.filter(esFotoDelTasador).length;
+  const resumen = nTasador
+    ? `${fotos.length} fotos · ${nTasador} de la inspección`
+    : `${fotos.length} foto${fotos.length > 1 ? 's' : ''}`;
+  const items = fotos.map((f, i) => `
+    <div style="position:relative">
+      <img src="${f}" onclick="showPhoto('${f}')">
+      ${esFotoDelTasador(f) ? '<span style="position:absolute; left:4px; bottom:4px; background:#EA580C; color:#fff; font-size:9px; font-weight:700; padding:1px 5px; border-radius:3px; letter-spacing:.5px; pointer-events:none">TASADOR</span>' : ''}
+      <button onclick="event.stopPropagation(); descargarFotoDe('${tas.id}', ${i})" title="Descargar esta foto"
+              style="position:absolute; top:4px; right:4px; width:26px; height:26px; padding:0; background:rgba(255,255,255,.92); color:var(--vw-blue); border:none; border-radius:5px; cursor:pointer; font-size:13px; line-height:26px">⬇</button>
+    </div>`).join('');
+  return `
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px">
+      <span style="font-size:12px; color:var(--vw-grey-4); font-weight:600">${resumen}</span>
+      <button onclick="descargarTodasLasFotos('${tas.id}')"
+              style="padding:5px 12px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">⬇ Descargar todas</button>
+    </div>
+    <div class="fotos-admin-grid">${items}</div>`;
 }
 
 function showPhoto(url) {
