@@ -2639,6 +2639,26 @@ function ccaAnioCol(anio) {
   return (a === 0 || a >= ANIO_0KM) ? '0Km' : String(a);
 }
 
+// ============ SILUETA PARA MARCAR DAÑOS ============
+// Dos dibujos con la MISMA disposición de 5 vistas (frente, atrás, planta y los
+// dos laterales), así que los marcadores —que se guardan como % del ancho y del
+// alto— caen en el mismo lugar relativo en cualquiera de las dos.
+function siluetaPara(tipo) {
+  return tipo === 'camioneta' ? 'assets/camioneta-vistas.png' : 'assets/car-vistas.png';
+}
+// La silueta de una tasación: respeta el tipo ya guardado y, si no lo tiene, lo
+// infiere del modelo igual que hace el desplegable de la inspección.
+function siluetaDeTasacion(tas) {
+  const tipo = (tas && tas.tipo_vehiculo) || (esPickup(tas && tas.modelo) ? 'camioneta' : 'auto');
+  return siluetaPara(tipo);
+}
+// Cambio en vivo al tocar el desplegable, sin perder los marcadores ya puestos.
+function cambiarSilueta() {
+  const img = document.getElementById('carImg');
+  if (!img) return;
+  img.src = siluetaPara(document.getElementById('inspTipoVehiculo')?.value || 'auto');
+}
+
 function esPickup(modelo) {
   if (!modelo) return false;
   const m = String(modelo).toUpperCase();
@@ -5844,7 +5864,7 @@ async function imprimirHojaFinal(tasId) {
   const pd = af.prueba_dinamica || {};
   const pruebaTxt = pd.realizada ? ('Sí' + (pd.realizo ? ' · por ' + pd.realizo : '')) : 'No realizada';
   // URL absoluta de la silueta — relativo no resuelve en una ventana abierta vía window.open('').
-  const carImgUrl = new URL('assets/car-vistas.png', window.location.href).href;
+  const carImgUrl = new URL(siluetaDeTasacion(tas), window.location.href).href;
   // Marcadores numerados sobre la silueta (mismo orden que la lista de daños).
   const marcadoresOverlayHTML = marcadores.map((m, idx) => `
     <div style="position:absolute; left:${m.x}%; top:${m.y}%; transform:translate(-50%,-50%); width:18px; height:18px; background:#F97316; color:white; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; border:1.5px solid white; box-shadow:0 1px 2px rgba(0,0,0,0.4)">${idx+1}</div>
@@ -6406,7 +6426,7 @@ function renderInspeccionDetalleInline(t, af) {
       <h3 style="margin:0 0 8px 0; font-size:14px; color:#5B21B6">Marcadores sobre el auto</h3>
       ${marcadores.length > 0 ? `
         <div style="position:relative; display:inline-block; max-width:100%; border:1px solid var(--vw-grey-2); border-radius:6px; overflow:hidden">
-          <img src="assets/car-vistas.png" style="display:block; width:100%; max-width:720px; height:auto">
+          <img src="${siluetaDeTasacion(t)}" style="display:block; width:100%; max-width:720px; height:auto">
           ${marcadores.map((m, idx) => `
             <div style="position:absolute; left:${m.x}%; top:${m.y}%; transform:translate(-50%,-50%); width:26px; height:26px; background:var(--red); color:white; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; border:2px solid white; box-shadow:0 2px 4px rgba(0,0,0,0.3)">${idx+1}</div>
           `).join('')}
@@ -8782,7 +8802,7 @@ function renderInspeccionSoloLectura(tas, prev) {
       <h3 style="margin:0 0 8px 0; font-size:15px; color:var(--vw-blue)">Marcadores sobre el auto</h3>
       ${marcadores.length === 0 ? '<div style="font-size:13px; color:var(--vw-grey-3); font-style:italic">No marcaste daños sobre la silueta.</div>' : `
         <div style="position:relative; display:inline-block; max-width:100%; border:1px solid var(--vw-grey-2); border-radius:6px; overflow:hidden">
-          <img src="assets/car-vistas.png" style="display:block; width:100%; max-width:720px; height:auto">
+          <img src="${siluetaDeTasacion(tas)}" style="display:block; width:100%; max-width:720px; height:auto">
           ${marcadores.map((m, idx) => `
             <div style="position:absolute; left:${m.x}%; top:${m.y}%; transform:translate(-50%,-50%); width:26px; height:26px; background:#F97316; color:white; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; border:2px solid white; box-shadow:0 2px 4px rgba(0,0,0,0.3)">${idx+1}</div>
           `).join('')}
@@ -9001,7 +9021,7 @@ function renderInspeccionFormulario(tas, prev) {
 
       <div style="margin-bottom:14px">
         <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px">Tipo de vehículo</label>
-        <select id="inspTipoVehiculo" style="width:100%; padding:8px; font-size:13px">
+        <select id="inspTipoVehiculo" onchange="cambiarSilueta()" style="width:100%; padding:8px; font-size:13px">
           <option value="auto" ${tipoVehPrev==='auto'?'selected':''}>Auto</option>
           <option value="camioneta" ${tipoVehPrev==='camioneta'?'selected':''}>Camioneta</option>
         </select>
@@ -9090,7 +9110,7 @@ function renderInspeccionFormulario(tas, prev) {
       <h3 style="margin:0 0 6px 0; font-size:15px; color:var(--vw-blue)">Marcá los daños sobre el auto</h3>
       <div style="font-size:12px; color:var(--vw-grey-4); margin-bottom:12px">Tocá sobre la silueta en el lugar donde ves un detalle. Vas a poder elegir el tipo de daño y agregar una nota corta.</div>
       <div id="carImgWrap" style="position:relative; display:inline-block; max-width:100%; border:1px solid var(--vw-grey-2); border-radius:6px; overflow:hidden; user-select:none">
-        <img id="carImg" src="assets/car-vistas.png" style="display:block; width:100%; max-width:720px; height:auto; cursor:crosshair" onclick="onCarImgClick(event)" draggable="false">
+        <img id="carImg" src="${siluetaPara(tipoVehPrev)}" style="display:block; width:100%; max-width:720px; height:auto; cursor:crosshair" onclick="onCarImgClick(event)" draggable="false">
         <!-- Marcadores posicionados absolutos vienen acá -->
       </div>
       <div id="marcadoresList" style="margin-top:12px"></div>
