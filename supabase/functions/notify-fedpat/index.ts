@@ -427,6 +427,28 @@ const EXTRA: Record<string, unknown[]> = {
       "Si no se eligen antes del vencimiento, no se ofertan. Se eligen en el portal de Repuestos.",
     example: { body_text: [["German", "7 pedidos", "URGENTE: 3 vencen hoy (Gol Trend óptica DD, Polo paragolpes trasero, Taos moldura)"]] },
   }],
+  // a Fer, cuando contesta una aseguradora o plataforma (Claims, ORIÓN/CESVI) a la
+  // que pedimos el alta como proveedor de repuestos. Lo dispara
+  // fedpat-repuestos/altas/vigia_respuestas.py. Tres redacciones como control de
+  // un trámite propio; se usa la primera que Meta apruebe como UTILITY.
+  licitaciones_respuesta_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, en el trámite de alta como proveedor de repuestos quedó una respuesta sin atender: {{2}}. {{3}}. " +
+      "Está en la casilla fngonzalez@ para que la revises y se conteste.",
+    example: { body_text: [["Fer", "La Holando (Daniel Sabha)", "Pide el formulario de alta de proveedor y las constancias de ARCA, IIBB y CBU"]] },
+  }],
+  licitaciones_respuesta_2: [{
+    type: "BODY",
+    text: "Hola {{1}}, el control de los trámites de alta como proveedor de repuestos registró un mail sin contestar de {{2}}. {{3}}. " +
+      "Revisalo en la casilla fngonzalez@ para responder.",
+    example: { body_text: [["Fer", "Claims Services", "Confirman el cambio a concesionario oficial en la ficha"]] },
+  }],
+  licitaciones_respuesta_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, en tu gestión de alta como proveedor de repuestos hay un mail pendiente de {{2}}. {{3}}. " +
+      "Quedó en la casilla fngonzalez@.",
+    example: { body_text: [["Fer", "CESVI (ORIÓN)", "Piden confirmar los usuarios habilitados"]] },
+  }],
 };
 
 async function postJson(url: string, token: string, payload: unknown) {
