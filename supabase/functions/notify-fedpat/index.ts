@@ -431,6 +431,26 @@ const EXTRA: Record<string, unknown[]> = {
   // que pedimos el alta como proveedor de repuestos. Lo dispara
   // fedpat-repuestos/altas/vigia_respuestas.py. Tres redacciones como control de
   // un trámite propio; se usa la primera que Meta apruebe como UTILITY.
+  // a Fer, Maxi y el celular de Repuestos, cuando ORIÓN emite una orden de compra a nuestro
+  // nombre (= ganamos). A las 24 h hay que aceptarla o rechazarla y, mientras tanto, ORIÓN no
+  // deja cotizar pedidos nuevos. Lo dispara orion-repuestos/ciclo.py.
+  orion_orden_compra_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, en ORIÓN quedó una orden de compra a nuestro nombre que hay que aceptar o rechazar dentro de las 24 horas: {{2}}. {{3}}. " +
+      "Mientras no se responda, ORIÓN no deja cotizar pedidos nuevos.",
+    example: { body_text: [["Fer", "Zurich, siniestro 91614277-1, Tiguan Allspace AC467AF", "5 piezas, $ 1.517.667 sin IVA"]] },
+  }],
+  orion_orden_compra_2: [{
+    type: "BODY",
+    text: "Hola {{1}}, control de ORIÓN Repuestos: hay una orden de compra pendiente de aceptar o rechazar en el plazo de 24 horas: {{2}}. {{3}}.",
+    example: { body_text: [["Fer", "Zurich, siniestro 91614277-1, Tiguan Allspace AC467AF", "5 piezas, $ 1.517.667 sin IVA"]] },
+  }],
+  orion_orden_compra_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, la aseguradora emitió en ORIÓN una orden de compra de repuestos que todavía no fue respondida: {{2}}. {{3}}. " +
+      "Se acepta o rechaza en ORIÓN, menú Compras.",
+    example: { body_text: [["Fer", "Zurich, siniestro 91614277-1, Tiguan Allspace AC467AF", "5 piezas, $ 1.517.667 sin IVA"]] },
+  }],
   licitaciones_respuesta_1: [{
     type: "BODY",
     text: "Hola {{1}}, en el trámite de alta como proveedor de repuestos quedó una respuesta sin atender: {{2}}. {{3}}. " +
