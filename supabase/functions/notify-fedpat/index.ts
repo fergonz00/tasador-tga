@@ -451,6 +451,20 @@ const EXTRA: Record<string, unknown[]> = {
       "Se acepta o rechaza en ORIÓN, menú Compras.",
     example: { body_text: [["Fer", "Zurich, siniestro 91614277-1, Tiguan Allspace AC467AF", "5 piezas, $ 1.517.667 sin IVA"]] },
   }],
+  // a Fer, Maxi y el celular de Repuestos cuando CLAIMS nos adjudica (o pre-adjudica) una licitación:
+  // hay que agendar la entrega en la plataforma. Lo dispara claims-repuestos/ciclo.py.
+  claims_adjudicada_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, en CLAIMS quedó una licitación de repuestos adjudicada a nuestro nombre: {{2}}. {{3}}. " +
+      "Hay que preparar las piezas y agendar la entrega en la plataforma.",
+    example: { body_text: [["Fer", "La Holando, siniestro 4296517, Vento HNA112", "ADJUDICADA en CLAIMS. Entrega en Taller Jesicat"]] },
+  }],
+  claims_adjudicada_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, control de CLAIMS Repuestos: la aseguradora nos asignó la compra de repuestos de {{2}}. {{3}}. " +
+      "La entrega se agenda y se confirma en CLAIMS.",
+    example: { body_text: [["Fer", "La Holando, siniestro 4296517, Vento HNA112", "ADJUDICADA en CLAIMS. Entrega en Taller Jesicat"]] },
+  }],
   licitaciones_respuesta_1: [{
     type: "BODY",
     text: "Hola {{1}}, en el trámite de alta como proveedor de repuestos quedó una respuesta sin atender: {{2}}. {{3}}. " +
