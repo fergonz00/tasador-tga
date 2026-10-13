@@ -1693,11 +1693,17 @@ async function precargarDesdeUsado(id) {
     if (u.ofrecimos != null) obs.push('Ya le ofrecimos $ ' + formatNum(Math.round(u.ofrecimos)) + ' por el usado.');
     if (u.pide != null) obs.push('Pedía $ ' + formatNum(Math.round(u.pide)) + ' en el aviso.');
     if (u.nota) obs.push('Nota del CRM: ' + u.nota);
-    if (obs.length) {
-      wizardData.comentarioVendedorSiNo = true;
-      wizardData.comentarioVendedor = obs.join(' · ');
-      usadoPrecargado.comentarioVendedor = true;
-    }
+    // ⭐ Lo del CRM NO se mete adentro del cuadro de texto: queda aparte, de
+    // solo lectura, y el comentario propio arranca vacio y obligatorio.
+    // Fer, 13-10-2026: "cuando el vendedor me carga algo como usado de ML para
+    // que analice el vendedor, quiero que tenga que escribir la consulta".
+    // Antes el campo venia lleno con lo que contesto el dueño y era opcional,
+    // asi que se podía mandar la tasacion sin una sola palabra propia y el
+    // tasador no se enteraba de que le consulto el cliente.
+    if (obs.length) wizardData.comentarioCrmML = obs.join(' · ');
+    wizardData.esDesdeUsadoML = true;
+    wizardData.comentarioVendedorSiNo = true;
+    wizardData.comentarioVendedor = '';
 
     hideLoading();
     renderWizard();
@@ -2384,12 +2390,37 @@ function renderStep10() { // Fotos (o solo el resumen, en el flujo portal)
   `;
 }
 
-function renderStep11() { // Comentario opcional del vendedor (GNC, modelo no exacto, etc.)
+function renderStep11() { // Comentario del vendedor (GNC, modelo no exacto, etc.)
   const yaTiene = wizardData.comentarioVendedorSiNo;
   const txt = wizardData.comentarioVendedor || '';
-  const selSi = yaTiene === true ? 'checked' : '';
-  const selNo = yaTiene === false ? 'checked' : '';
-  const showTxt = yaTiene === true ? '' : 'display:none';
+  // En los casos que vienen de la solapa Usados el comentario es OBLIGATORIO y
+  // no hay Si/No que elegir: se escribe, o no se manda.
+  const desdeML = wizardData.esDesdeUsadoML === true;
+  const selSi = (yaTiene === true || desdeML) ? 'checked' : '';
+  const selNo = (yaTiene === false && !desdeML) ? 'checked' : '';
+  const showTxt = (yaTiene === true || desdeML) ? '' : 'display:none';
+  if (desdeML) {
+    const delCrm = wizardData.comentarioCrmML
+      ? `<div style="margin-top:14px; padding:12px 14px; background:#FEF3C7; border-left:3px solid #D97706; border-radius:4px; font-size:13px; color:#78350F; line-height:1.6">
+           <div style="font-size:10px; font-weight:700; letter-spacing:0.5px; margin-bottom:4px">LO QUE YA SABEMOS DEL CRM</div>
+           ${_escapeHtmlUsr(wizardData.comentarioCrmML)}
+         </div>`
+      : '';
+    return `
+      ${stepNum()}
+      <h2>¿Qué te consultó el cliente?</h2>
+      <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.6">Escribí con tus palabras qué te pidió el dueño del auto cuando hablaste con él: qué está buscando, si quiere vender o cambiar, y cualquier cosa del usado que el tasador tenga que saber (GNC, choques, el modelo exacto).</div>
+      ${delCrm}
+      <div style="margin-top:16px">
+        <label>Tu comentario <span style="color:#B91C1C">(obligatorio)</span></label>
+        <textarea id="wComentarioVendedor" rows="5" placeholder="Ej: Lo llamé, quiere cambiarlo por una Saveiro 0km y entregar el Gol. Dice que tiene GNC y que el servicio está al día." oninput="validateStep()" style="resize:vertical; min-height:100px; width:100%; padding:10px 12px; font-family:inherit; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:8px; box-sizing:border-box">${_escapeHtmlUsr(txt)}</textarea>
+      </div>
+      <div class="wizard-nav">
+        <button class="btn-back" onclick="prevStep()">Atrás</button>
+        <button class="btn-submit" id="btnNext" disabled onclick="submitTasacion()">${wizardData.flujo_carga === 'portal' ? 'Enviar tasación y agendar turno' : 'Enviar tasación'}</button>
+      </div>
+    `;
+  }
   return `
     <style>
       .com-opt { display:flex; align-items:center; gap:12px; padding:14px 18px; border:2px solid var(--vw-grey-2); border-radius:10px; cursor:pointer; font-weight:600; transition:all .15s; background:#fff; }
@@ -2508,6 +2539,16 @@ function saveCurrentStep() {
     case 12: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
     case 14: {
       // Comentario opcional del vendedor (SI/NO + textarea)
+      // Desde la solapa Usados no hay Si/No: siempre va con texto, y lo del CRM
+      // se pega adelante para que la tasacion guarde las dos cosas en un campo.
+      if (wizardData.esDesdeUsadoML === true) {
+        const mio = val('wComentarioVendedor') || '';
+        wizardData.comentarioVendedorSiNo = true;
+        wizardData.comentarioVendedor = wizardData.comentarioCrmML
+          ? (wizardData.comentarioCrmML + ' · Consulta: ' + mio)
+          : mio;
+        break;
+      }
       const sel = (document.querySelector('input[name="wComentarioSiNo"]:checked') || {}).value;
       if (sel === 'si') {
         wizardData.comentarioVendedorSiNo = true;
@@ -2593,6 +2634,10 @@ function validateStep() {
     case 13: valid = true; break; // fotos: opcionales, siempre puede pasar de pantalla
     case 14: {
       // Comentario opcional del vendedor: si NO → válido; si SI → requiere texto
+      if (wizardData.esDesdeUsadoML === true) {
+        valid = (val('wComentarioVendedor') || '').length >= 15;
+        break;
+      }
       const sel = (document.querySelector('input[name="wComentarioSiNo"]:checked') || {}).value;
       if (sel === 'no') { valid = true; break; }
       if (sel === 'si') { valid = (val('wComentarioVendedor') || '').length >= 5; break; }
