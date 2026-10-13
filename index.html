@@ -3471,8 +3471,10 @@ function renderAdminList(tasaciones) {
     // Por etapa del circuito, en el orden en que se trabajan. Nada desaparece:
     // lo ofrecido queda esperando respuesta y lo que contestó sube arriba de todo.
     const ETAPAS = [
-      { id: 'contesto', titulo: '💬 Contestaron', color: '#065F46', fondo: '#D1FAE5',
-        ayuda: 'Respondieron la oferta. Hay que contestarles.' },
+      { id: 'cierre', titulo: '🤝 Pusieron precio para cerrar', color: '#5B21B6', fondo: '#EDE9FE',
+        ayuda: 'Dijeron a cuánto lo venden. Es el único grupo donde hay un número para comparar contra la permuta de Kavak.' },
+      { id: 'contesto', titulo: '💬 Contestaron sin precio', color: '#065F46', fondo: '#D1FAE5',
+        ayuda: 'Respondieron pero NO dijeron a cuánto cierran: es negociación. Hay que contestarles y sacarles el número.' },
       { id: 'para_ofertar', titulo: '💰 Para ofertar', color: '#92400E', fondo: '#FFFBEB',
         ayuda: 'Mirá las fotos y el comparativo, y poné el precio que ofrecés.' },
       { id: 'ofrecido', titulo: '✉️ Ya les ofrecí — esperando respuesta', color: '#1E40AF', fondo: '#EFF6FF',
@@ -3926,9 +3928,157 @@ function _refCompra(t) {
   return { ok: true, pide, mejor, dif, fuente, motivo: null };
 }
 
+/**
+ * El precio al que el dueño dice que cierra, sacado de lo que contestó.
+ *
+ * Fer, 13-10-2026: "quiero saber claramente si el cliente pide o no un precio
+ * para cerrar. Esas consultas son mayormente como negociación."
+ *
+ * ⚠️ Lo difícil no es encontrar números: es NO confundir un teléfono con un
+ * precio. De las 64 respuestas reales que había el 13-10, solo 3 traían un
+ * precio y 6 traían un teléfono. Hacen falta los dos filtros:
+ *   1. el monto tiene que caer cerca de lo que pide el aviso — un celular leído
+ *      como número da miles de millones y se cae solo;
+ *   2. un número SIN puntos de miles solo vale si adelante hay un $ o una
+ *      palabra de plata, y NUNCA si adelante dice tel / whatsapp / contacto.
+ *      Sin esto, "les dejo mi tel: 11 53032222" se leía como $53.032.222 en un
+ *      auto de $45.000.000.
+ * Probado contra las 64 respuestas: encuentra las 3 reales y ninguno de los 6
+ * teléfonos.
+ */
+const _RE_PLATA = /(?:\$|precio|vale|sale|pido|pid[eo]|dej[oa]|cierr[oa]|cerrar|bajo|baj[ae]|sirve|acepto|cobro)(?:\s+(?:en|a|de|por|lo|la|el|te|me|y)){0,3}\s*[:\-]?\s*$/i;
+const _RE_TEL = /(?:tel|telefono|teléfono|whats|wpp|wsp|cel|celular|contacto|numero|número|llam\w*|mi n°)\D{0,12}$/i;
+
+function precioCierreDeTexto(txt, pide) {
+  const t = String(txt || '');
+  if (!t || !pide) return null;
+  const MIN = pide * 0.5, MAX = pide * 1.5;
+  const cand = [];
+  const sumar = (v, como, desde) => {
+    if (!isFinite(v) || v < MIN || v > MAX) return;
+    if (_RE_TEL.test(t.slice(Math.max(0, desde - 30), desde))) return;
+    cand.push({ v, como });
+  };
+  let m;
+  const re1 = /(\d{1,3}(?:[.,]\d{1,3})?)\s*(?:millones|millon|millón|palos|palo)\b/gi;
+  while ((m = re1.exec(t))) sumar(parseFloat(m[1].replace(',', '.')) * 1000000, m[0].trim(), m.index);
+  const re2 = /\$?\s*(\d{1,3}(?:[.,]\d{3}){1,3})\b/g;
+  while ((m = re2.exec(t))) sumar(Number(m[1].replace(/[.,]/g, '')), m[0].trim(), m.index);
+  const re3 = /(\$\s*)?(\d{7,9})\b/g;
+  while ((m = re3.exec(t))) {
+    if (!m[1] && !_RE_PLATA.test(t.slice(Math.max(0, m.index - 20), m.index))) continue;
+    sumar(Number(m[2]), m[0].trim(), m.index);
+  }
+  const re4 = /(\d{1,3}(?:[.,]\d{1,2})?)\s*M\b/g;
+  while ((m = re4.exec(t))) sumar(parseFloat(m[1].replace(',', '.')) * 1000000, m[0].trim(), m.index);
+  if (!cand.length) return null;
+  // El más bajo: si nombra dos cifras, la que sirve es la que aceptaría cobrar.
+  cand.sort((a, b) => a.v - b.v);
+  return { monto: cand[0].v, como: cand[0].como };
+}
+
+/**
+ * El precio de cierre de un caso, mirando primero lo que cargó una persona.
+ * Devuelve { monto, fuente, confirmado } o null si no hay precio.
+ *   fuente 'mano'  -> lo escribió un vendedor (manda siempre)
+ *   fuente 'texto' -> lo leyó el detector de la respuesta
+ */
+function _cierreML(t) {
+  const d = t.origen_datos || {};
+  if (d.cierre_sin_precio) return null;          // alguien confirmó que no dio precio
+  if (d.cierre_precio) {
+    return { monto: Number(d.cierre_precio), fuente: 'mano', confirmado: true,
+             por: d.cierre_precio_por || null };
+  }
+  const auto = precioCierreDeTexto(d.oferta_respuesta, Number(d.pide) || 0);
+  return auto ? { monto: auto.monto, fuente: 'texto', confirmado: false, como: auto.como } : null;
+}
+
+/**
+ * El precio de cierre contra la permuta de Kavak, que es lo que podemos pagar.
+ * Si el dueño no dijo ningún número, lo dice con todas las letras: eso también
+ * es información (Fer: "esas consultas son mayormente como negociación").
+ */
+function _bloqueCierreML(t) {
+  const d = t.origen_datos || {};
+  const c = _cierreML(t);
+  const permuta = Number(t.precio_kavak_auto) || 0;
+  const esVW = /^(volkswagen|vw)$/i.test(String(t.marca || '').trim());
+  const nombreRef = esVW ? 'permuta de Kavak' : 'Kavak (venta sola)';
+  const campo = `cierre_${t.id}`;
+
+  const controles = `
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:7px">
+      <input id="${campo}" type="number" inputmode="numeric" placeholder="precio para cerrar"
+             value="${d.cierre_precio || ''}"
+             style="flex:1; min-width:150px; padding:5px 8px; font-size:12px; border:1px solid var(--vw-grey-2); border-radius:6px">
+      <button onclick="event.stopPropagation(); guardarCierreML('${t.id}', document.getElementById('${campo}').value, false)"
+              style="padding:5px 10px; background:#5B21B6; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer">Guardar</button>
+      <button onclick="event.stopPropagation(); guardarCierreML('${t.id}', null, true)"
+              style="padding:5px 10px; background:#fff; color:var(--vw-grey-5); border:1px solid var(--vw-grey-2); border-radius:6px; font-size:12px; cursor:pointer">No dio precio</button>
+    </div>`;
+
+  if (!c) {
+    return `<div style="margin-top:7px; padding:7px 9px; background:#FFF7ED; border-left:3px solid #EA580C; border-radius:4px; font-size:12px; color:#7C2D12">
+      <b>NO dijo a cuánto cierra</b> — es negociación: sacale el número.
+      ${d.cierre_sin_precio ? '<span style="opacity:.7"> (confirmado a mano)</span>' : ''}
+      ${controles}
+    </div>`;
+  }
+
+  const dif = permuta ? (permuta / c.monto - 1) : null;
+  const alcanza = dif !== null && dif >= 0;
+  const veredicto = dif === null
+    ? '<span style="color:var(--vw-grey-5)">todavía no hay cotización de Kavak para comparar</span>'
+    : (alcanza
+        ? `<span style="color:#065F46; font-weight:800">LLEGAMOS: la ${nombreRef} paga ${formatNum(Math.round(permuta - c.monto))} MÁS de lo que pide para cerrar</span>`
+        : `<span style="color:#991B1B; font-weight:800">FALTAN ${formatNum(Math.round(c.monto - permuta))} (${(dif * 100).toFixed(1)}%)</span>`);
+
+  return `<div style="margin-top:7px; padding:8px 10px; background:#EDE9FE; border-left:3px solid #5B21B6; border-radius:4px; font-size:12px; color:#2E1065">
+      <div style="font-weight:800; font-size:13px">🤝 Cierra en $ ${formatNum(Math.round(c.monto))}
+        <span style="font-weight:600; opacity:.75">${c.fuente === 'mano' ? '· lo cargó ' + (c.por || 'un vendedor') : '· leído de lo que contestó ("' + (c.como || '') + '")'}</span>
+      </div>
+      <div style="margin-top:3px; display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap">
+        <span>${nombreRef}: <b>$ ${permuta ? formatNum(Math.round(permuta)) : '—'}</b></span>
+        <span>${veredicto}</span>
+      </div>
+      ${c.fuente === 'texto' ? '<div style="margin-top:3px; font-size:11px; opacity:.8">Lo leyó el robot del texto. Si está mal, corregilo acá abajo.</div>' : ''}
+      ${controles}
+    </div>`;
+}
+
+// Guarda a mano el precio de cierre, o deja asentado que el dueño no dio ninguno.
+async function guardarCierreML(id, monto, sinPrecio) {
+  const t = (allTasaciones || []).find(x => x.id === id);
+  if (!t) return;
+  const v = sinPrecio ? null : Math.round(Number(monto) || 0);
+  if (!sinPrecio && !(v > 0)) { showToast('Poné el precio al que cierra'); return; }
+  const d = Object.assign({}, t.origen_datos || {}, {
+    cierre_precio: sinPrecio ? null : v,
+    cierre_precio_at: new Date().toISOString(),
+    cierre_precio_por: (currentUser && currentUser.nombre) || null,
+    cierre_sin_precio: !!sinPrecio
+  });
+  try {
+    await sbFetch(`tasaciones?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ origen_datos: d, updated_at: new Date().toISOString() })
+    });
+    showToast(sinPrecio ? 'Anotado: no dio precio para cerrar'
+                        : 'Cierra en $ ' + formatNum(v));
+    loadAdminTasaciones('compra_ml');
+  } catch (e) {
+    showToast('No pude guardar: ' + String(e.message || e).slice(0, 80));
+  }
+}
+
 /** Etapa del circuito. Es lo que ordena la solapa. */
 function _etapaML(t) {
   const d = t.origen_datos || {};
+  // ⭐ Los que pusieron un precio para cerrar van en su propia etapa, arriba de
+  // todo: son los únicos donde hay un número con el que negociar. El resto de
+  // los que contestaron son charla ("¿cuánto me das?", "pasame tu teléfono").
+  if (d.oferta_respondida_at && _cierreML(t)) return 'cierre';
   if (d.oferta_respondida_at) return 'contesto';
   if (d.oferta_enviada_at) return 'ofrecido';
   // Descartado a mano o por el tope de diferencia: no se oferta, pero la fila
@@ -4169,6 +4319,7 @@ function _bloqueCompraML(t) {
           ${_pareceSi(d.oferta_respuesta) ? '<div style="font-weight:800; color:#065F46">\u2705 PARECE QUE ACEPTA \u2014 llamalo</div>' : ''}
           <b>Contestó el ${new Date(d.oferta_respondida_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}:</b>
           <div style="margin-top:2px; white-space:pre-wrap">${(d.oferta_respuesta || '').replace(/</g, '&lt;')}</div>
+          ${_bloqueCierreML(t)}
           ${d.link ? `<a href="${d.link}" target="_blank" rel="noopener" style="font-size:11px">contestarle en el aviso ↗</a>` : ''}
         </div>` : '<div style="margin-top:4px; font-size:11px; opacity:.8">Todavía no contestó. Cuando lo haga llega un WhatsApp.</div>'}
       </div>` : (() => {
