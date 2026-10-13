@@ -5394,7 +5394,14 @@ function renderAdminCard(t) {
     vwMercado = t.precio_formula_vw || null;
   }
   let vwAjustado = vwMercado ? vwMercado * (1 + ajuste/100) : null;
-  let vwToma = vwAjustado ? vwAjustado * 0.86 : null;
+  // ⚠️ Acá habia un 0.86 escrito a mano en vez de FG_TOMA, y las otras dos
+  // vistas de la Formula FG usan FG_TOMA (= 1,00). El mismo auto mostraba
+  // $42.876.651 en la tarjeta y $35.533.163 en el detalle, y el cartelito de
+  // abajo decia "Toma = mercado" en los dos lados, asi que el numero chico no
+  // se explicaba con nada de lo que estaba escrito en pantalla. Lo encontro Fer
+  // el 13-10-2026 al cambiar la rotacion: el chip mueve 3,8% en un auto de dos
+  // años, no 17%. La diferencia era este factor.
+  let vwToma = vwAjustado ? vwAjustado * FG_TOMA : null;
 
   // Kavak
   const kavak = t.precio_kavak || null;
