@@ -1008,7 +1008,7 @@ let fisicoTasacionActual = null;
 // ============ SUPABASE HELPERS ============
 // Tablas internas con RLS: van por el proxy firmado (db-proxy) con la sesión
 // del operador (via _waSession, que resiste la impersonación). El resto directo.
-const _TABLAS_PROXY = ['tasaciones','notificaciones_config','consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas'];
+const _TABLAS_PROXY = ['tasaciones','notificaciones_config','consultas_0km','consultas_0km_items','consultas_usados','consultas_reaperturas','portal_ofertas'];
 async function sbFetch(path, options = {}) {
   const tabla = (String(path).match(/^([a-zA-Z0-9_]+)/) || [])[1];
   if (_TABLAS_PROXY.includes(tabla)) {
@@ -1168,6 +1168,33 @@ async function loadCCA() {
 }
 
 async function loadVW() {
+  // ⭐ El precio del 0km sale de `portal_ofertas`, que es la MISMA tabla que Fer
+  // mira en /precios. Antes salia de una planilla de Google aparte y los dos
+  // numeros se habian ido separando: el 13-10-2026 los 47 modelos diferian, la
+  // peor la Amarok Highline TDI MT con $4.564.816. Como la Formula FG arranca
+  // de ese numero, toda la tasacion quedaba corrida.
+  //
+  // Fer, 13-10-2026: "el precio de contado esta mal, tenes que tomar el mio".
+  //
+  // La planilla queda de paracaidas: si el portal no contesta, el tasador sigue
+  // andando con el numero viejo en vez de quedarse sin ningun 0km, que dejaria
+  // la Formula FG en blanco en todas las tasaciones.
+  try {
+    const filas = await sbFetch('portal_ofertas?select=modelo,precio_lista,oferta_fyf&limit=300');
+    const buenas = (filas || []).filter(r => r && r.modelo && Number(r.oferta_fyf) > 0);
+    if (buenas.length) {
+      vwData = buenas.map(r => ({
+        modelo: String(r.modelo).trim(),
+        precio_oferta_fyf: Number(r.oferta_fyf),
+        precio_0km: Math.max(0, Number(r.oferta_fyf) - FYF)
+      }));
+      console.log('VW cargado del portal:', vwData.length, 'modelos');
+      return;
+    }
+    console.warn('portal_ofertas vino vacio: caigo a la planilla');
+  } catch (e) {
+    console.warn('no pude leer portal_ofertas, caigo a la planilla:', e);
+  }
   try {
     const res = await fetch(VW_CSV_URL);
     const text = await res.text();
