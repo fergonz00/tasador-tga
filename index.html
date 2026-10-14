@@ -2442,6 +2442,7 @@ function renderStep11() { // Comentario del vendedor (GNC, modelo no exacto, etc
         <label>Tu comentario <span style="color:#B91C1C">(obligatorio)</span></label>
         <textarea id="wComentarioVendedor" rows="5" placeholder="Ej: Lo llamé, quiere cambiarlo por una Saveiro 0km y entregar el Gol. Dice que tiene GNC y que el servicio está al día." oninput="validateStep()" style="resize:vertical; min-height:100px; width:100%; padding:10px 12px; font-family:inherit; font-size:14px; border:1px solid var(--vw-grey-2); border-radius:8px; box-sizing:border-box">${_escapeHtmlUsr(txt)}</textarea>
       </div>
+      <div id="wComentarioHint" style="margin-top:8px; font-size:13px; color:#B91C1C; font-weight:600"></div>
       <div class="wizard-nav">
         <button class="btn-back" onclick="prevStep()">Atrás</button>
         <button class="btn-submit" id="btnNext" disabled onclick="submitTasacion()">${wizardData.flujo_carga === 'portal' ? 'Enviar tasación y agendar turno' : 'Enviar tasación'}</button>
@@ -2662,7 +2663,19 @@ function validateStep() {
     case 14: {
       // Comentario opcional del vendedor: si NO → válido; si SI → requiere texto
       if (wizardData.esDesdeUsadoML === true) {
-        valid = (val('wComentarioVendedor') || '').length >= 15;
+        const txtCom = val('wComentarioVendedor') || '';
+        valid = txtCom.length >= 15;
+        // El botón se quedaba gris sin decir por qué: al lado está el recuadro
+        // amarillo del CRM lleno de datos, así que parece que ya está completo.
+        const hint = document.getElementById('wComentarioHint');
+        if (hint) {
+          hint.textContent = valid ? ''
+            : (txtCom.length === 0
+                ? 'Escribí tu comentario para poder enviar la tasación.'
+                : (15 - txtCom.length === 1
+                    ? 'Contá un poco más: falta 1 carácter.'
+                    : `Contá un poco más: faltan ${15 - txtCom.length} caracteres.`));
+        }
         break;
       }
       const sel = (document.querySelector('input[name="wComentarioSiNo"]:checked') || {}).value;
