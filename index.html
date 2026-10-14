@@ -884,6 +884,25 @@ const FG_0KM_A_USADO = 1.10;
 
 const FG_TOMA = 1.00;
 
+// El subtitulo de la caja de la Formula FG.
+//
+// ⚠️ Antes decia "Mercado: $X" y abajo "Toma = mercado", con el MISMO numero
+// arriba y abajo. Fer, 14-10-2026: *"por que el precio de mercado dice lo mismo
+// que la quita? o sea yo necesito precio de TOMA"*. Se leia como si la caja
+// mostrara un precio de mercado, cuando el numero YA es de toma: la formula le
+// saco el escalon de 0km a usado (dividido 1,10) y la rotacion por año, y el
+// factor quedo en 1,00 justamente para que el margen contra la vidriera de
+// Kavak sea ~15%, que es el que pidio Fer el 5-10-2026.
+//
+// Medido el 14-10-2026 sobre 209 casos con FG y Kavak: la FG esta en la mediana
+// a 1,02 de lo que Kavak PAGA en permuta, y 13% abajo de lo que Kavak VENDE.
+// O sea: es un precio de toma, no de vidriera. Lo que estaba mal era el cartel.
+function subtituloFG(rotacion) {
+  return FG_TOMA < 1
+    ? 'Precio de TOMA (-' + Math.round((1 - FG_TOMA) * 100) + '%) · Rotación ' + rotacion + '%'
+    : 'Es precio de TOMA: ya trae el paso de 0km a usado y la rotación · Rotación ' + rotacion + '%';
+}
+
 // ============ INFOAUTO ============
 // Guía de precios de InfoAuto, la otra tabla del mercado. La sumó Fazzini como
 // referencia (Fer, 4/5-10-2026). Misma forma que el CCA: versión × año.
@@ -4796,7 +4815,7 @@ function renderArgdCard(t) {
       <div class="precio-box vw" style="flex:1; min-width:150px">
         <div class="label">Fórmula FG</div>
         <div class="valor">${c.fgToma ? '$ ' + formatNum(c.fgToma) : 'N/A'}</div>
-        <div class="sub">Mercado: ${c.fgAjustado ? '$ ' + formatNum(Math.round(c.fgAjustado)) : '-'}<br>${FG_TOMA < 1 ? 'Toma -' + Math.round((1-FG_TOMA)*100) + '%' : 'Toma = mercado'} · Rotación ${c.rotacion}%</div>
+        <div class="sub">${subtituloFG(c.rotacion)}</div>
         ${bloqueado ? '' : `
         <div style="margin-top:6px; display:flex; gap:3px; justify-content:center; flex-wrap:wrap">
           ${[
@@ -4998,7 +5017,7 @@ function renderPreciosReferenciaHTML(t) {
       <div class="precio-box vw">
         <div class="metodo">Fórmula FG</div>
         <div class="valor">${vwToma ? '$ ' + formatNum(Math.round(vwToma)) : 'N/A'}</div>
-        <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>${FG_TOMA < 1 ? 'Toma -' + Math.round((1-FG_TOMA)*100) + '%' : 'Toma = mercado'} · Rotación ${rotacion}%</div>
+        <div class="sub">${subtituloFG(rotacion)}</div>
         ${descRowHTML(vwToma)}
         <div style="margin-top:6px; display:flex; gap:3px; justify-content:center; flex-wrap:wrap">
           ${[
@@ -5737,7 +5756,7 @@ ${cajaUsadoDelPortal(t)}
             <div class="precio-box vw">
               <div class="metodo">Fórmula FG</div>
               <div class="valor">${vwToma ? '$ ' + formatNum(Math.round(vwToma)) : 'N/A'}</div>
-              <div class="sub">Mercado: ${vwAjustado ? '$ ' + formatNum(Math.round(vwAjustado)) : '-'}<br>${FG_TOMA < 1 ? 'Toma -' + Math.round((1-FG_TOMA)*100) + '%' : 'Toma = mercado'} · Rotación ${rotacion}%</div>
+              <div class="sub">${subtituloFG(rotacion)}</div>
               ${_pctPide(t, vwToma)}
               ${descRowHTML(vwToma)}
               <div style="margin-top:6px; display:flex; gap:3px; justify-content:center; flex-wrap:wrap">
