@@ -95,6 +95,10 @@ Deno.serve(async (req: Request) => {
       ? "compras_avisos_destinatarios?activo=eq.true&select=nombre,telefono"
       : a.lista === "margen"
       ? "margen_destinatarios?activo=eq.true&wsp=eq.true&select=nombre,telefono"
+      // "siniestros" = siniestros de clientes para Postventa (siniestros-clientes/detectar.py):
+      // supervisores (Fer, Catalina, Maxi) y responsables (Ricardo, Pamela) cada uno con lo suyo.
+      : a.lista === "siniestros"
+      ? "siniestros_avisos_destinatarios?activo=eq.true&telefono=not.is.null&select=nombre,telefono"
       : "fedpat_avisos_destinatarios?activo=eq.true&select=nombre,telefono";
     let dest: { nombre: string; telefono: string }[] = await sb(SUPABASE_URL, SERVICE_KEY, consulta);
     // `para` compara contra la PRIMERA palabra del nombre ("Fer" no es "Fernando")
