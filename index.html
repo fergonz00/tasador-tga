@@ -1916,6 +1916,7 @@ function renderWizard() {
   // El panel del caso del CRM va arriba del paso, en todos los pasos.
   div.innerHTML = panelUsado() + steps[currentStep]();
   container.appendChild(div);
+  pintarPatenteDespues();
   validateStep();
 }
 
@@ -2152,10 +2153,10 @@ function renderStep6() { // Patente + Provincia de radicación
     <input type="text" id="wPatente" placeholder="Ej: AB123CD o ABC123" oninput="onPatenteInput()" value="${curPatente}" maxlength="10" style="text-transform:uppercase" ${wizardData.patenteDespues ? 'disabled' : ''}>
     <div style="margin-top:4px; font-size:12px; color:var(--vw-grey-4)">Se usa para buscar rápido la tasación más adelante.</div>
     ${usadoLead ? `
-      <label style="display:flex; align-items:flex-start; gap:9px; margin-top:12px; padding:10px 12px; background:var(--vw-grey-1); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--vw-grey-5)">
-        <input type="checkbox" id="wPatenteDespues" ${wizardData.patenteDespues ? 'checked' : ''} onchange="onPatenteDespuesChange()" style="margin-top:2px; width:16px; height:16px; flex-shrink:0">
+      <label id="wPatenteDespuesBox" style="display:flex; align-items:flex-start; gap:9px; margin-top:12px; padding:10px 12px; border:2px solid transparent; border-radius:8px; cursor:pointer; font-weight:600; font-size:13px">
+        <input type="checkbox" id="wPatenteDespues" ${wizardData.patenteDespues ? 'checked' : ''} onchange="onPatenteDespuesChange()" style="margin-top:2px; width:16px; height:16px; flex-shrink:0; accent-color:var(--vw-blue)">
         <span>Todavía no tengo la patente — la cargo cuando traiga el auto<br>
-          <span style="font-weight:400; font-size:12px; color:var(--vw-grey-4)">El aviso de MercadoLibre no la muestra. Tildando esto podés sacar el turno igual.</span>
+          <span id="wPatenteDespuesPie" style="font-weight:400; font-size:12px">El aviso de MercadoLibre no la muestra. Tildando esto podés sacar el turno igual.</span>
         </span>
       </label>` : ''}
     <label style="margin-top:20px">Provincia donde está radicado</label>
@@ -2182,12 +2183,32 @@ function onPatenteInput() {
 function onPatenteDespuesChange() {
   const chk = document.getElementById('wPatenteDespues');
   wizardData.patenteDespues = !!(chk && chk.checked);
-  const inp = document.getElementById('wPatente');
-  if (inp) {
-    inp.disabled = wizardData.patenteDespues;
-    if (wizardData.patenteDespues) inp.value = '';
-  }
+  pintarPatenteDespues();
   validateStep();
+}
+
+// El tilde pintaba solo el cuadradito y el recuadro quedaba igual de gris, asi
+// que no se notaba que el paso ya estaba liberado y parecia que seguia faltando
+// la patente. Tildado: se pinta el cuadro entero y el campo dice por que esta
+// bloqueado. Se llama tambien al renderizar, para que al volver con "Atras" se
+// vea como quedo.
+function pintarPatenteDespues() {
+  const chk = document.getElementById('wPatenteDespues');
+  const box = document.getElementById('wPatenteDespuesBox');
+  if (!chk || !box) return;
+  const on = !!chk.checked;
+  const pie = document.getElementById('wPatenteDespuesPie');
+  const inp = document.getElementById('wPatente');
+  box.style.background  = on ? '#E8F1FB' : 'var(--vw-grey-1)';
+  box.style.borderColor = on ? 'var(--vw-blue)' : 'transparent';
+  box.style.color       = on ? 'var(--vw-blue)' : 'var(--vw-grey-5)';
+  if (pie) pie.style.color = on ? 'var(--vw-blue)' : 'var(--vw-grey-4)';
+  if (inp) {
+    inp.disabled = on;
+    if (on) inp.value = '';
+    inp.placeholder = on ? 'La cargás cuando traiga el auto' : 'Ej: AB123CD o ABC123';
+    inp.style.background = on ? 'var(--vw-grey-1)' : '';
+  }
 }
 
 function renderStep7() { // Color + Kavak
@@ -2866,6 +2887,12 @@ function calcFormulaFG(marca, modelo, version, anio) {
 
 // ============ SUBMIT TASACION ============
 async function submitTasacion() {
+  // El boton de envio no pasa por nextStep(), asi que nadie guardaba el ultimo
+  // paso: el comentario que el vendedor acababa de escribir se perdia y la
+  // tasacion se grababa con vendedor_comentario = null. En el flujo del portal
+  // ese comentario es obligatorio y es lo unico que el tasador tiene para saber
+  // que le consulto el cliente, asi que llegaba vacio.
+  saveCurrentStep();
   showLoading('Subiendo fotos...');
   try {
     // Upload fotos
