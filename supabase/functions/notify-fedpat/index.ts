@@ -465,6 +465,27 @@ const EXTRA: Record<string, unknown[]> = {
       "La entrega se agenda y se confirma en CLAIMS.",
     example: { body_text: [["Fer", "La Holando, siniestro 4296517, Vento HNA112", "ADJUDICADA en CLAIMS. Entrega en Taller Jesicat"]] },
   }],
+  // a Catalina, Maxi y Fer cuando un auto nuestro (lo vendimos o vino al taller) aparece chocado en los
+  // pedidos de repuestos de Fedpat / ORIÓN / CLAIMS. Lo dispara siniestros-clientes/detectar.py; un
+  // mensaje por corrida con todos los autos nuevos. Tres redacciones; se usa la primera UTILITY.
+  siniestro_cliente_1: [{
+    type: "BODY",
+    text: "Hola {{1}}, hay {{2}} con un siniestro nuevo para llamar desde Postventa: {{3}}. " +
+      "Los datos de contacto están en el portal de Repuestos, solapa Siniestros de clientes.",
+    example: { body_text: [["Catalina", "2 autos nuestros", "Tiguan MBB569 (Montes), Amarok LWA522 (Digon)"]] },
+  }],
+  siniestro_cliente_2: [{
+    type: "BODY",
+    text: "Hola {{1}}, control de Postventa: se registraron {{2}} con un siniestro informado por la aseguradora: {{3}}. " +
+      "El seguimiento se anota en el portal de Repuestos, solapa Siniestros de clientes.",
+    example: { body_text: [["Catalina", "2 autos nuestros", "Tiguan MBB569 (Montes), Amarok LWA522 (Digon)"]] },
+  }],
+  siniestro_cliente_3: [{
+    type: "BODY",
+    text: "Hola {{1}}, en la lista de seguimiento de Postventa entraron {{2}}: {{3}}. " +
+      "Se ven en el portal de Repuestos, solapa Siniestros de clientes.",
+    example: { body_text: [["Catalina", "2 autos nuestros", "Tiguan MBB569 (Montes), Amarok LWA522 (Digon)"]] },
+  }],
   licitaciones_respuesta_1: [{
     type: "BODY",
     text: "Hola {{1}}, en el trámite de alta como proveedor de repuestos quedó una respuesta sin atender: {{2}}. {{3}}. " +
