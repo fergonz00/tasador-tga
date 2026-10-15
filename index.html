@@ -4689,17 +4689,39 @@ function kavakBoxHTML(t, opts) {
   const esVW = /^(volkswagen|vw)$/i.test(String(t.marca || '').trim());
   const queOferta = esVW ? 'permuta' : 'venta sola';
 
+  // ⭐ ¿Kavak cotizó ESTE auto, o uno parecido más caro? El robot ahora compara
+  // terminación, tracción, cabina, motor y caja, y deja acá lo que no coincide.
+  //
+  // Fer, 15-10-2026, sobre una Amarok que cargó Gisela: *"tasaste highline y era
+  // comfortline"*. Era cierto, y el número llegó a esta pantalla sin una sola
+  // advertencia: $40.189.999 cuando la versión correcta daba $33.573.878, o sea
+  // $6.616.121 de más. Si eso se usa de referencia, se paga de más.
+  //
+  // Por eso cuando no coincide el precio se muestra tachado: el dato sigue a la
+  // vista (esconderlo es peor, nadie entiende por qué no está) pero no se puede
+  // confundir con una referencia buena.
+  const difs = Array.isArray(t.kavak_auto_difs) ? t.kavak_auto_difs.filter(Boolean) : [];
+  const sirve = difs.length === 0;
+
   const principal = (auto != null)
-    ? `<div class="valor" style="margin:3px 0">$ ${formatNum(Math.round(auto))}</div>
+    ? `<div class="valor" style="margin:3px 0${sirve ? '' : '; text-decoration:line-through; opacity:0.5'}">$ ${formatNum(Math.round(auto))}</div>
        <div class="sub">${queOferta}${fecha ? ' · ' + fecha : ''}</div>
        ${versionAuto ? `<div class="sub" style="font-size:9px; opacity:0.55">${versionAuto}</div>` : ''}`
     : `<div class="valor" style="margin:3px 0; opacity:0.45">—</div>
        <div class="sub">${KAVAK_AUTO_MOTIVO[t.kavak_auto_estado] || 'todavía no lo buscó el robot'}</div>`;
 
+  const avisoDifs = sirve ? '' : `
+        <div style="margin-top:6px; padding:5px 6px; background:#FDECEA; border:1px solid #E53935; border-radius:5px; text-align:left">
+          <div style="font-size:9px; font-weight:700; color:#B71C1C; text-transform:uppercase; letter-spacing:0.3px">⚠️ Kavak cotizó otra versión</div>
+          ${difs.map(d => `<div style="font-size:10px; color:#B71C1C; margin-top:2px">${_escapeHtmlUsr(String(d))}</div>`).join('')}
+          <div style="font-size:9px; color:#B71C1C; margin-top:3px; opacity:0.85">Este precio NO sirve de referencia.</div>
+        </div>`;
+
   return `
       <div class="precio-box kavak"${opts.estiloBox ? ` style="${opts.estiloBox}"` : ''}>
         <div class="${claseTitulo}">Kavak <span style="font-size:10px; font-weight:400; color:var(--vw-grey-3)">(automático)</span></div>
         ${principal}
+        ${avisoDifs}
         ${_pctPide(t, auto)}
         <div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15); ${(_esCompraML(t) || _esFlash(t)) ? 'display:none' : ''}">
           <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; opacity:0.7">Lo cargó el vendedor${manual != null ? ` — $ ${formatNum(Math.round(manual))}` : ''}</div>
