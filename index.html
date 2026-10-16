@@ -9073,15 +9073,35 @@ function renderFisicoList() {
     data = data.filter(t => matchTasacion(t, fisicoFiltroTexto));
   }
 
-  // Orden: con turno primero (asc por fecha+hora), luego sin turno (asc por created_at)
-  data = data.slice().sort((a, b) => {
+  // Orden: cada solapa por lo que importa ahí adentro. Antes había una sola
+  // regla (por turno, ascendente) escrita para la agenda y aplicada a las nueve:
+  // en "Tasación final" lo primero que aparecía era una Suran de mayo y lo que
+  // el admin acababa de cerrar quedaba al fondo de 62.
+  //   listas de trabajo o de espera  -> lo más viejo arriba, que es lo que urge
+  //   listas de consulta / historial -> lo más nuevo arriba
+  const _ts = (t, campo) => new Date(t[campo] || t.created_at).getTime();
+  const _viejoPrimero = (campo) => (a, b) => _ts(a, campo) - _ts(b, campo);
+  const _nuevoPrimero = (campo) => (a, b) => _ts(b, campo) - _ts(a, campo);
+  const _porTurno = (a, b) => {
     const aT = a.turno_fecha ? `${a.turno_fecha}T${a.turno_hora || '00:00'}` : '';
     const bT = b.turno_fecha ? `${b.turno_fecha}T${b.turno_hora || '00:00'}` : '';
     if (aT && bT) return aT.localeCompare(bT);
-    if (aT && !bT) return -1;
+    if (aT && !bT) return -1;   // las que tienen fecha, antes que las que no
     if (!aT && bT) return 1;
-    return new Date(b.created_at) - new Date(a.created_at);
-  });
+    return _ts(a, 'created_at') - _ts(b, 'created_at');
+  };
+  const _ORDEN_SOLAPA = {
+    pendientes:     _porTurno,                          // el próximo que llega, arriba
+    solo_compra:    _porTurno,
+    todas:          _porTurno,
+    falta_agendar:  _viejoPrimero('created_at'),        // la que hace más que espera turno
+    inspeccionadas: _viejoPrimero('tasado_fisico_at'),  // la que hace más que espera al admin
+    stock:          _viejoPrimero('ingresado_stock_at'),// la que hace más que está en stock
+    final:          _nuevoPrimero('tasado_at'),         // lo último que cerró el admin
+    usado_tomado:   _nuevoPrimero('venta_cerrada_at'),  // la última operación cerrada
+    usado_no_apto:  _nuevoPrimero('virtual_no_apto_at') // el último descarte
+  };
+  data = data.slice().sort(_ORDEN_SOLAPA[fisicoFiltroEstadoVal] || _porTurno);
 
   if (data.length === 0) {
     let msg;
@@ -9122,7 +9142,21 @@ function renderFisicoList() {
     usado_no_apto: '❌ Tasaciones que el admin evaluó como NO APTAS para toma. El motivo está dentro de cada tarjeta.',
     todas: 'Todas las unidades con turno y precio virtual.'
   };
-  const subtituloFisHTML = `<div style="margin:0 0 12px 0; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosFis[fisicoFiltroEstadoVal] || ''}</div>`;
+  // El orden cambia segun la solapa, asi que se dice: si no, hay que deducirlo
+  // mirando las fechas de las tarjetas.
+  const ordenFis = {
+    pendientes:     'por fecha de turno — el próximo que llega, primero',
+    falta_agendar:  'la que hace más que espera turno, primero',
+    solo_compra:    'por fecha de turno — las que todavía no tienen, al final',
+    inspeccionadas: 'la que hace más que espera al admin, primero',
+    final:          'la última que cerró el admin, primero',
+    usado_tomado:   'la última operación cerrada, primero',
+    stock:          'la que hace más que está en stock, primero',
+    usado_no_apto:  'el último descarte, primero',
+    todas:          'por fecha de turno — las que no tienen, al final'
+  };
+  const ordenLbl = ordenFis[fisicoFiltroEstadoVal];
+  const subtituloFisHTML = `<div style="margin:0 0 12px 0; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosFis[fisicoFiltroEstadoVal] || ''}${ordenLbl ? `<div style="margin-top:6px; font-size:11px; color:var(--vw-grey-4)">↕ Orden: ${ordenLbl} · ${data.length} ${data.length === 1 ? 'unidad' : 'unidades'}</div>` : ''}</div>`;
 
   list.innerHTML = subtituloFisHTML + data.map(t => {
     const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
