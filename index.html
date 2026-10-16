@@ -6595,8 +6595,14 @@ function _renderInspeccionFisicaAdminBloque(t, af) {
   const tasadoPor = t.tasado_fisico_por;
   const tasadoAt = t.tasado_fisico_at;
 
-  // Estado: sin inspección todavía
-  if (!af || !precioFisico) {
+  // Estado: sin inspección todavía.
+  // OJO: "sin precio sugerido" NO es "sin inspección". El tasador puede cerrarla
+  // tildando que el número no lo pone él (pasa cuando el valor ya está acordado
+  // con el cliente y lo que importa es la revisión). Mirando solo el precio, esa
+  // inspección aparecía como "⏳ Pendiente" mientras el encabezado de la MISMA
+  // tarjeta decía "esperando precio final". Se usa el mismo criterio que el resto
+  // de la app: tieneInspeccion().
+  if (!af || !tieneInspeccion(t)) {
     return `
       <div style="margin-top:8px; padding:8px 12px; background:#F5F3FF; border-radius:6px; border:1px solid #DDD6FE; display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap">
         <span style="font-size:12px; font-weight:700; color:#5B21B6">INSPECCIÓN FÍSICA</span>
@@ -6610,7 +6616,19 @@ function _renderInspeccionFisicaAdminBloque(t, af) {
   // Comparación entre el precio virtual del admin y el sugerido del tasador físico
   const precioVirtual = t.precio_toma_virtual;
   let comparacionHTML = '';
-  if (precioVirtual) {
+  if (!precioFisico) {
+    // Inspección cerrada a propósito sin número. No hay diferencia que calcular:
+    // con precioFisico en null la cuenta daba "$ 0" y "-100%". Lo que vale acá es
+    // lo que encontró para arreglar.
+    const totalArrSin = totalArreglosDe(t);
+    comparacionHTML = `
+      <div style="margin-top:10px; padding:12px; background:white; border-radius:6px; border:1px solid #DDD6FE">
+        <div style="font-size:12px; font-weight:700; color:#5B21B6">Revisó la unidad y no puso precio sugerido</div>
+        <div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px">El tasador tildó que el valor no lo define él.${precioVirtual ? ` Virtual del admin: <strong style="font-family:var(--mono)">$ ${formatNum(precioVirtual)}</strong>.` : ''}</div>
+        ${totalArrSin > 0 ? `<div style="margin-top:8px; font-size:13px; color:var(--vw-grey-5)">Arreglos estimados: <strong style="font-family:var(--mono); color:var(--red)">$ ${formatNum(totalArrSin)}</strong></div>` : ''}
+      </div>
+    `;
+  } else if (precioVirtual) {
     const diff = precioFisico - precioVirtual;
     const pct = precioVirtual > 0 ? (diff / precioVirtual) * 100 : 0;
     const color = diff < 0 ? 'var(--red)' : diff > 0 ? 'var(--green)' : 'var(--vw-grey-4)';
