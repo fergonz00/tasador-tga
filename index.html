@@ -656,9 +656,11 @@ input, select, textarea { font-family: var(--font); }
       </div>
       <div class="admin-tabs" style="margin:0">
         <button class="active" onclick="showFisicoTab('pendientes', this)">Pendientes</button>
+        <button onclick="showFisicoTab('solo_compra', this)">Solo compra</button>
         <button onclick="showFisicoTab('inspeccionadas', this)">Inspeccionadas (esperando admin)</button>
         <button onclick="showFisicoTab('final', this)">Tasación final</button>
         <button onclick="showFisicoTab('usado_tomado', this)">Usado tomado</button>
+        <button onclick="showFisicoTab('stock', this)">📦 Stock</button>
         <button onclick="showFisicoTab('usado_no_apto', this)">Usado no apto</button>
         <button onclick="showFisicoTab('todas', this)">Todas</button>
       </div>
@@ -1012,6 +1014,15 @@ function clienteSoloVende() {
 function badgeSoloVende(tas) {
   if (!tas || tas.cliente_compra_unidad !== false) return '';
   return '<span style="background:#9A3412; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">SOLO COMPRA</span>';
+}
+
+// Dónde está la unidad una vez comprada. Va en la fila de chips de la tarjeta,
+// para no tener que abrirla.
+function chipStock(tas) {
+  if (!tas) return '';
+  if (tas.vendido_at) return '<span style="background:#1E3A8A; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">VENDIDO</span>';
+  if (tas.ingresado_stock_at) return '<span style="background:#047857; color:white; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px">📦 EN STOCK</span>';
+  return '';
 }
 
 // Versión grande, para la pantalla de inspección del tasador físico.
@@ -5205,7 +5216,7 @@ function _puedeGestionarStock() {
 
 async function marcarIngresoStock(tasId) {
   if (!_puedeGestionarStock()) { showToast('No autorizado'); return; }
-  if (!confirm('¿Confirmar que este usado ya ingresó físicamente al concesionario?')) return;
+  if (!confirm('¿Dar por COMPRADA esta unidad?\n\nPasa a la solapa Stock y sale de Tasación final.')) return;
   try {
     await sbFetch(`tasaciones?id=eq.${tasId}`, {
       method: 'PATCH',
@@ -5214,7 +5225,7 @@ async function marcarIngresoStock(tasId) {
         ingresado_stock_por: currentUser.nombre
       })
     });
-    showToast('Marcado como ingresado a stock');
+    showToast('Comprado — la unidad pasó a Stock');
     // Refrescar la lista activa
     if (currentMode === 'admin') await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
     else if (currentMode === 'tasador_fisico') await loadTasadorFisicoList();
@@ -8004,11 +8015,27 @@ function cerrarCancelarVisita() {
 async function confirmarCancelarVisita(tasId) {
   const sel = document.querySelector('input[name="cancelVisitaMotivo"]:checked');
   if (!sel) { showToast('Elegí un motivo'); return; }
-  const motivo = sel.value;
   const detalleEl = document.getElementById('cancelVisitaDetalle');
   const detalle = (detalleEl && detalleEl.value.trim()) || null;
+  const ok = await _cancelarVisita(tasId, sel.value, detalle);
+  if (ok) { cerrarCancelarVisita(); showToast('Visita cancelada'); }
+}
 
-  // Leemos el estado anterior para el WA
+// El caso de todos los días en el mostrador, a un toque y sin modal: el cliente
+// no vino. Hace lo mismo que "Cancelar revisión" con ese motivo, que es lo que
+// saca la unidad de la lista del tasador y se la devuelve a la vendedora con los
+// botones de reagendar o dar de baja. Sin esto quedaban colgadas acumulándose.
+async function marcarNoSePresento(tasId) {
+  if (!confirm('¿Confirmás que el cliente NO se presentó?\n\nSe libera el turno y la tasación vuelve a la vendedora para que la reagende o la dé de baja. Le avisamos por WhatsApp.')) return;
+  const ok = await _cancelarVisita(tasId, 'no_se_presento', null);
+  if (ok) showToast('Listo — le avisamos a la vendedora');
+}
+
+// El PATCH de la cancelación, compartido por el modal y por el botón de un
+// toque. Avisa siempre al OTRO lado: si cancela la vendedora se entera el
+// tasador, y si cancela el tasador se entera la vendedora, que es la que tiene
+// que decidir si reagenda o da de baja la cotización.
+async function _cancelarVisita(tasId, motivo, detalle) {
   let turnoAnterior = null;
   try {
     const r = await sbFetch(`tasaciones?id=eq.${tasId}&select=*`);
@@ -8029,27 +8056,55 @@ async function confirmarCancelarVisita(tasId) {
       })
     });
     hideLoading();
-    cerrarCancelarVisita();
-    showToast('Visita cancelada');
 
-    // WA a Fazzini con el motivo
     const motivoLbl = (CANCEL_VISITA_MOTIVOS.find(m => m.key === motivo) || {}).label || motivo;
-    notificarTurnoATasadorFisico('cancelado', turnoAnterior, null, motivoLbl + (detalle ? ' — ' + detalle : ''));
-
-    // Refresh de las vistas que estén abiertas
-    const misSec = document.getElementById('misTasacionesSection');
-    if (misSec && !misSec.classList.contains('hidden')) loadMisTasaciones();
-    const adminView = document.getElementById('adminView');
-    if (adminView && !adminView.classList.contains('hidden')) loadAdminTasaciones(adminFiltroEstado || 'pendientes');
-    const agendaView = document.getElementById('agendaView');
-    if (agendaView && !agendaView.classList.contains('hidden')) loadAgenda();
-    const fisicoView = document.getElementById('tasadorFisicoView');
-    if (fisicoView && !fisicoView.classList.contains('hidden')) loadTasadorFisicoList();
+    const motivoTxt = motivoLbl + (detalle ? ' — ' + detalle : '');
+    // Al tasador físico, salvo que sea él quien lo marcó: no se avisa a sí mismo.
+    if (currentMode !== 'tasador_fisico') {
+      notificarTurnoATasadorFisico('cancelado', turnoAnterior, null, motivoTxt);
+    }
+    _avisarVisitaCanceladaAlVendedor(turnoAnterior, motivoTxt);
+    _refrescarVistasAbiertas();
+    return true;
   } catch(e) {
     hideLoading();
     console.error(e);
     showToast('Error al cancelar la visita');
+    return false;
   }
+}
+
+// WhatsApp a la vendedora dueña de la tasación. Sin esto la unidad le queda
+// colgada: no tiene cómo enterarse de que el cliente no vino.
+function _avisarVisitaCanceladaAlVendedor(tas, motivoTxt) {
+  try {
+    if (!tas || !tas.vendedor_id) return;
+    if (currentUser && tas.vendedor_id === currentUser.id) return; // lo marcó ella misma
+    const cuando = tas.turno_fecha
+      ? `${formatFechaTurnoLargo(isoAFecha(tas.turno_fecha))} ${tas.turno_hora || ''}`
+      : '—';
+    const msg = `🚫 *Inspección sin concretar*\n\n`
+      + `${tas.marca || ''} ${tas.modelo || ''} ${tas.anio || ''}`
+      + (tas.patente ? `\nPatente: ${tas.patente}` : '')
+      + (tas.cliente_nombre ? `\nCliente: ${tas.cliente_nombre}` : '')
+      + `\nTurno: ${cuando}`
+      + `\nMotivo: ${motivoTxt}\n\n`
+      + 'La tasación volvió a tu lista: entrá al tasador y reagendá la inspección, o marcá "No avanza con la toma" si el cliente ya no sigue.';
+    enviarWhatsAppA(tas.vendedor_id, msg);
+  } catch(e) {
+    console.log('No se pudo avisar al vendedor:', e);
+  }
+}
+
+function _refrescarVistasAbiertas() {
+  const misSec = document.getElementById('misTasacionesSection');
+  if (misSec && !misSec.classList.contains('hidden')) loadMisTasaciones();
+  const adminView = document.getElementById('adminView');
+  if (adminView && !adminView.classList.contains('hidden')) loadAdminTasaciones(adminFiltroEstado || 'pendientes');
+  const agendaView = document.getElementById('agendaView');
+  if (agendaView && !agendaView.classList.contains('hidden')) loadAgenda();
+  const fisicoView = document.getElementById('tasadorFisicoView');
+  if (fisicoView && !fisicoView.classList.contains('hidden')) loadTasadorFisicoList();
 }
 
 function _renderVisitaCanceladaCartel(t) {
@@ -8959,7 +9014,11 @@ function renderFisicoList() {
   const tieneInsp = (t) => tieneInspeccion(t);
   const _vivaParaFazzini = (t) => !t.no_avanza_motivo && !t.virtual_no_apto && !t.turno_cancelado_motivo;
 
-  if (fisicoFiltroEstadoVal === 'usado_tomado') {
+  if (fisicoFiltroEstadoVal === 'stock') {
+    // Lo que el tasador ya marco como comprado y todavia no se vendio. Es el
+    // unico destino de las unidades que entran: salen de aca al marcar Vendido.
+    data = data.filter(t => t.ingresado_stock_at && !t.vendido_at);
+  } else if (fisicoFiltroEstadoVal === 'usado_tomado') {
     // No aplicamos el filtro base — un usado_tomado siempre pasó por inspección
     // pero queremos mostrar todos los casos cerrados con usado tomado.
     data = data.filter(t => t.precio_toma_final && t.usado_tomado === true);
@@ -8971,10 +9030,17 @@ function renderFisicoList() {
     data = data.filter(t => (t.precio_toma_virtual && t.turno_fecha && t.turno_hora) || t.es_presencial === true);
     if (fisicoFiltroEstadoVal === 'pendientes') {
       data = data.filter(t => !tieneInsp(t) && _vivaParaFazzini(t));
+    } else if (fisicoFiltroEstadoVal === 'solo_compra') {
+      // Las mismas de Pendientes pero solo donde el cliente unicamente vende (no
+      // se lleva ninguna unidad). Es un atajo para encontrarlas rapido a la hora
+      // de inspeccionar, no una etapa distinta del circuito.
+      data = data.filter(t => !tieneInsp(t) && _vivaParaFazzini(t) && t.cliente_compra_unidad === false);
     } else if (fisicoFiltroEstadoVal === 'inspeccionadas') {
       data = data.filter(t => tieneInsp(t) && !t.precio_toma_final);
     } else if (fisicoFiltroEstadoVal === 'final') {
-      data = data.filter(t => t.precio_toma_final);
+      // Las ya compradas se van a Stock: si no, esta solapa se llena de unidades
+      // que ya no tienen nada pendiente.
+      data = data.filter(t => t.precio_toma_final && !t.ingresado_stock_at);
     }
   }
 
@@ -9003,6 +9069,10 @@ function renderFisicoList() {
       msg = 'Todavía no hay tasaciones cerradas con precio final';
     } else if (fisicoFiltroEstadoVal === 'pendientes') {
       msg = 'No hay unidades pendientes de inspección.<br><span style="font-size:12px; color:var(--vw-grey-4)">Solo aparecen las que tienen <strong>precio virtual cargado</strong> y <strong>turno agendado</strong>.</span>';
+    } else if (fisicoFiltroEstadoVal === 'solo_compra') {
+      msg = 'No hay unidades de <strong>solo compra</strong> esperando inspección.<br><span style="font-size:12px; color:var(--vw-grey-4)">Son las que el cliente trae únicamente para vender, sin llevarse ninguna unidad.</span>';
+    } else if (fisicoFiltroEstadoVal === 'stock') {
+      msg = 'No hay unidades en stock.<br><span style="font-size:12px; color:var(--vw-grey-4)">Entran acá cuando marcás <strong>📦 Comprado</strong> una tasación que el vendedor ya confirmó como tomada.</span>';
     } else if (fisicoFiltroEstadoVal === 'usado_tomado') {
       msg = 'Todavía no hay operaciones cerradas con usado tomado';
     } else if (fisicoFiltroEstadoVal === 'usado_no_apto') {
@@ -9019,6 +9089,8 @@ function renderFisicoList() {
     pendientes: '🛠️ Unidades con turno y precio virtual cargado por el admin. Tenés que inspeccionarlas físicamente cuando llegue el cliente.',
     inspeccionadas: '⏳ Ya las inspeccionaste y mandaste tu precio sugerido. El admin tiene que confirmar el precio final — todavía no las tomó.',
     final: '✅ El admin ya cerró el precio final luego de tu inspección. Si el vendedor no marcó todavía si se tomó el usado, podés marcarlo vos.',
+    solo_compra: '🏷️ Pendientes de inspección en las que el cliente <strong>solo vende</strong> su auto: no se lleva ninguna unidad. Atajo para ubicarlas rápido.',
+    stock: '📦 Unidades compradas que ya entraron al concesionario y todavía no se vendieron. Al venderse salen de acá.',
     usado_tomado: '🟢 Tasaciones donde el usado efectivamente se tomó como parte de pago. Operación cerrada con usado.',
     usado_no_apto: '❌ Tasaciones que el admin evaluó como NO APTAS para toma. El motivo está dentro de cada tarjeta.',
     todas: 'Todas las unidades con turno y precio virtual.'
@@ -9063,6 +9135,28 @@ function renderFisicoList() {
     // (cuando el cliente no se presenta o pide cambio).
     let accionesTurno = '';
     const esPendienteInsp = !tieneInsp(t) && !t.precio_toma_final && !t.virtual_no_apto;
+
+    // "No se presentó" va al lado de Inspeccionar, no escondido abajo: es el caso
+    // de todos los días y tenerlo a un toque es lo que evita que la unidad quede
+    // colgada. El motivo también está adentro de "Cancelar revisión", para los
+    // otros casos (reprograma, desistió).
+    const btnNoSePresento = (esPendienteInsp && t.turno_fecha)
+      ? `<button onclick="event.stopPropagation(); marcarNoSePresento('${t.id}')" style="padding:10px 14px; background:white; color:#991B1B; border:1px solid #991B1B; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">🚫 No se presentó</button>`
+      : '';
+
+    // Flujo de stock. El botón Comprado aparece recién cuando el vendedor
+    // confirmó que el usado se tomó (usado_tomado), que es el orden real:
+    // primero cierra la operación, después entra la unidad.
+    let accionesStock = '';
+    if (_puedeGestionarStock()) {
+      if (t.precio_toma_final && t.usado_tomado === true && !t.ingresado_stock_at) {
+        accionesStock = `<button onclick="event.stopPropagation(); marcarIngresoStock('${t.id}')" style="padding:8px 14px; background:#047857; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">📦 Comprado — pasa a stock</button>`;
+      } else if (t.ingresado_stock_at && !t.vendido_at) {
+        const desdeStock = new Date(t.ingresado_stock_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
+        accionesStock = `<span style="font-size:12px; color:var(--vw-grey-4); align-self:center">En stock desde el ${desdeStock}${t.ingresado_stock_por ? ' · ' + t.ingresado_stock_por : ''}</span>
+          <button onclick="event.stopPropagation(); marcarVendido('${t.id}')" style="padding:8px 14px; background:#1E3A8A; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">💰 Marcar vendido</button>`;
+      }
+    }
     if (esPendienteInsp && t.turno_fecha) {
       accionesTurno = `
         <div style="display:flex; gap:6px; flex-wrap:wrap">
@@ -9098,6 +9192,7 @@ function renderFisicoList() {
               ${estadoFisicoBadge}
               ${turnoBadge}
               ${badgeSoloVende(t)}
+              ${chipStock(t)}
             </div>
             <div style="font-weight:700; font-size:15px; margin-bottom:2px">${t.cliente_nombre || '—'}</div>
             <div style="font-size:13px; color:var(--vw-grey-4)">${t.marca || ''} ${t.modelo || ''} ${t.anio || ''} — ${t.version || ''}</div>
@@ -9106,11 +9201,13 @@ function renderFisicoList() {
           </div>
           <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">
             ${t.precio_toma_final ? `<button onclick="event.stopPropagation(); imprimirHojaFinal('${t.id}')" style="padding:10px 14px; background:white; color:#065F46; border:1px solid #065F46; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">🖨️ Imprimir</button>` : ''}
+            ${btnNoSePresento}
             <button onclick="abrirInspeccion('${t.id}')" style="padding:10px 16px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; white-space:nowrap">${btnLabel}</button>
           </div>
         </div>
         ${accionesTurno ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end">${accionesTurno}</div>` : ''}
         ${accionesExtra ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end">${accionesExtra}</div>` : ''}
+        ${accionesStock ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap">${accionesStock}</div>` : ''}
       </div>
     `;
   }).join('');
