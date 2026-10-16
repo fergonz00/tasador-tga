@@ -656,6 +656,7 @@ input, select, textarea { font-family: var(--font); }
       </div>
       <div class="admin-tabs" style="margin:0">
         <button class="active" onclick="showFisicoTab('pendientes', this)">Pendientes</button>
+        <button onclick="showFisicoTab('falta_agendar', this)">Falta agendar</button>
         <button onclick="showFisicoTab('solo_compra', this)">Solo compra</button>
         <button onclick="showFisicoTab('inspeccionadas', this)">Inspeccionadas (esperando admin)</button>
         <button onclick="showFisicoTab('final', this)">Tasación final</button>
@@ -9029,7 +9030,12 @@ function renderFisicoList() {
     // Filtros del workflow Fazzini: solo unidades con turno o presenciales.
     data = data.filter(t => (t.precio_toma_virtual && t.turno_fecha && t.turno_hora) || t.es_presencial === true);
     if (fisicoFiltroEstadoVal === 'pendientes') {
-      data = data.filter(t => !tieneInsp(t) && _vivaParaFazzini(t));
+      // Solo lo que tiene turno: es el trabajo real del tasador. Las que no lo
+      // tienen dependen de que la vendedora lo acuerde con el dueño, no de él,
+      // y mezcladas acá le tapaban la lista sin que pudiera hacer nada.
+      data = data.filter(t => !tieneInsp(t) && _vivaParaFazzini(t) && t.turno_fecha);
+    } else if (fisicoFiltroEstadoVal === 'falta_agendar') {
+      data = data.filter(t => !tieneInsp(t) && _vivaParaFazzini(t) && !t.turno_fecha);
     } else if (fisicoFiltroEstadoVal === 'solo_compra') {
       // Las mismas de Pendientes pero solo donde el cliente unicamente vende (no
       // se lleva ninguna unidad). Es un atajo para encontrarlas rapido a la hora
@@ -9068,7 +9074,9 @@ function renderFisicoList() {
     } else if (fisicoFiltroEstadoVal === 'final') {
       msg = 'Todavía no hay tasaciones cerradas con precio final';
     } else if (fisicoFiltroEstadoVal === 'pendientes') {
-      msg = 'No hay unidades pendientes de inspección.<br><span style="font-size:12px; color:var(--vw-grey-4)">Solo aparecen las que tienen <strong>precio virtual cargado</strong> y <strong>turno agendado</strong>.</span>';
+      msg = 'No hay unidades con turno esperando inspección.<br><span style="font-size:12px; color:var(--vw-grey-4)">Las que todavía no tienen fecha están en <strong>Falta agendar</strong>.</span>';
+    } else if (fisicoFiltroEstadoVal === 'falta_agendar') {
+      msg = 'No hay unidades esperando turno.<br><span style="font-size:12px; color:var(--vw-grey-4)">Acá caen las que todavía no tienen fecha de inspección.</span>';
     } else if (fisicoFiltroEstadoVal === 'solo_compra') {
       msg = 'No hay unidades de <strong>solo compra</strong> esperando inspección.<br><span style="font-size:12px; color:var(--vw-grey-4)">Son las que el cliente trae únicamente para vender, sin llevarse ninguna unidad.</span>';
     } else if (fisicoFiltroEstadoVal === 'stock') {
@@ -9086,10 +9094,11 @@ function renderFisicoList() {
 
   // Subtítulo descriptivo según el tab
   const subtitulosFis = {
-    pendientes: '🛠️ Unidades con turno y precio virtual cargado por el admin. Tenés que inspeccionarlas físicamente cuando llegue el cliente.',
+    pendientes: '🛠️ Unidades <strong>con turno</strong>. Son las que tenés que inspeccionar físicamente cuando llegue el cliente.',
+    falta_agendar: '⏳ Todavía <strong>sin turno</strong>: esperan que la vendedora lo acuerde con el dueño del auto. No hay nada para inspeccionar hasta que aparezca la fecha. Desde su pantalla ella las agenda o las da de baja.',
     inspeccionadas: '⏳ Ya las inspeccionaste y mandaste tu precio sugerido. El admin tiene que confirmar el precio final — todavía no las tomó.',
     final: '✅ El admin ya cerró el precio final luego de tu inspección. Si el vendedor no marcó todavía si se tomó el usado, podés marcarlo vos.',
-    solo_compra: '🏷️ Pendientes de inspección en las que el cliente <strong>solo vende</strong> su auto: no se lleva ninguna unidad. Atajo para ubicarlas rápido.',
+    solo_compra: '🏷️ Todas las que esperan inspección (con turno y sin turno) en las que el cliente <strong>solo vende</strong> su auto: no se lleva ninguna unidad. Atajo para ubicarlas rápido.',
     stock: '📦 Unidades compradas que ya entraron al concesionario y todavía no se vendieron. Al venderse salen de acá.',
     usado_tomado: '🟢 Tasaciones donde el usado efectivamente se tomó como parte de pago. Operación cerrada con usado.',
     usado_no_apto: '❌ Tasaciones que el admin evaluó como NO APTAS para toma. El motivo está dentro de cada tarjeta.',
@@ -9166,6 +9175,20 @@ function renderFisicoList() {
       `;
     }
     let turnoBadge = '';
+    // Sin turno no hay nada que inspeccionar, así que en vez de la fecha decimos
+    // hace cuánto espera: es lo único que distingue una recién cargada de una
+    // que se durmió hace dos meses.
+    if (!t.turno_fecha && esPendienteInsp) {
+      // Por días de calendario, no por horas transcurridas: una cargada ayer a
+      // la noche tiene que decir "hace 1 día", no "hoy", para que coincida con
+      // la fecha que muestra la misma tarjeta.
+      const _hoy0 = new Date(); _hoy0.setHours(0, 0, 0, 0);
+      const _alta0 = new Date(t.created_at); _alta0.setHours(0, 0, 0, 0);
+      const diasSinTurno = Math.max(0, Math.round((_hoy0 - _alta0) / 86400000));
+      const durmiendo = diasSinTurno >= 7;
+      const cuanto = diasSinTurno === 0 ? 'cargada hoy' : `hace ${diasSinTurno} día${diasSinTurno === 1 ? '' : 's'}`;
+      turnoBadge = `<span style="display:inline-block;padding:3px 10px;background:${durmiendo ? '#FEE2E2' : '#FFF7ED'};color:${durmiendo ? '#991B1B' : '#9A3412'};border-radius:4px;font-size:11px;font-weight:700">⏳ SIN TURNO · ${cuanto}</span>`;
+    }
     if (t.turno_fecha) {
       const f = isoAFecha(t.turno_fecha);
       const hoyISO = fechaToISO(new Date());
