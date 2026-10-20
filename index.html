@@ -971,7 +971,7 @@ const TOTAL_STEPS = 15; // cliente, marca, [si VW: ¿compró en TGA?], año, mod
 //  2) Entre el paso de color/Kavak y el del 0km se le pregunta si el cliente va
 //     a adquirir una unidad. Si no, se saltean los pasos del 0km y del precio
 //     ofrecido, porque no aplican: solo viene a vender el usado.
-const USUARIOS_FLUJO_PORTAL = ['ialonso', 'gbuena', 'mlubrano'];
+const USUARIOS_FLUJO_PORTAL = ['ialonso', 'gbuena', 'jfazzini', 'mlubrano'];
 
 // ⭐ Quien puede ver CON QUE se calculo el precio.
 //
@@ -991,7 +991,11 @@ function veReferencias() {
 }
 
 function usuarioHabilitadoPortal() {
-  const u = (currentUser && (currentUser.usuario || '')).toLowerCase();
+  // ⚠️ El parentesis va AFUERA del &&, igual que en veReferencias(): con
+  // currentUser en null el otro patron devuelve null y revienta en
+  // .toLowerCase(). Esta se llama al abrir "Nueva" y al pintar el chip del
+  // flujo, asi que un error aca deja la pantalla en blanco.
+  const u = ((currentUser && currentUser.usuario) || '').toLowerCase();
   return USUARIOS_FLUJO_PORTAL.includes(u);
 }
 // El paso "¿compra unidad?" va para TODOS los vendedores desde el 06/10 (antes
