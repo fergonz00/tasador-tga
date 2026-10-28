@@ -15,11 +15,21 @@
 //   - `modelos`    -> traduce el codigo VW (AGDC8A MY26) a algo legible
 //                     ("VW Amarok Highline V6 AT 4X4 G2 MY26").
 //
-// A quien le llega (decision de Fer, 18/08/2026): SOLO al vendedor de la PV.
-//   - El vendedor sale de `pv_vendedores_map` (vendedorid -> usuario).
-//   - Las ventas de "T.G." (vendedorid 22, sin vendedor propio) las sigue
-//     Patricia Guajardo, que ademas es el destinatario de respaldo cuando el
-//     vendedor no tiene WhatsApp cargado (env RETIRO_FALLBACK).
+// A quien le llega: SOLO al vendedor de la PV, segun `pv_vendedores_map`
+// (vendedorid -> usuario). El mapa es la unica fuente de verdad (Matias,
+// 28/10/2026):
+//   - usuario normal  -> le llega a esa persona.
+//   - `patriciag`     -> lo que la administracion sigue: T.G. (22) y la
+//                        familia Gonzalez (15).
+//   - `nadie`         -> NO se manda nada: Autoahorro (36, 139, 142, 287) y
+//                        los vendedores historicos (49, 230, 237), que los
+//                        atiende la misma administracion. Queda registrado
+//                        con estado 'sin_aviso'.
+//   - vendedorid que no esta en el mapa, unidad sin preventa, o usuario
+//     mapeado sin WhatsApp -> es una FALLA del circuito y el aviso va a
+//     Matias (env RETIRO_ALERTA), con el motivo adentro del mensaje.
+// Hasta el 28/10/2026 todo eso caia en un respaldo unico (Patricia), mezclado
+// con lo que si le correspondia: por eso un circuito roto dos meses no se noto.
 //
 // Template Meta: `retiro_cliente_vendedor` (es_AR, UTILITY, 6 variables)
 //   {{1}} destinatario · {{2}} cliente · {{3}} unidad · {{4}} cuando retiro ·
@@ -50,8 +60,10 @@ const TEMPLATE_NAME = "retiro_cliente_vendedor";
 const WABA_ID_DEFAULT = "1183788370595856"; // WABA "Tito Gonzalez | Tasador"
 
 const VENTANA_DIAS = Number(Deno.env.get("RETIRO_VENTANA_DIAS") ?? "7");
-// Destinatario de respaldo: las ventas "T.G." y todo vendedor sin WhatsApp.
-const FALLBACK = Deno.env.get("RETIRO_FALLBACK") ?? "patriciag";
+// A quien se le avisa cuando el circuito no cierra (ver cabecera).
+const ALERTA = Deno.env.get("RETIRO_ALERTA") ?? "mlubrano";
+// Marca en `pv_vendedores_map` para los vendedores que no generan aviso.
+const SIN_AVISO = "nadie";
 // Arranque: no avisar retiros anteriores a esta fecha.
 const DESDE = (Deno.env.get("RETIRO_DESDE") ?? "2026-08-18").slice(0, 10);
 
@@ -161,17 +173,23 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: n
   const enviados: unknown[] = [];
   const errores: unknown[] = [];
   const sinDestino: unknown[] = [];
+  const omitidos: unknown[] = [];
 
   for (const u of pendientes) {
     const pv = pvs.get(u.preventa);
     const cli = pv?.cliente ? clientes.get(pv.cliente) : undefined;
-    const cliente = mejorNombre(u.responsable, cli?.nombre);
+    const cliente = nombreCliente(u.responsable, cli?.nombre);
     const unidad = [modelos.get(u.modelo) || u.modelo, u.patente ? `(${u.patente})` : ""].filter(Boolean).join(" ");
     const cuando = cuandoRetiro(u.fechasalida, u.horaprogramada, hoyAR);
     const contacto = contactoDe(cli);
     const vendedorNombre = pv?.vendedor ?? "sin identificar";
 
-    const dest = destinatario(padron, pv?.vendedorid ?? null);
+    const res = destinatario(padron, pv?.vendedorid ?? null);
+    const dest = res.tipo === "sin_aviso" ? undefined : res.u;
+    // En una falla, el motivo viaja en el parametro "Vendedor:" del template,
+    // que es el unico lugar donde entra sin dar de alta otra plantilla en Meta.
+    const vendedorParam = res.tipo === "alerta"
+      ? `${vendedorNombre} - REVISAR: ${res.motivo}` : vendedorNombre;
     const fila: Record<string, unknown> = {
       unidadid: u.unidadid, preventa: u.preventa, patente: u.patente, modelo: u.modelo,
       modelo_desc: modelos.get(u.modelo) ?? null, cliente, cliente_cuit: pv?.cliente ?? null,
@@ -182,7 +200,17 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: n
     };
 
     if (opts.dry) {
-      enviados.push({ ...fila, unidad, cuando, contacto, destinatario_nombre: dest?.nombre ?? "SIN DESTINATARIO" });
+      enviados.push({
+        ...fila, unidad, cuando, contacto, caso: res.tipo,
+        motivo: res.tipo === "alerta" ? res.motivo : null,
+        destinatario_nombre: dest?.nombre ?? (res.tipo === "sin_aviso" ? "NO SE AVISA" : "SIN DESTINATARIO"),
+      });
+      continue;
+    }
+
+    if (res.tipo === "sin_aviso") {
+      omitidos.push({ preventa: u.preventa, vendedor: vendedorNombre });
+      await guardar(env, { ...fila, estado: "sin_aviso" });
       continue;
     }
 
@@ -193,7 +221,7 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: n
     }
 
     const r = await enviarTemplate(env, dest.telefono_wa, [
-      primerNombre(dest.nombre), cliente, unidad, cuando, vendedorNombre, contacto,
+      primerNombre(dest.nombre), cliente, unidad, cuando, vendedorParam, contacto,
     ]);
     if (r.ok) {
       enviados.push({ preventa: u.preventa, cliente, para: dest.nombre });
@@ -207,7 +235,7 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; dias: n
   return {
     ok: true, hoy: hoyAR, dry: opts.dry, desde: desdeLectura,
     retiros: unidades.length, nuevos: pendientes.length,
-    enviados, sin_destinatario: sinDestino, errores,
+    enviados, sin_aviso: omitidos, sin_destinatario: sinDestino, errores,
   };
 }
 
@@ -234,18 +262,25 @@ type Cliente = {
   telefono: string; celular: string; telefonolaboral: string; celularlaboral: string;
 };
 
-// `unidades.responsable` (quien firmo el retiro) esta al dia pero el sistema lo
-// corta a 25 caracteres; `clientes.nombre` viene entero pero puede haber quedado
-// viejo (esa tabla no re-sincroniza ediciones). Si el de clientes continua al
-// truncado, gana el entero; si son personas distintas, gana el de la unidad.
-function mejorNombre(responsable?: string, enClientes?: string) {
+// QUIEN COMPRO vs QUIEN VINO A BUSCARLA.
+// `unidades.responsable` es el que FIRMO el retiro: a veces el titular, a veces
+// un flete o una agencia, y el sistema lo corta a 25 caracteres. El cliente de
+// la venta es el de la preventa (`clientes.nombre`, que viene entero).
+// Hasta el 28/10/2026 ganaba `responsable` cuando los dos nombres no coincidian
+// y la Saveiro AI615BY, vendida a Carolina Duarte, se aviso como "AUTOLOOP".
+//   - Sin cliente en la PV -> queda el que firmo, es lo unico que hay.
+//   - El que firmo continua al nombre del cliente (o al reves) -> misma persona,
+//     va el entero: "AUTOLOOP" y "AUTOLOOP, S.A.S" son el mismo comprador.
+//   - Son distintos -> manda el cliente y se aclara quien la retiro.
+function nombreCliente(responsable?: string, enClientes?: string) {
   const r = (responsable ?? "").trim();
   const c = (enClientes ?? "").trim();
-  if (!r) return c || "sin identificar";
-  if (!c) return r;
+  if (!c) return r || "sin identificar";
+  if (!r) return c;
   const norm = (s: string) => s.toUpperCase().replace(/\s+/g, " ");
-  const mismoArranque = norm(c).startsWith(norm(r).slice(0, 20));
-  return mismoArranque && c.length > r.length ? c : r;
+  const mismaPersona = norm(c).startsWith(norm(r).slice(0, 20)) ||
+    norm(r).startsWith(norm(c).slice(0, 20));
+  return mismaPersona ? c : `${c} (la retiró ${r})`;
 }
 
 // En Oversoft el telefono viene partido en "(caracteristica)numero", a veces con
@@ -303,13 +338,21 @@ function contactoDe(c?: Cliente) {
 async function preventasDe(env: Env, refs: string[]) {
   const out = new Map<string, { vendedorid: number; vendedor: string; cliente: string }>();
   if (!refs.length) return out;
-  // Las PVs pueden ser viejas (unidad pedida hace meses): ventana amplia.
-  const pvs = await ov(env, `preventas?fecha=gte.2024-01-01&select=numero,vendedorid,cliente&limit=20000`);
+  // Se piden SOLO las PV de estos retiros, por numero (5 o 10 por corrida).
+  // Bajarlas TODAS con un limit grande, como se hacia hasta el 28/10/2026, NO
+  // funciona: PostgREST de la replica corta en 1000 filas (max_rows del
+  // proyecto), el limit pedido se ignora en silencio y, sin ORDER BY, el
+  // recorte es arbitrario y se mueve con cada sync. De 2303 preventas llegaban
+  // 1000: la PV no aparecia, el aviso salia "sin identificar", sin telefono ni
+  // mail, y caia en el destinatario de respaldo (27 de los primeros 128 avisos).
+  const lista = refs.map((r) => `"${r}"`).join(",");
+  const pvs = await ov(
+    env,
+    `preventas?numero=in.(${encodeURIComponent(lista)})&select=numero,vendedorid,cliente&limit=500`,
+  );
   const vends = await ov(env, `vendedores?select=vendedorid,nombre&limit=1000`);
   const nombreVend = new Map<number, string>(vends.map((v: { vendedorid: number; nombre: string }) => [Number(v.vendedorid), String(v.nombre || "").trim()]));
-  const buscados = new Set(refs);
   for (const p of pvs) {
-    if (!buscados.has(p.numero)) continue;
     out.set(p.numero, {
       vendedorid: Number(p.vendedorid),
       vendedor: nombreVend.get(Number(p.vendedorid)) || `vendedor ${p.vendedorid}`,
@@ -368,16 +411,24 @@ async function padronUsuarios(env: Env) {
   return { porUsuario, porVendedor };
 }
 
+type Resuelto =
+  | { tipo: "vendedor"; u: Usuario }
+  | { tipo: "sin_aviso" }
+  | { tipo: "alerta"; u: Usuario | undefined; motivo: string };
+
 function destinatario(
   padron: { porUsuario: Map<string, Usuario>; porVendedor: Map<number, string> },
   vendedorid: number | null,
-) {
-  if (vendedorid != null) {
-    const usuario = padron.porVendedor.get(Number(vendedorid));
-    const u = usuario ? padron.porUsuario.get(usuario) : undefined;
-    if (u) return u;
-  }
-  return padron.porUsuario.get(FALLBACK); // Patricia Guajardo
+): Resuelto {
+  const alerta = (motivo: string): Resuelto =>
+    ({ tipo: "alerta", u: padron.porUsuario.get(ALERTA), motivo });
+  if (vendedorid == null) return alerta("la unidad no tiene preventa que la identifique");
+  const usuario = padron.porVendedor.get(Number(vendedorid));
+  if (!usuario) return alerta(`el vendedor ${vendedorid} no esta en pv_vendedores_map`);
+  if (usuario === SIN_AVISO) return { tipo: "sin_aviso" };
+  const u = padron.porUsuario.get(usuario);
+  if (!u) return alerta(`${usuario} no tiene WhatsApp activo`);
+  return { tipo: "vendedor", u };
 }
 
 // ── Calendario ──────────────────────────────────────────────────────────────
