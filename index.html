@@ -7202,6 +7202,51 @@ function cerrarAgendarTurno() {
   if (m) m.remove();
   document.body.style.overflow = '';
   __turnoEditandoTasId = null;
+  __reinspeccionTasId = null;
+}
+
+// Reinspección de una tasación que ya tiene precio final. Se elige el turno con
+// el mismo modal de siempre y, al confirmarlo, la tasación vuelve a Pendientes:
+// se borra el precio final y la marca de inspección hecha, pero la inspección
+// anterior (checklist, marcadores, accesorios, observaciones) y las fotos
+// quedan para precargar el formulario. Al guardar, la nueva pisa a la vieja.
+let __reinspeccionTasId = null;
+async function reagendarReinspeccion(tasId) {
+  if (!confirm('¿Reagendar la inspección de esta unidad?\n\n'
+    + 'Se borra el precio final del admin y vuelve a Pendientes. Al inspeccionar '
+    + 'vas a tener cargado todo lo de la vez anterior (fotos incluidas) para '
+    + 'actualizarlo. Después el admin define el precio final nuevo.')) return;
+  await abrirAgendarTurno(tasId);
+  // abrirAgendarTurno puede no abrir el modal (tasación no encontrada).
+  if (document.getElementById('turnoModal')) __reinspeccionTasId = tasId;
+}
+
+function _payloadReinspeccion(tas) {
+  const af = (tas && tas.analisis_fisico && typeof tas.analisis_fisico === 'object') ? tas.analisis_fisico : {};
+  return {
+    analisis_fisico: Object.assign({}, af, {
+      reinspeccion: {
+        pedida_at: new Date().toISOString(),
+        pedida_por: currentUser.nombre,
+        // Para precargar el precio en el formulario (la columna se limpia).
+        precio_sugerido_anterior: tas.precio_sugerido_fisico || null,
+        precio_final_anterior: tas.precio_toma_final || null,
+        inspeccion_anterior_at: tas.tasado_fisico_at || null
+      }
+    }),
+    precio_toma_final: null,
+    precio_sugerido_fisico: null,
+    tasado_por: null,
+    tasado_at: null,
+    tasado_fisico_at: null,
+    estado_fisico: null,
+    estado: 'pendiente',
+    // El cierre de la operación era con el precio viejo: se vuelve a responder.
+    venta_cerrada: null,
+    usado_tomado: null,
+    venta_cerrada_at: null,
+    updated_at: new Date().toISOString()
+  };
 }
 
 async function confirmarTurno(tasId, fechaISO, hora) {
@@ -7212,11 +7257,17 @@ async function confirmarTurno(tasId, fechaISO, hora) {
     turnoAnterior = (r && r[0]) || null;
   } catch(e) {}
 
+  // Reinspección: sin leer la fila actual no se puede armar (perderíamos la
+  // inspección vieja), así que si falló la lectura no se guarda nada.
+  const esReinspeccion = __reinspeccionTasId === tasId;
+  if (esReinspeccion && !turnoAnterior) { showToast('No se pudo leer la tasación, probá de nuevo'); return; }
+
   try {
     showLoading('Guardando turno...');
     await sbFetch(`tasaciones?id=eq.${tasId}`, {
       method: 'PATCH',
       body: JSON.stringify({
+        ...(esReinspeccion ? _payloadReinspeccion(turnoAnterior) : {}),
         turno_fecha: fechaISO,
         turno_hora: hora,
         turno_creado_por: currentUser.nombre,
@@ -7229,7 +7280,7 @@ async function confirmarTurno(tasId, fechaISO, hora) {
       })
     });
     hideLoading();
-    showToast('Turno agendado');
+    showToast(esReinspeccion ? 'Turno agendado — volvió a Pendientes para reinspeccionar' : 'Turno agendado');
     cerrarAgendarTurno();
 
     // WA al tasador físico: nuevo si no había turno, cambio si cambió fecha u hora
@@ -7259,6 +7310,8 @@ async function confirmarTurno(tasId, fechaISO, hora) {
     }
     const agendaView = document.getElementById('agendaView');
     if (agendaView && !agendaView.classList.contains('hidden')) loadAgenda();
+    const fisicoView = document.getElementById('tasadorFisicoView');
+    if (fisicoView && !fisicoView.classList.contains('hidden')) loadTasadorFisicoList();
   } catch(e) {
     hideLoading();
     console.error(e);
@@ -9249,6 +9302,14 @@ function renderFisicoList() {
           <button onclick="event.stopPropagation(); marcarVendido('${t.id}')" style="padding:8px 14px; background:#1E3A8A; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">💰 Marcar vendido</button>`;
       }
     }
+    // Ya tasada final pero hay que volver a verla (el cliente la trae de nuevo,
+    // pasó tiempo, cambió algo): se le da turno y vuelve a Pendientes con la
+    // inspección anterior precargada. Una vez comprada (stock) ya no.
+    if (t.precio_toma_final && !t.ingresado_stock_at && !t.virtual_no_apto) {
+      accionesTurno = `
+        <button onclick="event.stopPropagation(); reagendarReinspeccion('${t.id}')" style="padding:8px 12px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">🔁 Reagendar</button>
+      `;
+    }
     if (esPendienteInsp && t.turno_fecha) {
       accionesTurno = `
         <div style="display:flex; gap:6px; flex-wrap:wrap">
@@ -9527,6 +9588,28 @@ function renderInspeccionSoloLectura(tas, prev) {
     </div>
   `;
 
+  // Fotos (vendedor + las que sacó el tasador). Solo para mirar y bajar: acá no
+  // se borra nada, la inspección está cerrada.
+  const fotosLista = Array.isArray(tas.fotos) ? tas.fotos : [];
+  const nFotosTasador = fotosLista.filter(esFotoDelTasador).length;
+  const fotosHTML = `
+    <div style="margin-top:14px; background:white; border-radius:8px; padding:14px; box-shadow:var(--shadow)">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
+        <h3 style="margin:0; font-size:15px; color:var(--vw-blue)">Fotos</h3>
+        ${fotosLista.length ? `<button onclick="descargarTodasLasFotos('${tas.id}')" style="padding:5px 12px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">⬇ Descargar todas</button>` : ''}
+      </div>
+      ${fotosLista.length === 0 ? '<div style="margin-top:8px; font-size:13px; color:var(--vw-grey-3); font-style:italic">Esta tasación no tiene fotos.</div>' : `
+        <div style="margin-top:6px; font-size:12px; color:var(--vw-grey-4)">${fotosLista.length} foto${fotosLista.length === 1 ? '' : 's'}${nFotosTasador ? ` · ${nFotosTasador} de la inspección` : ''} · tocá una para verla grande</div>
+        <div class="fotos-admin-grid">
+          ${fotosLista.map((f, i) => `
+            <div style="position:relative">
+              <img src="${f}" onclick="showPhotoDe('${tas.id}', ${i})">
+              ${esFotoDelTasador(f) ? '<span style="position:absolute; left:4px; bottom:4px; background:#EA580C; color:#fff; font-size:9px; font-weight:700; padding:1px 5px; border-radius:3px; letter-spacing:.5px; pointer-events:none">TASADOR</span>' : ''}
+            </div>`).join('')}
+        </div>`}
+    </div>
+  `;
+
   const bannerHTML = tas.precio_toma_final
     ? `<div style="margin-bottom:14px; padding:10px 14px; background:#ECFDF5; border-left:4px solid var(--green); border-radius:6px; font-size:12px; color:#065F46">
          ✅ <strong>Tasación cerrada por el admin</strong> — el precio final ya fue confirmado. Esto es solo el detalle, no se puede modificar.
@@ -9541,6 +9624,7 @@ function renderInspeccionSoloLectura(tas, prev) {
     ${preciosHTML}
     ${renderOpinionTasadorHTML(af, tas.tasado_fisico_por)}
     ${datosVehHTML}
+    ${fotosHTML}
     ${marcadoresHTML}
     ${checklistHTML}
     ${datosHTML}
@@ -9630,7 +9714,9 @@ function renderInspeccionFormulario(tas, prev) {
   const pruebaRealizada = !!(prev.prueba_dinamica && prev.prueba_dinamica.realizada);
   const pruebaRealizo = (prev.prueba_dinamica && prev.prueba_dinamica.realizo) || '';
   const obsGen = prev.observaciones_grales || '';
-  const precioFisico = tas.precio_toma_fisico || tas.precio_sugerido_fisico || '';
+  const reinsp = prev.reinspeccion || null;
+  const precioFisico = tas.precio_toma_fisico || tas.precio_sugerido_fisico
+    || (reinsp && reinsp.precio_sugerido_anterior) || '';
   // Si en una inspección anterior se marcó "no pongo precio", el tilde vuelve puesto.
   const sinPrecioPrev = !!prev.sin_precio_sugerido;
   const pinturaEstadoPrev = tas.pintura_estado || (prev.pintura_estado || '');
@@ -9826,7 +9912,14 @@ function renderInspeccionFormulario(tas, prev) {
   `;
 
   const body = document.getElementById('fisicoInspBody');
+  const _fCorta = iso => iso ? new Date(iso).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
+  const reinspHTML = reinsp ? `
+    <div style="margin-bottom:14px; padding:10px 14px; background:#EFF6FF; border-left:4px solid var(--vw-blue); border-radius:6px; font-size:12px; color:var(--vw-blue); line-height:1.5">
+      🔁 <strong>Reinspección</strong> — está cargado todo lo de la inspección anterior${reinsp.inspeccion_anterior_at ? ' del ' + _fCorta(reinsp.inspeccion_anterior_at) : ''}${reinsp.precio_final_anterior ? ' (precio final que había: $ ' + formatNum(reinsp.precio_final_anterior) + ')' : ''}.
+      Actualizá lo que cambió: podés sacar fotos y subir nuevas. Al guardar, esta inspección reemplaza a la anterior.
+    </div>` : '';
   body.innerHTML = `
+    ${reinspHTML}
     ${avisoSoloVende(tas)}
     ${contextoHTML}
     ${datosVehiculoHTML}
@@ -10431,6 +10524,9 @@ function tieneInspeccion(t) {
   if (t.tasado_fisico_at) return true;
   const af = t.analisis_fisico;
   if (!af || typeof af !== 'object') return false;
+  // Mandada a reinspección: la inspección vieja sigue guardada para precargar
+  // el formulario, pero no cuenta como hecha hasta que se vuelva a guardar.
+  if (af.reinspeccion) return false;
   return !!(t.precio_sugerido_fisico || af.sin_precio_sugerido);
 }
 
