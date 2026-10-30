@@ -403,6 +403,26 @@ input, select, textarea { font-family: var(--font); }
   .fotos-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
+/* Inspección física en celu: tarjetas y "Ver detalle" */
+@media (max-width: 640px) {
+  /* Botones de la tarjeta: todos del mismo ancho y repartidos, en vez de
+     unos a la izquierda, otros a la derecha y uno suelto abajo. */
+  .fis-acciones { justify-content: stretch !important; width: 100%; }
+  .fis-acciones > button { flex: 1 1 auto; }
+  /* Precios del "Ver detalle": de a 2 en vez de uno por renglón. */
+  .insp-ro-precios { grid-template-columns: 1fr 1fr !important; }
+  .insp-ro-precios > div { padding: 10px 6px !important; }
+  .insp-ro-precios > div > div:nth-child(2) { font-size: 16px !important; }
+  /* Checklist de solo lectura: nombre + estado + costo en un renglón y la
+     observación abajo. Con 4 columnas el nombre se partía palabra por palabra. */
+  .insp-ro-row { grid-template-columns: 1fr auto auto !important; }
+  .insp-ro-row > div:nth-child(3) { min-width: 70px; }
+  .insp-ro-row > div:nth-child(4) { grid-column: 1 / -1; }
+  .insp-ro-row > .insp-ro-sinobs { display: none; }
+  /* Fotos de a 3 por fila. */
+  .fotos-admin-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
 /* Checklist del tasador físico: apilado en mobile */
 @media (max-width: 640px) {
   .insp-item-row {
@@ -9269,7 +9289,7 @@ function renderFisicoList() {
     let accionesExtra = '';
     if (t.precio_toma_final && (t.venta_cerrada === null || t.venta_cerrada === undefined) && _puedeGestionarStock()) {
       accionesExtra = `
-        <div style="display:flex; gap:6px; flex-wrap:wrap">
+        <div class="fis-acciones" style="display:flex; gap:6px; flex-wrap:wrap">
           <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, true)" style="padding:8px 12px; background:var(--green); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · con usado</button>
           <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', true, false)" style="padding:8px 12px; background:#10B981; color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">✅ Sí · sin usado</button>
           <button onclick="event.stopPropagation(); marcarCierreComoTasador('${t.id}', false, false)" style="padding:8px 12px; background:var(--red); color:white; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ No cerró</button>
@@ -9312,7 +9332,7 @@ function renderFisicoList() {
     }
     if (esPendienteInsp && t.turno_fecha) {
       accionesTurno = `
-        <div style="display:flex; gap:6px; flex-wrap:wrap">
+        <div class="fis-acciones" style="display:flex; gap:6px; flex-wrap:wrap">
           <button onclick="event.stopPropagation(); abrirAgendarTurno('${t.id}')" style="padding:8px 12px; background:white; color:var(--vw-blue); border:1px solid var(--vw-blue); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">📅 Reagendar</button>
           <button onclick="event.stopPropagation(); abrirCancelarVisita('${t.id}')" style="padding:8px 12px; background:white; color:var(--red); border:1px solid var(--red); border-radius:6px; font-weight:600; font-size:12px; cursor:pointer">❌ Cancelar revisión</button>
         </div>
@@ -9344,7 +9364,7 @@ function renderFisicoList() {
     // Precios contextuales en la card según estado
     let preciosLine = '';
     if (t.precio_toma_final) {
-      preciosLine = `<div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px">Sugerido por vos: <strong style="font-family:var(--mono); color:#5B21B6">${t.precio_sugerido_fisico ? '$ ' + formatNum(t.precio_sugerido_fisico) : 'sin precio'}</strong> · Final del admin: <strong style="font-family:var(--mono); color:var(--green); font-size:13px">$ ${formatNum(t.precio_toma_final)}</strong></div>`;
+      preciosLine = `<div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px"><span style="white-space:nowrap">Sugerido por vos: <strong style="font-family:var(--mono); color:#5B21B6">${t.precio_sugerido_fisico ? '$ ' + formatNum(t.precio_sugerido_fisico) : 'sin precio'}</strong></span> · <span style="white-space:nowrap">Final del admin: <strong style="font-family:var(--mono); color:var(--green); font-size:13px">$ ${formatNum(t.precio_toma_final)}</strong></span></div>`;
     } else if (t.precio_sugerido_fisico) {
       preciosLine = `<div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px">Tu precio sugerido: <strong style="font-family:var(--mono); color:#5B21B6">$ ${formatNum(t.precio_sugerido_fisico)}</strong></div>`;
     } else if (t.precio_toma_virtual) {
@@ -9366,15 +9386,15 @@ function renderFisicoList() {
             ${preciosLine}
             <div style="font-size:12px; color:var(--vw-grey-3); margin-top:4px">Vendedor: ${t.vendedor_nombre || '—'} · ${fecha}</div>
           </div>
-          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">
+          <div class="fis-acciones" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">
             ${t.precio_toma_final ? `<button onclick="event.stopPropagation(); imprimirHojaFinal('${t.id}')" style="padding:10px 14px; background:white; color:#065F46; border:1px solid #065F46; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer; white-space:nowrap">🖨️ Imprimir</button>` : ''}
             ${btnNoSePresento}
             <button onclick="abrirInspeccion('${t.id}')" style="padding:10px 16px; background:${btnBg}; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; white-space:nowrap">${btnLabel}</button>
           </div>
         </div>
-        ${accionesTurno ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end">${accionesTurno}</div>` : ''}
-        ${accionesExtra ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end">${accionesExtra}</div>` : ''}
-        ${accionesStock ? `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap">${accionesStock}</div>` : ''}
+        ${accionesTurno ? `<div class="fis-acciones" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end">${accionesTurno}</div>` : ''}
+        ${accionesExtra ? `<div class="fis-acciones" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end">${accionesExtra}</div>` : ''}
+        ${accionesStock ? `<div class="fis-acciones" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--vw-grey-2); display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap">${accionesStock}</div>` : ''}
       </div>
     `;
   }).join('');
@@ -9471,7 +9491,7 @@ function renderInspeccionSoloLectura(tas, prev) {
     </div>
   `;
   const preciosHTML = `
-    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-bottom:14px">
+    <div class="insp-ro-precios" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-bottom:14px">
       ${precioBox('Virtual (admin)', tas.precio_toma_virtual, 'var(--vw-blue)', '')}
       ${precioBox('Kavak', _kavakParaFisico(tas).valor ? Math.round(_kavakParaFisico(tas).valor) : null, '#7E22CE', _kavakParaFisico(tas).fuente)}
       ${precioBox('Sugerido por vos', tas.precio_sugerido_fisico, '#5B21B6', tas.precio_sugerido_fisico ? '' : 'no cargaste precio')}
@@ -9520,11 +9540,11 @@ function renderInspeccionSoloLectura(tas, prev) {
           const estadoColor = estado === 'bueno' ? 'var(--green)' : estado === 'regular' ? 'var(--orange)' : 'var(--red)';
           const estadoLbl = estado === 'bueno' ? 'Bueno' : estado === 'regular' ? 'Regular' : 'Malo';
           return `
-            <div style="display:grid; grid-template-columns:1fr 90px 100px 1.2fr; gap:8px; align-items:center; padding:7px 0; border-top:1px solid var(--vw-grey-1); font-size:13px">
+            <div class="insp-ro-row" style="display:grid; grid-template-columns:1fr 90px 100px 1.2fr; gap:8px; align-items:center; padding:7px 0; border-top:1px solid var(--vw-grey-1); font-size:13px">
               <div style="font-weight:600">${it.label}</div>
               <div style="color:${estadoColor}; font-weight:700; text-transform:uppercase; font-size:11px">${estadoLbl}</div>
               <div style="font-family:var(--mono); text-align:right; color:var(--red); font-weight:600">${costo > 0 ? '$ ' + formatNum(costo) : '-'}</div>
-              <div style="font-size:12px; color:var(--vw-grey-4)">${obs || '—'}</div>
+              <div class="${obs ? '' : 'insp-ro-sinobs'}" style="font-size:12px; color:var(--vw-grey-4)">${obs || '—'}</div>
             </div>
           `;
         }).join('');
