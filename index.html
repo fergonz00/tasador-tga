@@ -228,10 +228,13 @@ input, select, textarea { font-family: var(--font); }
 .admin-container {
   max-width: 900px; margin: 20px auto; padding: 0 16px;
 }
+/* En compu las solapas bajan de renglón: con 9 (Inspección física) no entran en
+   900px y se aplastaban hasta salirse del recuadro. En celu siguen con scroll. */
 .admin-tabs {
-  display: flex; gap: 8px; margin-bottom: 16px;
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;
 }
 .admin-tabs button {
+  white-space: nowrap;
   padding: 10px 20px;
   border-radius: 8px;
   font-size: 14px; font-weight: 600;
@@ -666,7 +669,7 @@ input, select, textarea { font-family: var(--font); }
         <button onclick="showFisicoTab('todas', this)">Todas</button>
       </div>
       <div style="padding: 12px 16px 0 16px;">
-        <input type="text" id="fisicoBuscador" placeholder="Buscar por patente o nombre del cliente..." oninput="onFisicoFiltroChange()" style="width:100%; padding: 10px 14px; border: 1px solid var(--vw-grey-2); border-radius: 8px; font-size: 14px; font-family: var(--sans)">
+        <input type="text" id="fisicoBuscador" placeholder="Buscar por patente, modelo, cliente o vendedor..." oninput="onFisicoFiltroChange()" style="width:100%; padding: 10px 14px; border: 1px solid var(--vw-grey-2); border-radius: 8px; font-size: 14px; font-family: var(--sans)">
       </div>
       <div id="fisicoList" style="padding: 12px 16px 16px 16px"></div>
     </div>
@@ -1097,6 +1100,22 @@ async function sbFetch(path, options = {}) {
   const res = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
   if (!res.ok) { const t = await res.text(); throw new Error(t); }
   return res.json();
+}
+
+// Trae TODAS las filas de una consulta, de a 1.000. PostgREST corta en 1.000
+// filas sin avisar (max_rows) y un `limit` mayor no lo pasa: con 1.461
+// tasaciones, Inspección física y el admin perdían las más viejas y una
+// patente del 11/09 no aparecía en ninguna solapa. El orden tiene que ser
+// estable (desempatar por id) para que las páginas no se pisen.
+async function sbFetchTodo(path) {
+  const PAGINA = 1000;
+  const sep = path.includes('?') ? '&' : '?';
+  let todo = [];
+  for (let offset = 0; ; offset += PAGINA) {
+    const pag = await sbFetch(`${path}${sep}limit=${PAGINA}&offset=${offset}`) || [];
+    todo = todo.concat(pag);
+    if (pag.length < PAGINA) return todo;
+  }
 }
 
 // RPC de usuarios. `tasador_usuarios` ya no se lee ni se escribe con la anon
@@ -3515,11 +3534,19 @@ async function marcarCierre(tasId, cerrada, dejoUsado) {
 }
 
 // Helper compartido: ¿esta tasación matchea el query de búsqueda?
+// Cada palabra de la búsqueda tiene que aparecer en algún dato, en cualquier
+// orden: "golf 1.4" encuentra "GOLF · 5P 1,4 TSI". Sin tildes y con la coma
+// decimal igual al punto (la guía escribe 1,4 y la gente tipea 1.4).
+function _normBusqueda(s) {
+  return String(s).toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/,/g, '.');
+}
 function matchTasacion(t, q) {
   if (!q) return true;
-  const hay = [t.patente, t.marca, t.modelo, t.version, t.vendedor_nombre, t.cliente_nombre]
-    .filter(x => x).map(x => String(x).toUpperCase()).join(' | ');
-  return hay.indexOf(q) >= 0;
+  const hay = _normBusqueda([t.patente, t.marca, t.modelo, t.version, t.anio, t.color, t.vendedor_nombre, t.cliente_nombre]
+    .filter(x => x).join(' | '));
+  const hayPatente = hay.replace(/\s+/g, '');
+  return _normBusqueda(q).split(/\s+/).filter(Boolean)
+    .every(p => hay.includes(p) || hayPatente.includes(p));
 }
 
 // ============ ADMIN ============
@@ -3528,7 +3555,7 @@ async function loadAdminTasaciones(filter) {
   list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Cargando...</div>';
   try {
     // Traemos todas y filtramos en cliente porque las condiciones son combinadas (precio_toma_virtual / final).
-    const data = await sbFetch('tasaciones?order=created_at.desc');
+    const data = await sbFetchTodo('tasaciones?order=created_at.desc,id.desc');
     allTasaciones = data;
     populateAdminVendedorSelect(data);
     adminFiltroEstado = filter || 'pendientes';
@@ -9001,7 +9028,7 @@ async function loadTasadorFisicoList() {
   const list = document.getElementById('fisicoList');
   list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Cargando...</div>';
   try {
-    const data = await sbFetch('tasaciones?order=created_at.desc');
+    const data = await sbFetchTodo('tasaciones?order=created_at.desc,id.desc');
     fisicoData = data;
     renderFisicoList();
   } catch(e) {
