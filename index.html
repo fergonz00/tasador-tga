@@ -9623,7 +9623,7 @@ function renderInspeccionSoloLectura(tas, prev) {
         <div class="fotos-admin-grid">
           ${fotosLista.map((f, i) => `
             <div style="position:relative">
-              <img src="${f}" onclick="showPhotoDe('${tas.id}', ${i})">
+              <img src="${f}" onclick="showPhotoDe('${tas.id}', ${i}, true)">
               ${esFotoDelTasador(f) ? '<span style="position:absolute; left:4px; bottom:4px; background:#EA580C; color:#fff; font-size:9px; font-weight:700; padding:1px 5px; border-radius:3px; letter-spacing:.5px; pointer-events:none">TASADOR</span>' : ''}
             </div>`).join('')}
         </div>`}
@@ -10724,23 +10724,28 @@ async function eliminarFotoDe(tasId, i) {
 // flechas, el teclado o deslizando en el celular.
 let _fotosVisor = [];
 let _fotoVisorIdx = 0;
-let _fotoVisorTas = null;   // la tasación dueña, para nombrar bien la descarga
+let _fotoVisorTas = null;   // la tasación dueña (null = no se puede borrar)
+let _fotoVisorNombreTas = null;   // para nombrar bien la descarga
 
-function showPhoto(url, lista, tas) {
+// soloLectura: desde "Ver detalle" se miran y descargan, pero no se borran.
+function showPhoto(url, lista, tas, soloLectura) {
   _fotosVisor = (Array.isArray(lista) && lista.length) ? lista.slice() : [url];
   const i = _fotosVisor.indexOf(url);
   _fotoVisorIdx = i >= 0 ? i : 0;
-  _fotoVisorTas = tas || null;
+  _fotoVisorTas = soloLectura ? null : (tas || null);
+  _fotoVisorNombreTas = tas || null;
+  const btnElim = document.getElementById('photoModalEliminar');
+  if (btnElim) btnElim.style.display = soloLectura ? 'none' : '';
   _pintarFotoVisor();
   document.getElementById('photoModal').classList.add('show');
 }
 
 // Desde la grilla del admin: la lista sale de la tasación.
-function showPhotoDe(tasId, i) {
+function showPhotoDe(tasId, i, soloLectura) {
   const tas = _buscarTasacion(tasId);
   const fotos = (tas && tas.fotos) || [];
   if (!fotos[i]) return;
-  showPhoto(fotos[i], fotos, tas);
+  showPhoto(fotos[i], fotos, tas, soloLectura);
 }
 
 // Desde la grilla de la inspección del tasador físico.
@@ -10784,7 +10789,7 @@ function cerrarFoto() {
 async function descargarFotoActual() {
   const url = _fotosVisor[_fotoVisorIdx];
   if (!url) return;
-  await descargarFoto(url, _nombreDeFoto(url, _fotoVisorTas, _fotoVisorIdx));
+  await descargarFoto(url, _nombreDeFoto(url, _fotoVisorNombreTas, _fotoVisorIdx));
 }
 
 // Eliminar sin salir del visor: borra la que se está mirando y sigue en la
