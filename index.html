@@ -685,6 +685,7 @@ input, select, textarea { font-family: var(--font); }
         <button onclick="showFisicoTab('final', this)">Tasación final</button>
         <button onclick="showFisicoTab('usado_tomado', this)">Usado tomado</button>
         <button onclick="showFisicoTab('stock', this)">📦 Stock</button>
+        <button onclick="showFisicoTab('vendidos', this)">💰 Vendidos</button>
         <button onclick="showFisicoTab('usado_no_apto', this)">Usado no apto</button>
         <button onclick="showFisicoTab('todas', this)">Todas</button>
       </div>
@@ -5305,21 +5306,228 @@ async function marcarIngresoStock(tasId) {
   }
 }
 
-async function marcarVendido(tasId) {
+// Marcar vendido ya no es un confirm pelado: la unidad sale del stock CON su
+// resultado. Antes solo quedaba la fecha, asi que de un usado comprado y
+// vendido se sabia que salio pero no si dejo plata.
+function marcarVendido(tasId) {
+  abrirVentaUsadoModal(tasId);
+}
+
+// ---------------------------------------------------------------------------
+// Resultado del usado:  venta - toma - arreglos = diferencia
+// La toma ya esta guardada (precio_toma_final). Lo que falta cargar al vender
+// es a cuanto salio y cuanto se gasto en dejarla lista.
+// ---------------------------------------------------------------------------
+
+// Lee plata escrita a mano. En es-AR el punto separa miles y la coma es el
+// decimal: "27.200.000" son veintisiete millones, no 27,2. Devuelve null si no
+// hay numero — nunca 0, porque "vacio" y "cero" no significan lo mismo aca.
+function _plataANumero(txt) {
+  if (txt === null || txt === undefined) return null;
+  let s = String(txt).trim().replace(/\$/g, '').replace(/\s/g, '');
+  if (!s) return null;
+  s = s.indexOf(',') >= 0 ? s.replace(/\./g, '').replace(',', '.') : s.replace(/\./g, '');
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return isNaN(n) ? null : n;
+}
+
+// Resultado de una unidad vendida, o null si todavia no se cargo a cuanto se
+// vendio (las que se marcaron antes de que existiera el campo).
+function _resultadoUsado(t) {
+  if (!t || !t.vendido_at) return null;
+  if (t.vendido_precio === null || t.vendido_precio === undefined) return null;
+  const venta = Number(t.vendido_precio) || 0;
+  const toma = Number(t.precio_toma_final) || 0;
+  const arreglos = Number(t.vendido_arreglos) || 0;
+  return { venta, toma, arreglos, dif: venta - toma - arreglos };
+}
+
+// Bloque con la cuenta, en verde si quedo a favor y en rojo si quedo en contra.
+// Se usa igual en el modal (mientras escribis) y en la tarjeta (ya guardado).
+function _cajaResultadoUsado(r, compacta) {
+  const verde = r.dif >= 0;
+  const col = verde ? '#047857' : '#991B1B';
+  const bg = verde ? '#ECFDF5' : '#FEF2F2';
+  const bor = verde ? '#A7F3D0' : '#FECACA';
+  const fila = (lbl, val) => `<div style="display:flex; justify-content:space-between; gap:12px"><span>${lbl}</span><span>$ ${formatNum(val)}</span></div>`;
+  return `
+    <div style="border:${compacta ? '1px' : '2px'} solid ${verde ? '#047857' : '#991B1B'}; background:${bg}; border-radius:8px; padding:${compacta ? '8px 10px' : '12px 14px'}">
+      <div style="font-family:var(--mono); font-size:${compacta ? '11px' : '12px'}; color:var(--vw-grey-5); line-height:1.8">
+        ${fila('Venta', r.venta)}${fila('− Toma', r.toma)}${fila('− Arreglos', r.arreglos)}
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:7px; padding-top:7px; border-top:1px solid ${bor}">
+        <span style="font-size:${compacta ? '11px' : '12px'}; font-weight:700; color:${col}; letter-spacing:0.4px">${verde ? 'A FAVOR' : 'EN CONTRA'}</span>
+        <span style="font-family:var(--mono); font-size:${compacta ? '15px' : '18px'}; font-weight:800; color:${col}">${verde ? '+' : '−'} $ ${formatNum(Math.abs(r.dif))}</span>
+      </div>
+    </div>`;
+}
+
+// Modal de venta. Sirve para marcar vendida una unidad del stock y tambien para
+// corregir despues los numeros de una ya vendida (ahi NO se vuelve a pisar la
+// fecha de venta original).
+function abrirVentaUsadoModal(tasId) {
   if (!_puedeGestionarStock()) { showToast('No autorizado'); return; }
-  if (!confirm('¿Confirmar que este usado fue VENDIDO?')) return;
+  const t = (fisicoData || []).find(x => x.id === tasId)
+         || (allTasaciones || []).find(x => x.id === tasId);
+  if (!t) { showToast('No encontré la unidad'); return; }
+
+  const prev = document.getElementById('ventaUsadoModal');
+  if (prev) prev.remove();
+
+  const toma = Number(t.precio_toma_final) || 0;
+  const estimado = Number((t.analisis_fisico || {}).total_arreglos) || 0;
+  const yaVendido = !!t.vendido_at;
+  const tienePrecio = t.vendido_precio !== null && t.vendido_precio !== undefined;
+  // null = todavia no contesto si hubo arreglos. Es a proposito: la pregunta se
+  // contesta siempre, no se asume que no hubo.
+  let arreglosPrev = null;
+  if (t.vendido_arreglos !== null && t.vendido_arreglos !== undefined) {
+    arreglosPrev = Number(t.vendido_arreglos) > 0;
+  }
+
+  const inputCss = 'width:100%; padding:10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:16px; font-family:var(--mono); font-weight:700; text-align:right; box-sizing:border-box';
+  const labelCss = 'font-size:12px; font-weight:600; color:var(--vw-grey-5); display:block; margin-bottom:6px';
+
+  const modalHTML = `
+    <div id="ventaUsadoModal" class="modal-overlay" onclick="if(event.target===this)cerrarVentaUsadoModal()">
+      <div class="modal-box" style="max-width:470px">
+        <div class="modal-header">
+          <div style="flex:1">
+            <div style="font-size:16px; font-weight:700; color:#1E3A8A">💰 ${yaVendido ? 'Resultado de la venta' : 'Venta del usado'}</div>
+            <div style="font-size:12px; color:var(--vw-grey-4); margin-top:2px">${t.marca || ''} ${t.modelo || ''} ${t.anio || ''}${t.patente ? ' · ' + t.patente : ''}</div>
+          </div>
+          <button onclick="cerrarVentaUsadoModal()" style="padding:6px 10px; background:var(--vw-grey-1); border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:16px; flex-shrink:0">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="background:var(--vw-grey-1); border-radius:6px; padding:9px 12px; font-size:13px; color:var(--vw-grey-5); margin-bottom:16px; display:flex; justify-content:space-between; gap:12px">
+            <span>Se tomó en</span>
+            <strong style="font-family:var(--mono)">$ ${formatNum(toma)}</strong>
+          </div>
+
+          <label style="${labelCss}">¿A cuánto se vendió? *</label>
+          <input type="text" inputmode="numeric" id="ventaUsadoPrecio" placeholder="0"
+                 value="${tienePrecio ? formatNum(t.vendido_precio) : ''}"
+                 style="${inputCss}" oninput="_recalcVentaUsado()"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarVentaUsado();}">
+
+          <label style="${labelCss}; margin-top:16px">¿Se le hicieron arreglos? *</label>
+          <div style="display:flex; gap:8px">
+            <button type="button" id="ventaUsadoArregloNo" onclick="setArreglosUsado(false)"></button>
+            <button type="button" id="ventaUsadoArregloSi" onclick="setArreglosUsado(true)"></button>
+          </div>
+
+          <div id="ventaUsadoArreglosBox" style="display:none; margin-top:12px">
+            <label style="${labelCss}">¿Cuánto costaron?</label>
+            <input type="text" inputmode="numeric" id="ventaUsadoArreglos" placeholder="0"
+                   value="${arreglosPrev ? formatNum(t.vendido_arreglos) : ''}"
+                   style="${inputCss}" oninput="_recalcVentaUsado()">
+            ${estimado > 0 ? `<div style="font-size:11px; color:var(--vw-grey-4); margin-top:5px">En la inspección se habían estimado <strong style="font-family:var(--mono)">$ ${formatNum(estimado)}</strong>. Acá va lo que realmente se gastó.</div>` : ''}
+            <input type="text" id="ventaUsadoArreglosDetalle" placeholder="Qué se le hizo (opcional)"
+                   value="${(t.vendido_arreglos_detalle || '').replace(/"/g, '&quot;')}"
+                   style="width:100%; padding:9px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; box-sizing:border-box; margin-top:8px">
+          </div>
+
+          <div id="ventaUsadoResultado" style="margin-top:16px"></div>
+
+          <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">
+            <button onclick="cerrarVentaUsadoModal()" style="padding:10px 16px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:none; border-radius:6px; cursor:pointer; font-weight:600">Cancelar</button>
+            <button onclick="confirmarVentaUsado()" style="padding:10px 16px; background:#1E3A8A; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:700">${yaVendido ? 'Guardar' : 'Confirmar venta'}</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  document.body.style.overflow = 'hidden';
+  window.__ventaUsado = { tasId, toma, yaVendido, arreglos: arreglosPrev };
+  setArreglosUsado(arreglosPrev);
+  setTimeout(() => document.getElementById('ventaUsadoPrecio')?.focus(), 50);
+}
+
+function cerrarVentaUsadoModal() {
+  const m = document.getElementById('ventaUsadoModal');
+  if (m) m.remove();
+  document.body.style.overflow = '';
+  window.__ventaUsado = null;
+}
+
+// si === null deja las dos opciones sin elegir (es el estado inicial).
+function setArreglosUsado(si) {
+  const st = window.__ventaUsado;
+  if (!st) return;
+  st.arreglos = (si === null || si === undefined) ? null : !!si;
+  const base = 'flex:1; padding:10px 0; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer; ';
+  const on = 'background:#1E3A8A; color:white; border:1px solid #1E3A8A';
+  const off = 'background:white; color:var(--vw-grey-5); border:1px solid var(--vw-grey-2)';
+  const bNo = document.getElementById('ventaUsadoArregloNo');
+  const bSi = document.getElementById('ventaUsadoArregloSi');
+  if (bNo) { bNo.textContent = 'No'; bNo.style.cssText = base + (st.arreglos === false ? on : off); }
+  if (bSi) { bSi.textContent = 'Sí'; bSi.style.cssText = base + (st.arreglos === true ? on : off); }
+  const box = document.getElementById('ventaUsadoArreglosBox');
+  if (box) box.style.display = st.arreglos === true ? 'block' : 'none';
+  if (st.arreglos === true) setTimeout(() => document.getElementById('ventaUsadoArreglos')?.focus(), 30);
+  _recalcVentaUsado();
+}
+
+// La cuenta se ve mientras escribis, no despues de guardar: la idea es que al
+// cerrar la operacion sepas en el momento como quedo.
+function _recalcVentaUsado() {
+  const st = window.__ventaUsado;
+  if (!st) return;
+  const cont = document.getElementById('ventaUsadoResultado');
+  if (!cont) return;
+  const venta = _plataANumero(document.getElementById('ventaUsadoPrecio')?.value);
+  if (!venta) {
+    cont.innerHTML = '<div style="font-size:12px; color:var(--vw-grey-3); text-align:center; padding:10px">Cargá el precio de venta para ver cómo queda.</div>';
+    return;
+  }
+  const arreglos = st.arreglos === true
+    ? (_plataANumero(document.getElementById('ventaUsadoArreglos')?.value) || 0)
+    : 0;
+  cont.innerHTML = _cajaResultadoUsado({ venta, toma: st.toma, arreglos, dif: venta - st.toma - arreglos }, false);
+}
+
+async function confirmarVentaUsado() {
+  const st = window.__ventaUsado;
+  if (!st) return;
+  const venta = _plataANumero(document.getElementById('ventaUsadoPrecio')?.value);
+  if (!venta || venta <= 0) { showToast('Poné a cuánto se vendió'); return; }
+  if (st.arreglos === null) { showToast('Decí si se le hicieron arreglos'); return; }
+
+  let arreglos = 0;
+  let detalle = null;
+  if (st.arreglos === true) {
+    arreglos = _plataANumero(document.getElementById('ventaUsadoArreglos')?.value);
+    if (!arreglos || arreglos <= 0) { showToast('Poné cuánto costaron los arreglos, o marcá "No"'); return; }
+    detalle = (document.getElementById('ventaUsadoArreglosDetalle')?.value || '').trim() || null;
+  }
+
+  const payload = {
+    vendido_precio: venta,
+    vendido_arreglos: arreglos,
+    vendido_arreglos_detalle: detalle
+  };
+  // Solo la primera vez: corregir los numeros no mueve la fecha de la venta.
+  if (!st.yaVendido) {
+    payload.vendido_at = new Date().toISOString();
+    payload.vendido_por = currentUser.nombre;
+  }
+
   try {
-    await sbFetch(`tasaciones?id=eq.${tasId}`, {
+    showLoading('Guardando...');
+    await sbFetch(`tasaciones?id=eq.${st.tasId}`, {
       method: 'PATCH',
-      body: JSON.stringify({
-        vendido_at: new Date().toISOString(),
-        vendido_por: currentUser.nombre
-      })
+      body: JSON.stringify(payload)
     });
-    showToast('Marcado como vendido');
+    hideLoading();
+    const eraNueva = !st.yaVendido;
+    cerrarVentaUsadoModal();
+    showToast(eraNueva ? 'Marcado como vendido' : 'Resultado actualizado');
     if (currentMode === 'admin') await loadAdminTasaciones(adminFiltroEstado || 'pendientes');
     else if (currentMode === 'tasador_fisico') await loadTasadorFisicoList();
   } catch(e) {
+    hideLoading();
     console.error(e);
     showToast('Error al guardar');
   }
@@ -9159,6 +9367,11 @@ function renderFisicoList() {
     // Lo que el tasador ya marco como comprado y todavia no se vendio. Es el
     // unico destino de las unidades que entran: salen de aca al marcar Vendido.
     data = data.filter(t => t.ingresado_stock_at && !t.vendido_at);
+  } else if (fisicoFiltroEstadoVal === 'vendidos') {
+    // Donde van a parar las unidades al salir del stock. Existe para que el
+    // resultado de cada una se pueda ver en algun lado: si no, los numeros se
+    // cargaban y desaparecian.
+    data = data.filter(t => !!t.vendido_at);
   } else if (fisicoFiltroEstadoVal === 'usado_tomado') {
     // No aplicamos el filtro base — un usado_tomado siempre pasó por inspección
     // pero queremos mostrar todos los casos cerrados con usado tomado.
@@ -9219,6 +9432,7 @@ function renderFisicoList() {
     falta_agendar:  _viejoPrimero('created_at'),        // la que hace más que espera turno
     inspeccionadas: _viejoPrimero('tasado_fisico_at'),  // la que hace más que espera al admin
     stock:          _viejoPrimero('ingresado_stock_at'),// la que hace más que está en stock
+    vendidos:       _nuevoPrimero('vendido_at'),        // la última que se vendió
     final:          _nuevoPrimero('tasado_at'),         // lo último que cerró el admin
     usado_tomado:   _nuevoPrimero('venta_cerrada_at'),  // la última operación cerrada
     usado_no_apto:  _nuevoPrimero('virtual_no_apto_at') // el último descarte
@@ -9241,6 +9455,8 @@ function renderFisicoList() {
       msg = 'No hay unidades de <strong>solo compra</strong> esperando inspección.<br><span style="font-size:12px; color:var(--vw-grey-4)">Son las que el cliente trae únicamente para vender, sin llevarse ninguna unidad.</span>';
     } else if (fisicoFiltroEstadoVal === 'stock') {
       msg = 'No hay unidades en stock.<br><span style="font-size:12px; color:var(--vw-grey-4)">Entran acá cuando marcás <strong>📦 Comprado</strong> una tasación que el vendedor ya confirmó como tomada.</span>';
+    } else if (fisicoFiltroEstadoVal === 'vendidos') {
+      msg = 'Todavía no se vendió ningún usado de los que compramos.<br><span style="font-size:12px; color:var(--vw-grey-4)">Aparecen acá cuando marcás <strong>💰 Vendido</strong> una unidad de <strong>Stock</strong>.</span>';
     } else if (fisicoFiltroEstadoVal === 'usado_tomado') {
       msg = 'Todavía no hay operaciones cerradas con usado tomado';
     } else if (fisicoFiltroEstadoVal === 'usado_no_apto') {
@@ -9260,6 +9476,7 @@ function renderFisicoList() {
     final: '✅ El admin ya cerró el precio final luego de tu inspección. Si el vendedor no marcó todavía si se tomó el usado, podés marcarlo vos.',
     solo_compra: '🏷️ Todas las que esperan inspección (con turno y sin turno) en las que el cliente <strong>solo vende</strong> su auto: no se lleva ninguna unidad. Atajo para ubicarlas rápido.',
     stock: '📦 Unidades compradas que ya entraron al concesionario y todavía no se vendieron. Al venderse salen de acá.',
+    vendidos: '💰 Usados que compramos y ya vendimos, con el resultado de cada uno: <strong>venta − toma − arreglos</strong>. En verde los que dejaron plata, en rojo los que no.',
     usado_tomado: '🟢 Tasaciones donde el usado efectivamente se tomó como parte de pago. Operación cerrada con usado.',
     usado_no_apto: '❌ Tasaciones que el admin evaluó como NO APTAS para toma. El motivo está dentro de cada tarjeta.',
     todas: 'Todas las unidades con turno y precio virtual.'
@@ -9274,13 +9491,34 @@ function renderFisicoList() {
     final:          'la última que cerró el admin, primero',
     usado_tomado:   'la última operación cerrada, primero',
     stock:          'la que hace más que está en stock, primero',
+    vendidos:       'la última venta, primero',
     usado_no_apto:  'el último descarte, primero',
     todas:          'por fecha de turno — las que no tienen, al final'
   };
   const ordenLbl = ordenFis[fisicoFiltroEstadoVal];
   const subtituloFisHTML = `<div style="margin:0 0 12px 0; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosFis[fisicoFiltroEstadoVal] || ''}${ordenLbl ? `<div style="margin-top:6px; font-size:11px; color:var(--vw-grey-4)">↕ Orden: ${ordenLbl} · ${data.length} ${data.length === 1 ? 'unidad' : 'unidades'}</div>` : ''}</div>`;
 
-  list.innerHTML = subtituloFisHTML + data.map(t => {
+  // Total de la solapa Vendidos: la suma de todas las operaciones cerradas.
+  let resumenVendidosHTML = '';
+  if (fisicoFiltroEstadoVal === 'vendidos') {
+    let nCon = 0, sinCargar = 0, toma = 0, arreglos = 0, venta = 0;
+    data.forEach(t => {
+      const r = _resultadoUsado(t);
+      if (!r) { sinCargar++; return; }
+      nCon++; toma += r.toma; arreglos += r.arreglos; venta += r.venta;
+    });
+    if (nCon > 0) {
+      const total = { venta, toma, arreglos, dif: venta - toma - arreglos };
+      resumenVendidosHTML = `
+        <div style="margin:0 0 14px 0">
+          <div style="font-size:11px; font-weight:700; color:var(--vw-grey-4); letter-spacing:0.5px; margin-bottom:6px">RESULTADO DE ${nCon} ${nCon === 1 ? 'UNIDAD VENDIDA' : 'UNIDADES VENDIDAS'}</div>
+          ${_cajaResultadoUsado(total, false)}
+          ${sinCargar > 0 ? `<div style="font-size:11px; color:#9A3412; margin-top:6px">⚠ ${sinCargar} ${sinCargar === 1 ? 'unidad no tiene' : 'unidades no tienen'} cargado el precio de venta, así que ${sinCargar === 1 ? 'no entra' : 'no entran'} en esta cuenta.</div>` : ''}
+        </div>`;
+    }
+  }
+
+  list.innerHTML = subtituloFisHTML + resumenVendidosHTML + data.map(t => {
     const fecha = new Date(t.created_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
     const patenteLbl = t.patente ? `<span style="display:inline-block;padding:3px 10px;background:var(--vw-grey-1);border-radius:4px;font-family:var(--mono);font-size:12px;font-weight:700">${t.patente}</span>` : '<span style="font-size:12px;color:var(--vw-grey-3)">sin patente</span>';
     let estadoFisicoBadge, btnLabel, btnBg;
@@ -9338,6 +9576,13 @@ function renderFisicoList() {
         const desdeStock = new Date(t.ingresado_stock_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
         accionesStock = `<span style="font-size:12px; color:var(--vw-grey-4); align-self:center">En stock desde el ${desdeStock}${t.ingresado_stock_por ? ' · ' + t.ingresado_stock_por : ''}</span>
           <button onclick="event.stopPropagation(); marcarVendido('${t.id}')" style="padding:8px 14px; background:#1E3A8A; color:white; border:none; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer">💰 Marcar vendido</button>`;
+      } else if (t.vendido_at) {
+        // Se puede volver a entrar: los numeros se corrigen sin mover la fecha
+        // de la venta. Y si la unidad se marco vendida sin cargarlos, se avisa.
+        const faltan = t.vendido_precio === null || t.vendido_precio === undefined;
+        const cuando = new Date(t.vendido_at).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
+        accionesStock = `<span style="font-size:12px; color:var(--vw-grey-4); align-self:center">Vendido el ${cuando}${t.vendido_por ? ' · ' + t.vendido_por : ''}</span>
+          <button onclick="event.stopPropagation(); abrirVentaUsadoModal('${t.id}')" style="padding:8px 14px; background:${faltan ? '#9A3412' : 'white'}; color:${faltan ? 'white' : '#1E3A8A'}; border:1px solid ${faltan ? '#9A3412' : '#1E3A8A'}; border-radius:6px; font-weight:${faltan ? '700' : '600'}; font-size:12px; cursor:pointer">${faltan ? '⚠ Cargar el resultado' : '✏️ Corregir resultado'}</button>`;
       }
     }
     // Ya tasada final pero hay que volver a verla (el cliente la trae de nuevo,
@@ -9388,6 +9633,14 @@ function renderFisicoList() {
     } else if (t.precio_toma_virtual) {
       preciosLine = `<div style="font-size:12px; color:var(--vw-grey-4); margin-top:4px">Virtual de referencia: <strong style="font-family:var(--mono); color:var(--vw-blue)">$ ${formatNum(t.precio_toma_virtual)}</strong></div>`;
     }
+    // Como quedo la unidad una vez vendida. Solo se arma si hay precio de venta
+    // cargado: sin eso la cuenta no existe.
+    let resultadoLine = '';
+    const _resUsado = _resultadoUsado(t);
+    if (_resUsado) {
+      resultadoLine = `<div style="margin-top:8px; max-width:300px">${_cajaResultadoUsado(_resUsado, true)}${t.vendido_arreglos_detalle ? `<div style="font-size:11px; color:var(--vw-grey-4); margin-top:4px">🔧 ${t.vendido_arreglos_detalle}</div>` : ''}</div>`;
+    }
+
     return `
       <div class="tasacion-card-compact" style="padding:14px">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap">
@@ -9402,6 +9655,7 @@ function renderFisicoList() {
             <div style="font-weight:700; font-size:15px; margin-bottom:2px">${t.cliente_nombre || '—'}</div>
             <div style="font-size:13px; color:var(--vw-grey-4)">${t.marca || ''} ${t.modelo || ''} ${t.anio || ''} — ${t.version || ''}</div>
             ${preciosLine}
+            ${resultadoLine}
             <div style="font-size:12px; color:var(--vw-grey-3); margin-top:4px">Vendedor: ${t.vendedor_nombre || '—'} · ${fecha}</div>
           </div>
           <div class="fis-acciones" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">
