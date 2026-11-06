@@ -6781,8 +6781,12 @@ function renderOpinionTasadorHTML(af, autor) {
           ${sal ? `<span style="padding:3px 10px; background:white; color:var(--vw-grey-5); border:1px solid var(--vw-grey-2); border-radius:12px; font-size:12px; font-weight:600">Salida ${sal.label}</span>` : ''}
         </span>
       </div>
-      <div style="font-size:10px; font-weight:700; color:#991B1B; letter-spacing:0.5px; text-transform:uppercase">Por qué ese valor de toma</div>
-      <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap; margin-top:2px">${esc(op.motivo_valor)}</div>
+      ${op.motivo_no_aplica ? `
+        <div style="font-size:13px; color:var(--vw-grey-5); font-style:italic; margin-top:2px">No corresponde — a este auto no se le pone precio de toma.</div>
+      ` : `
+        <div style="font-size:10px; font-weight:700; color:#991B1B; letter-spacing:0.5px; text-transform:uppercase">Por qué ese valor de toma</div>
+        <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap; margin-top:2px">${esc(op.motivo_valor)}</div>
+      `}
       ${op.aclaraciones ? `
         <div style="font-size:10px; font-weight:700; color:#991B1B; letter-spacing:0.5px; text-transform:uppercase; margin-top:10px">Aclaraciones</div>
         <div style="font-size:13px; color:var(--vw-grey-5); line-height:1.5; white-space:pre-wrap; margin-top:2px">${esc(op.aclaraciones)}</div>
@@ -6815,9 +6819,15 @@ function abrirOpinionTasadorModal(tasId, precioSugerido) {
           <div style="font-size:13px; font-weight:700; margin-bottom:6px">¿Cómo ves la salida para la venta? *</div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px">${chips(OPINION_SALIDAS, 'opinionSalida', prev.salida)}</div>
 
-          <label style="display:block; font-size:13px; font-weight:700; margin-bottom:4px">¿Por qué ese valor de toma? *</label>
-          <textarea id="opinionMotivo" rows="4" placeholder="Ej: Está impecable pero la versión 4x2 sale menos que la 4x4; en Kavak hay varias publicadas; le resté por cubiertas a cambiar..." style="width:100%; min-width:0; padding:8px; font-size:13px; font-family:var(--sans); resize:vertical; box-sizing:border-box; border:1px solid var(--vw-grey-2); border-radius:6px">${_escapeHtmlUsr(prev.motivo_valor || '')}</textarea>
-          <div style="font-size:11px; color:var(--vw-grey-4); margin:3px 0 12px">Mínimo ${OPINION_MIN_CHARS} caracteres.</div>
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--vw-grey-5); margin-bottom:8px; cursor:pointer">
+            <input type="checkbox" id="opinionMotivoNoAplica" ${prev.motivo_no_aplica ? 'checked' : ''} onchange="_toggleOpinionMotivo()" style="width:16px; height:16px; flex-shrink:0">
+            No corresponde — a este auto no se le pone precio de toma
+          </label>
+          <div id="opinionMotivoWrap">
+            <label style="display:block; font-size:13px; font-weight:700; margin-bottom:4px">¿Por qué ese valor de toma? *</label>
+            <textarea id="opinionMotivo" rows="4" placeholder="Ej: Está impecable pero la versión 4x2 sale menos que la 4x4; en Kavak hay varias publicadas; le resté por cubiertas a cambiar..." style="width:100%; min-width:0; padding:8px; font-size:13px; font-family:var(--sans); resize:vertical; box-sizing:border-box; border:1px solid var(--vw-grey-2); border-radius:6px">${_escapeHtmlUsr(prev.motivo_valor || '')}</textarea>
+            <div style="font-size:11px; color:var(--vw-grey-4); margin:3px 0 12px">Mínimo ${OPINION_MIN_CHARS} caracteres.</div>
+          </div>
 
           <label style="display:block; font-size:13px; font-weight:700; margin-bottom:4px">Aclaraciones <span style="font-weight:400; color:var(--vw-grey-4)">(riesgos, qué revisar, papeles, historia del auto)</span></label>
           <textarea id="opinionAclaraciones" rows="3" placeholder="Ej: El dueño la compró usada a la semana de patentada; service al día en el oficial; revisar el embrague antes de publicarla..." style="width:100%; min-width:0; padding:8px; font-size:13px; font-family:var(--sans); resize:vertical; box-sizing:border-box; border:1px solid var(--vw-grey-2); border-radius:6px">${_escapeHtmlUsr(prev.aclaraciones || '')}</textarea>
@@ -6832,16 +6842,27 @@ function abrirOpinionTasadorModal(tasId, precioSugerido) {
   `;
   document.body.insertAdjacentHTML('beforeend', modalHTML);
   document.body.style.overflow = 'hidden';
+  _toggleOpinionMotivo();
+}
+
+// Tilde "No corresponde": oculta/muestra la pregunta "¿Por qué ese valor de toma?".
+function _toggleOpinionMotivo() {
+  const chk = document.getElementById('opinionMotivoNoAplica');
+  const wrap = document.getElementById('opinionMotivoWrap');
+  if (wrap) wrap.style.display = (chk && chk.checked) ? 'none' : '';
 }
 
 // Lo que escribió queda en window.__opinionInsp aunque cierre el modal, así no lo pierde.
 function _leerOpinionModal() {
   const m = document.getElementById('opinionInspModal');
   if (!m) return;
+  const noAplica = !!(document.getElementById('opinionMotivoNoAplica') || {}).checked;
   window.__opinionInsp = {
     recomendacion: (m.querySelector('input[name="opinionRec"]:checked') || {}).value || '',
     salida: (m.querySelector('input[name="opinionSalida"]:checked') || {}).value || '',
-    motivo_valor: (document.getElementById('opinionMotivo').value || '').trim(),
+    motivo_no_aplica: noAplica,
+    // Si no corresponde poner precio, no guardamos motivo (no se pidió).
+    motivo_valor: noAplica ? '' : (document.getElementById('opinionMotivo').value || '').trim(),
     aclaraciones: (document.getElementById('opinionAclaraciones').value || '').trim()
   };
 }
@@ -6858,7 +6879,7 @@ function confirmarOpinionTasador(tasId) {
   const op = window.__opinionInsp || {};
   if (!op.recomendacion) { showToast('Elegí qué recomendás hacer con el auto'); return; }
   if (!op.salida) { showToast('Elegí cómo ves la salida para la venta'); return; }
-  if ((op.motivo_valor || '').length < OPINION_MIN_CHARS) {
+  if (!op.motivo_no_aplica && (op.motivo_valor || '').length < OPINION_MIN_CHARS) {
     showToast(`Explicá por qué ese valor (mínimo ${OPINION_MIN_CHARS} caracteres)`);
     document.getElementById('opinionMotivo')?.focus();
     return;
@@ -10620,6 +10641,7 @@ async function guardarInspeccion(tasId, opinion) {
     opinion: {
       recomendacion: opinion.recomendacion,
       salida: opinion.salida,
+      motivo_no_aplica: !!opinion.motivo_no_aplica,
       motivo_valor: opinion.motivo_valor,
       aclaraciones: opinion.aclaraciones || '',
       por: currentUser.nombre,
