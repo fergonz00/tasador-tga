@@ -60,7 +60,20 @@ const TEMPLATE_NAME = "ml_venta_nueva";
 const TEMPLATE_PREGUNTA = "ml_pregunta_nueva";
 const TEMPLATE_SALDO = "mp_saldo_para_transferir";
 const TEMPLATE_RECORDATORIO = "ml_pregunta_sin_responder";
+/**
+ * Preguntas DERIVADAS: el que la contesta no entra a Mercado Libre, le pasa la
+ * respuesta a Fer y Fer la publica. Nacio el 18-11-2026, con Nadia de luna de
+ * miel hasta el 9-12: Maxi Lopez (gte. de postventa) sabe la respuesta pero no
+ * tiene la cuenta. Mandarle el template comun le decia "entra a Mercado Libre",
+ * que es justo lo que no puede hacer.
+ * Mientras Meta los tenga en PENDING caen a los de siempre: el aviso llega igual
+ * (con el remate equivocado) y se corrige solo cuando aprueban.
+ */
+const TEMPLATE_DERIVADA = "ml_pregunta_para_fer";
+const TEMPLATE_DERIVADA_RECORDATORIO = "ml_pregunta_para_fer_recordatorio";
 const TEMPLATE_REPARTO = "reparto_unidad_sin_factura";
+const TEMPLATE_CANCELADA = "ml_venta_cancelada";
+const TEMPLATE_DEVOLUCION = "ml_devolucion_seguimiento";
 /**
  * ⚠️ `ml_compra_respuesta` quedo APPROVED pero en categoria **MARKETING**, y un
  * MARKETING no se entrega aunque Meta devuelva message id: el 27-9-2026 un
@@ -74,7 +87,12 @@ const TEMPLATE_REPARTO = "reparto_unidad_sin_factura";
  * esta APPROVED/UTILITY y entrega seguro.
  * NO volver a poner `ml_compra_respuesta`: no llega.
  */
+// ⚠️ El primero es el que se usa; los demas son red por si Meta todavia no
+// aprobo el nuevo o lo dio de baja. `usados_interesado_crm` manda al CRM, solapa
+// Usados: los viejos dicen "entra al tasador, solapa Compra ML", que para Ines
+// no significa nada — ella trabaja estos casos desde el CRM (Fer, 2-10-2026).
 const TEMPLATES_COMPRA = [
+  "usados_interesado_crm",
   "tasador_respuesta_sin_atender",
   "tasador_usado_con_respuesta",
   "tasador_consulta_contestada",
@@ -116,16 +134,53 @@ Deno.serve(async (req: Request) => {
   const esRecordatorio = body?.tipo === "pregunta_recordatorio";
   const esReparto = body?.tipo === "reparto_sin_factura";
   const esCompra = body?.tipo === "compra_respuesta";
-  const template = esCompra ? TEMPLATE_COMPRA : esReparto ? TEMPLATE_REPARTO
+  const esCancelada = body?.tipo === "cancelacion";
+  const esDevolucion = body?.tipo === "devolucion";
+  const templateBase = esDevolucion ? TEMPLATE_DEVOLUCION
+    : esCancelada ? TEMPLATE_CANCELADA
+    : esCompra ? TEMPLATE_COMPRA : esReparto ? TEMPLATE_REPARTO
     : esRecordatorio ? TEMPLATE_RECORDATORIO : esSaldo ? TEMPLATE_SALDO
     : esPregunta ? TEMPLATE_PREGUNTA : TEMPLATE_NAME;
+  // {"derivada":true} apunta las operaciones de template (crear/editar/listar) a
+  // las plantillas de pregunta derivada, que no mandan a Mercado Libre.
+  const esDerivada = body?.derivada === true && (esPregunta || esRecordatorio);
+  const template = esDerivada
+    ? (esRecordatorio ? TEMPLATE_DERIVADA_RECORDATORIO : TEMPLATE_DERIVADA)
+    : templateBase;
   if (body?.crear_template === true) {
-    const components = esCompra ? TEMPLATE_COMPRA_COMPONENTS
+    const components = esDerivada
+      ? (esRecordatorio ? TEMPLATE_DERIVADA_RECORDATORIO_COMPONENTS : TEMPLATE_DERIVADA_COMPONENTS)
+      : esDevolucion ? TEMPLATE_DEVOLUCION_COMPONENTS
+      : esCancelada ? TEMPLATE_CANCELADA_COMPONENTS
+      : esCompra ? TEMPLATE_COMPRA_COMPONENTS
       : esReparto ? TEMPLATE_REPARTO_COMPONENTS
       : esRecordatorio ? TEMPLATE_RECORDATORIO_COMPONENTS : esSaldo ? TEMPLATE_SALDO_COMPONENTS
       : esPregunta ? TEMPLATE_PREGUNTA_COMPONENTS : TEMPLATE_COMPONENTS;
     return json(await postJson(`${META_API_URL}/${WABA_ID}/message_templates`, WA_TOKEN,
       { name: template, language: META_LANGUAGE, category: "UTILITY", components }));
+  }
+  // `editar_template: true` reescribe el cuerpo de un template que todavia esta
+  // PENDING o REJECTED (Meta no deja crear dos veces el mismo idioma, y un APPROVED
+  // tampoco se puede recategorizar). Nacio el 3-10-2026: `ml_venta_cancelada` se pidio
+  // con un texto fijo que decia "si ya se pidio a VW, frenarlo" en TODAS, y Fer marco
+  // que en una pieza de deposito eso es alarmista al pedo. El token de esta cuenta de
+  // WhatsApp vive solo aca, asi que la edicion tiene que salir de la Edge.
+  if (body?.editar_template === true) {
+    const components = esDerivada
+      ? (esRecordatorio ? TEMPLATE_DERIVADA_RECORDATORIO_COMPONENTS : TEMPLATE_DERIVADA_COMPONENTS)
+      : esCancelada ? TEMPLATE_CANCELADA_COMPONENTS
+      : esCompra ? TEMPLATE_COMPRA_COMPONENTS
+      : esReparto ? TEMPLATE_REPARTO_COMPONENTS
+      : esRecordatorio ? TEMPLATE_RECORDATORIO_COMPONENTS : esSaldo ? TEMPLATE_SALDO_COMPONENTS
+      : esPregunta ? TEMPLATE_PREGUNTA_COMPONENTS : TEMPLATE_COMPONENTS;
+    const busca = await fetch(
+      `${META_API_URL}/${WABA_ID}/message_templates?fields=id,name,status&name=${template}`,
+      { headers: { Authorization: `Bearer ${WA_TOKEN}` } },
+    );
+    const lista = await busca.json();
+    const id = lista?.data?.find((t: any) => t?.name === template)?.id;
+    if (!id) return json({ error: `no encontre el template ${template}`, lista }, 404);
+    return json(await postJson(`${META_API_URL}/${id}`, WA_TOKEN, { components }));
   }
   if (body?.listar === true) {
     const res = await fetch(
@@ -139,14 +194,22 @@ Deno.serve(async (req: Request) => {
   const detalle = limpiar(body?.detalle);
   if (!producto || !detalle) return json({ error: "faltan producto y detalle" }, 400);
   const horas = limpiar(body?.horas);
+  const accion = limpiar(body?.accion);
   if (esRecordatorio && !horas) return json({ error: "falta horas" }, 400);
-  const rubro = esCompra ? "compra_ml"
+  const rubro = esDevolucion
+    ? (body?.escalar === true ? "devolucion,devolucion_escalada" : "devolucion")
+    : esCancelada ? "cancelacion"
+    : esCompra ? "compra_ml"
     : esReparto ? "reparto_sin_factura"
     : esRecordatorio
     ? (body?.escalar === true ? "pregunta_recordatorio,pregunta_escalada" : "pregunta_recordatorio")
     : esSaldo ? "saldo_mp" : esPregunta ? "pregunta"
     : ["repuesto", "accesorio"].includes(body?.rubro) ? body.rubro : null;
 
+  // `dry`: resuelve destinatarios y template y devuelve a quien le llegaria,
+  // SIN llamar a Meta. Es la unica forma de verificar el ruteo sin mandarle un
+  // WhatsApp de prueba a una persona real.
+  const dry = body?.dry === true;
   // Prueba: manda solo a un teléfono.
   const solo = String(body?.solo || "").replace(/\D/g, "");
   let destinatarios: { nombre: string; telefono: string }[] = [];
@@ -176,7 +239,12 @@ Deno.serve(async (req: Request) => {
     if (!tel || vistos.has(tel)) continue; // Fer y Catalina están en los dos grupos
     vistos.add(tel);
     const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
-    const r = esCompra
+    if (dry) { enviados.push({ destinatario: d.nombre, telefono: tel, template: templateBase, dry: true }); continue; }
+    const r = esDevolucion
+      ? await enviarDevolucion(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle, accion)
+      : esCancelada
+      ? await enviarCancelada(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
+      : esCompra
       ? await enviarCompra(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
       : esReparto
       ? await enviarReparto(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle)
@@ -190,8 +258,64 @@ Deno.serve(async (req: Request) => {
     if (r.ok) enviados.push({ destinatario: d.nombre, template: r.template, meta_id: r.meta_id });
     else errores.push({ destinatario: d.nombre, error: r.error });
   }
+  // Segunda pasada: los que contestan pero NO entran a Mercado Libre (rubros
+  // `pregunta_derivada*`). Mismo aviso, otro remate: "pasale la respuesta a Fer".
+  // `vistos` se comparte, asi que a nadie le llegan los dos mensajes.
+  if (!solo && (esPregunta || esRecordatorio)) {
+    const rubroDer = esRecordatorio ? "pregunta_derivada_recordatorio" : "pregunta_derivada";
+    const hoy2 = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+    let derivados: { nombre: string; telefono: string }[] = [];
+    try {
+      derivados = await sb(
+        SUPABASE_URL, SERVICE_KEY,
+        `ml_ventas_destinatarios?activo=eq.true&rubro=eq.${rubroDer}` +
+          `&or=(desde.is.null,desde.lte.${hoy2})&select=nombre,telefono`,
+      );
+    } catch (e) {
+      errores.push({ destinatario: rubroDer, error: String(e) });
+    }
+    for (const d of derivados) {
+      const tel = String(d.telefono || "").replace(/\D/g, "");
+      if (!tel || vistos.has(tel)) continue;
+      vistos.add(tel);
+      const nombre = (String(d.nombre || "").split(/\s+/)[0] || "equipo").trim();
+      const tplDer = esRecordatorio ? TEMPLATE_DERIVADA_RECORDATORIO : TEMPLATE_DERIVADA;
+      if (dry) { enviados.push({ destinatario: d.nombre, telefono: tel, template: tplDer, derivada: true, dry: true }); continue; }
+      const r = esRecordatorio
+        ? await enviarDerivadaRecordatorio(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, horas, detalle)
+        : await enviarDerivada(WA_PHONE_ID, WA_TOKEN, tel, nombre, producto, detalle);
+      if (r.ok) enviados.push({ destinatario: d.nombre, template: r.template, meta_id: r.meta_id });
+      else errores.push({ destinatario: d.nombre, error: r.error });
+    }
+  }
+
   return json({ enviados: enviados.length, errores, detalle_enviados: enviados });
 });
+
+// Pregunta para alguien que NO entra a Mercado Libre: contesta y Fer publica.
+// Mientras Meta no apruebe el template propio cae al comun (`ml_pregunta_nueva`),
+// que llega seguro aunque el remate diga "entra a Mercado Libre". Preferimos que
+// la pregunta le llegue con el remate viejo a que no le llegue.
+async function enviarDerivada(
+  phoneId: string, token: string, tel: string, nombre: string, aviso: string, pregunta: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const args = [nombre, recortar(aviso, 200), recortar(pregunta, 700)];
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_DERIVADA, args);
+  if (propio.ok) return { ...propio, template: TEMPLATE_DERIVADA };
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_PREGUNTA, args);
+  return { ...fb, template: TEMPLATE_PREGUNTA };
+}
+
+async function enviarDerivadaRecordatorio(
+  phoneId: string, token: string, tel: string, nombre: string, aviso: string,
+  horas: string, pregunta: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const args = [nombre, recortar(aviso, 200), horas, recortar(pregunta, 600)];
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_DERIVADA_RECORDATORIO, args);
+  if (propio.ok) return { ...propio, template: TEMPLATE_DERIVADA_RECORDATORIO };
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_RECORDATORIO, args);
+  return { ...fb, template: TEMPLATE_RECORDATORIO };
+}
 
 async function enviar(
   phoneId: string, token: string, tel: string, nombre: string, producto: string, detalle: string,
@@ -227,6 +351,44 @@ async function enviarCompra(
   const texto = recortar(`\u{1F4AC} CONTESTARON POR EL USADO ${auto}: "${respuesta}" \u2014 entra al tasador, solapa Compra ML.`, 900);
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
   return fb.ok ? { ...fb, template: TEMPLATE_FALLBACK } : { ...(ultimo || fb), template: "ninguno" };
+}
+
+// producto = "6 x <titulo>", detalle = cuando se habia vendido, por cuanto y el MLA.
+// Mientras Meta no apruebe `ml_venta_cancelada` cae al texto libre, que SI sale hoy:
+// un aviso de este tipo no puede esperar los dias que tarda una revision.
+// producto = "1 x <titulo> - MLA...", detalle = como viene en ML, accion = que tiene que hacer.
+async function enviarDevolucion(
+  phoneId: string, token: string, tel: string, nombre: string,
+  producto: string, detalle: string, accion: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const quehacer = accion ||
+    "Entra a Mercado Libre, en Ventas, y reclama la devolucion del paquete.";
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_DEVOLUCION,
+    [nombre, recortar(producto, 200), recortar(detalle, 500), recortar(quehacer, 400)]);
+  if (propio.ok) return { ...propio, template: TEMPLATE_DEVOLUCION };
+  const code = propio.error?.code;
+  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+  if (!noExiste) return { ...propio, template: TEMPLATE_DEVOLUCION };
+  const texto = recortar(
+    `SEGUIMIENTO de una pieza despachada con la venta cancelada: ${producto} - ${detalle} - ${quehacer}`, 900);
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
+  return { ...fb, template: TEMPLATE_FALLBACK };
+}
+
+async function enviarCancelada(
+  phoneId: string, token: string, tel: string, nombre: string, producto: string, detalle: string,
+): Promise<{ ok: boolean; template?: string; meta_id?: string; error?: any }> {
+  const propio = await postMeta(phoneId, token, tel, TEMPLATE_CANCELADA,
+    [nombre, recortar(producto, 200), recortar(detalle, 700)]);
+  if (propio.ok) return { ...propio, template: TEMPLATE_CANCELADA };
+  const code = propio.error?.code;
+  const noExiste = code === 132001 || code === 132000 || code === 132015 || code === 132012;
+  if (!noExiste) return { ...propio, template: TEMPLATE_CANCELADA };
+  const texto = recortar(
+    `AVISO SE CANCELO UNA VENTA DE MERCADO LIBRE: ${producto} - ${detalle} - NO hay que despacharla.`,
+    900);
+  const fb = await postMeta(phoneId, token, tel, TEMPLATE_FALLBACK, [texto]);
+  return { ...fb, template: TEMPLATE_FALLBACK };
 }
 
 async function enviarPregunta(
@@ -313,6 +475,53 @@ async function postMeta(phoneId: string, token: string, tel: string, template: s
 }
 
 // {{1}} primer nombre · {{2}} qué se vendió · {{3}} detalle, una línea.
+/**
+ * Fer (3-10-2026): *"es importante que si se cancela alguna x el comprador avise
+ * urgente para que no se pida tanto a nadia como a repuestos como a mi"*. Una venta
+ * cancelada que nadie avisa termina en una pieza pedida a VW para un pago que ML ya
+ * devolvio: el 28-9-2026 se cancelo una venta de SEIS unidades y nadie se entero.
+ */
+/**
+ * Fer (3-10-2026): *"ESA HAY Q SEGUIRLA CUANDO PASE ALGO ASI ACTIVA ALGUN TIPO DE
+ * SEGUIMIENTO Y PASALE A NADIA QUE VAYA CHEQUEANDO EN FUNCION DEL ESTADO Y ANDA
+ * CHEQUEANDO EN ML"*. Una venta cancelada DESPUES de despachar deja la pieza adentro
+ * de la red de ML y nadie la sigue: el sensor `JZZ957827` ($48.688 de costo) quedo
+ * asi el 2-10-2026, sin devolucion registrada y con la salida ya facturada.
+ *
+ * Este aviso sale una vez por dia habil por cada pieza sin volver, y cada vez que ML
+ * cambia el estado del envio. Se corta solo cuando la pieza reingresa al deposito.
+ */
+const TEMPLATE_DEVOLUCION_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! Seguimiento de una pieza que se despacho y la venta se cancelo: {{2}}.\n\nComo viene en Mercado Libre: {{3}}\n\n{{4}}\n\nEste aviso se repite una vez por dia habil hasta que la pieza vuelva al deposito.",
+    example: {
+      body_text: [[
+        "Nadia",
+        "1 x Sensor De Velocidad Gol G2 G3 G4 Original Vw JZZ957827 - MLA2134696777",
+        "el envio figura cancelado (service_unavailable) y ML todavia no registro la devolucion - van 2 dias",
+        "Entra a Mercado Libre, en Ventas, y reclama la devolucion del paquete. Cuando la pieza vuelva al deposito el aviso se corta solo.",
+      ]],
+    },
+  },
+];
+
+const TEMPLATE_CANCELADA_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! SE CANCELO una venta de Mercado Libre: {{2}}.\n\n{{3}}\n\nNO hay que despacharla.",
+    example: {
+      body_text: [[
+        "Nadia",
+        "6 x Grapa Clip Manguera Intercooler Vw Golf Bora 1J0145769G",
+        "Se habia vendido el 28-09 a las 08:06 por $47.622 en total - el comprador cancelo y ML devolvio el pago - estaba en el deposito, no hay nada que pedir: solo no despacharla - MLA2116303981",
+      ]],
+    },
+  },
+];
+
 const TEMPLATE_COMPONENTS = [
   {
     type: "BODY",
@@ -337,12 +546,12 @@ const TEMPLATE_COMPRA_COMPONENTS = [
   {
     type: "BODY",
     text:
-      "Hola {{1}}! Contestaron la oferta de compra de: {{2}}.\n\nRespuesta: {{3}}\n\nEntra al tasador, solapa Compra ML, para seguirla.",
+      "Hola {{1}}! Un dueno contesto interesado por su usado: {{2}}.\n\n{{3}}\n\nEntra al CRM, solapa Usados, para seguirlo.",
     example: {
       body_text: [[
-        "Fer",
-        "Volkswagen Virtus 2020 1.6 Msi Trendline - le ofrecimos 16.000.000",
-        "Hola, por 17 lo cierro",
+        "Ines",
+        "Volkswagen Gol Trend 2019 1.6 Trendline - le ofrecimos 14.600.000",
+        'Contesto: "Lo puedo vender en ese precio"\n\nAviso: https://auto.mercadolibre.com.ar/MLA-2076336993-_JM',
       ]],
     },
   },
@@ -373,6 +582,41 @@ const TEMPLATE_RECORDATORIO_COMPONENTS = [
       body_text: [[
         "Nadia",
         "Filtro De Aceite Original Vw 04E115561T · MLA3968577738",
+        "2 horas habiles",
+        "Hola, le sirve a un Polo 2019 1.6 MSI?",
+      ]],
+    },
+  },
+];
+
+// {{1}} primer nombre · {{2}} el aviso · {{3}} la pregunta.
+// Igual que TEMPLATE_PREGUNTA pero sin mandar a Mercado Libre: el destinatario
+// no tiene la cuenta, contesta y Fer publica.
+const TEMPLATE_DERIVADA_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! Entro una pregunta en Mercado Libre sobre: {{2}}.\n\nPregunta: {{3}}\n\nPasale la respuesta a Fer por WhatsApp y el la publica en Mercado Libre.",
+    example: {
+      body_text: [[
+        "Maxi",
+        "Filtro De Aceite Original Vw 04E115561T \u00b7 MLA3968577738",
+        "Hola, le sirve a un Polo 2019 1.6 MSI?",
+      ]],
+    },
+  },
+];
+
+// {{1}} primer nombre · {{2}} el aviso · {{3}} hace cuánto · {{4}} la pregunta.
+const TEMPLATE_DERIVADA_RECORDATORIO_COMPONENTS = [
+  {
+    type: "BODY",
+    text:
+      "Hola {{1}}! La pregunta de Mercado Libre sobre {{2}} sigue sin responder hace {{3}}.\n\nPregunta: {{4}}\n\nPasale la respuesta a Fer por WhatsApp y el la publica. El control se repite cada 6 horas habiles hasta que tenga respuesta.",
+    example: {
+      body_text: [[
+        "Maxi",
+        "Filtro De Aceite Original Vw 04E115561T \u00b7 MLA3968577738",
         "2 horas habiles",
         "Hola, le sirve a un Polo 2019 1.6 MSI?",
       ]],
