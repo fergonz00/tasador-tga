@@ -807,6 +807,16 @@ Repite cada 6 h mientras siga caído y manda un único "volvió a andar". **Entr
 
 **Probarlo:** `{"dry":true}` (dice qué haría, no manda ni escribe) · `{"forzar":true}` (ignora horario y "ya avisé") · `{"prueba":true,"solo":"549..."}`. **Deployar con `--no-verify-jwt`.**
 
+## Disparador de GitHub Actions (`github-dispatch`) — 20/11/2026
+
+**Por qué existe.** El `schedule:` de GitHub es "si puedo": medido del 6 al 20/11, `mail-tga/correo.yml` (cron cada hora) corrió **3-4 veces por día**, y desde el 17/11 hubo **~8 h todas las noches sin ninguna corrida**. No era facturación ni caída de GitHub: GitHub no dispara. El vigía `notify-github` lo detectó el 20/11 a la mañana. Así que el reloj vive en pg_cron (que es puntual) y la función le pide a GitHub que corra el workflow (`workflow_dispatch`).
+
+- Gate `x-stock-secret`, token `GITHUB_TOKEN` (el mismo del vigía). **Sólo dispara lo que está en `PERMITIDOS`** (hoy los 4 de mail-tga: correo, quejas, calidad, resenas). Para sumar uno, agregarlo ahí y redeployar.
+- **pg_cron jobid 46 `gh-dispatch-correo`, `10 */2 * * *`** (cada 2 h, a las y 10 de cada hora impar AR). Decisión de Fer (20/11): **cada 2 horas**, que con Pro sale ~US$0 (cuenta ~2.300 min/mes).
+- Arranca **sólo con correo**: quejas/calidad/reseñas se suman después de medir 2 días el consumo. El `schedule:` del yml queda como respaldo (corren algunas veces de más, es poco).
+- **Volver atrás:** `select cron.unschedule('gh-dispatch-correo');`.
+- Probar: `{"repo":"mail-tga","workflow":"correo.yml","dry":true}`. Deployar con `--no-verify-jwt`.
+
 ## Gotchas y decisiones del proyecto
 
 ### Keys de Supabase formato nuevo (`sb_secret_*` / `sb_publishable_*`)
