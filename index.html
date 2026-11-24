@@ -744,6 +744,7 @@ input, select, textarea { font-family: var(--font); }
         <button onclick="showAdminTab('usado_rechazado', this)">Usado no apto</button>
         <button onclick="showAdminTab('usado_tomado', this)">Usado tomado</button>
         <button onclick="showAdminTab('todas', this)">Todas</button>
+        <button onclick="showAdminTab('vendidos', this)">💰 Vendidos</button>
         <button id="tabArgd" class="hidden" onclick="showAdminTab('argendreams', this)">🤝 ArgenDreams</button>
         <button onclick="showAdminTab('compra_ml', this)">💰 Compra ML</button>
         <button onclick="showAdminTab('flash', this)">⚡ Flash ML</button>
@@ -757,6 +758,13 @@ input, select, textarea { font-family: var(--font); }
         <select id="adminFiltroVendedor" onchange="onAdminFiltroChange()" style="padding:10px 14px; border:1px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:var(--sans); min-width:160px">
           <option value="TODOS">Todos los vendedores</option>
         </select>
+        <select id="adminFiltroFecha" onchange="onAdminFiltroChange()" style="padding:10px 14px; border:1px solid var(--vw-grey-2); border-radius:8px; font-size:14px; font-family:var(--sans); min-width:150px">
+          <option value="todas" selected>Todas las fechas</option>
+          <option value="mes">Mes actual</option>
+          <option value="3m">Últimos 3 meses</option>
+          <option value="6m">Últimos 6 meses</option>
+        </select>
+        <button onclick="loadAdminTasaciones(adminFiltroEstado)" title="Volver a bajar las tasaciones de la base" style="padding:10px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap">🔄 Actualizar</button>
         <button id="btnSelMultiple" onclick="toggleSelMultiple()" class="hidden" style="padding:10px 14px; background:var(--vw-grey-1); color:var(--vw-grey-4); border:1px solid var(--vw-grey-2); border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap">☑ Selección múltiple</button>
       </div>
       <div id="adminSelBar" class="hidden" style="margin:0 16px 12px; padding:10px 14px; background:#FEE2E2; border-radius:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
@@ -1073,6 +1081,7 @@ let misTasacionesData = [];
 let adminFiltroVendedor = 'TODOS';
 let adminFiltroTexto = '';
 let adminFiltroEstado = 'pendientes';
+let adminFiltroFecha = 'todas';   // todas | mes | 3m | 6m
 let misFiltroTexto = '';
 let misFiltroEstado = 'pendientes';
 // Tasador físico
@@ -3624,7 +3633,7 @@ function matchTasacion(t, q) {
 // ============ ADMIN ============
 async function loadAdminTasaciones(filter) {
   const list = document.getElementById('adminList');
-  list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">Cargando...</div>';
+  list.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:40px;color:var(--vw-grey-3)"><div class="spinner"></div>Cargando...</div>';
   try {
     // Traemos todas y filtramos en cliente porque las condiciones son combinadas (precio_toma_virtual / final).
     const data = await sbFetchTodo('tasaciones?order=created_at.desc,id.desc');
@@ -3654,15 +3663,26 @@ function populateAdminVendedorSelect(data) {
 function onAdminFiltroChange() {
   const buscador = document.getElementById('adminBuscador');
   const sel = document.getElementById('adminFiltroVendedor');
+  const selF = document.getElementById('adminFiltroFecha');
   adminFiltroTexto = buscador ? buscador.value.trim().toUpperCase() : '';
   adminFiltroVendedor = sel ? sel.value : 'TODOS';
+  adminFiltroFecha = selF ? selF.value : 'todas';
   renderAdminList(allTasaciones);
 }
 
 function showAdminTab(tab, btn) {
   document.querySelectorAll('.admin-tabs button').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  loadAdminTasaciones(tab);
+  adminFiltroEstado = tab || 'pendientes';
+  // Cambio de solapa INSTANTÁNEO: si ya tenemos las tasaciones en memoria,
+  // filtramos en el cliente (como el buscador) en vez de volver a bajar todo de
+  // la base. El botón "Actualizar" sí vuelve a bajar a propósito.
+  if (Array.isArray(allTasaciones) && allTasaciones.length) {
+    actualizarBotonSelMultiple();
+    renderAdminList(allTasaciones);
+  } else {
+    loadAdminTasaciones(tab);
+  }
 }
 
 function renderAdminList(tasaciones) {
@@ -3758,6 +3778,25 @@ function renderAdminList(tasaciones) {
     data = data.filter(t => t.precio_toma_final && t.usado_tomado !== true);
   } else if (adminFiltroEstado === 'usado_tomado') {
     data = data.filter(t => t.precio_toma_final && t.usado_tomado === true);
+  } else if (adminFiltroEstado === 'vendidos') {
+    data = data.filter(t => !!t.vendido_at);
+  }
+  // Filtro por fecha (Mes actual / Últimos 3 / Últimos 6). En Vendidos mira la
+  // fecha de venta; en el resto, la fecha de la tasación.
+  if (adminFiltroFecha && adminFiltroFecha !== 'todas') {
+    const _now = new Date();
+    let _desde = null;
+    if (adminFiltroFecha === 'mes') _desde = new Date(_now.getFullYear(), _now.getMonth(), 1);
+    else if (adminFiltroFecha === '3m') _desde = new Date(_now.getFullYear(), _now.getMonth() - 3, _now.getDate());
+    else if (adminFiltroFecha === '6m') _desde = new Date(_now.getFullYear(), _now.getMonth() - 6, _now.getDate());
+    if (_desde) {
+      const _desdeMs = _desde.getTime();
+      data = data.filter(t => {
+        const ref = (adminFiltroEstado === 'vendidos' && t.vendido_at) ? t.vendido_at : t.created_at;
+        const ms = ref ? new Date(ref).getTime() : 0;
+        return ms >= _desdeMs;
+      });
+    }
   }
   if (adminFiltroVendedor && adminFiltroVendedor !== 'TODOS') {
     data = data.filter(t => t.vendedor_nombre === adminFiltroVendedor);
@@ -3766,7 +3805,7 @@ function renderAdminList(tasaciones) {
     data = data.filter(t => matchTasacion(t, adminFiltroTexto));
   }
   if (data.length === 0) {
-    const msg = (adminFiltroTexto || (adminFiltroVendedor && adminFiltroVendedor !== 'TODOS'))
+    const msg = (adminFiltroTexto || adminFiltroFecha !== 'todas' || (adminFiltroVendedor && adminFiltroVendedor !== 'TODOS'))
       ? 'No hay resultados con los filtros actuales'
       : 'No hay tasaciones en este estado';
     list.innerHTML = `<div style="text-align:center;padding:40px;color:var(--vw-grey-3)">${msg}</div>`;
@@ -3781,7 +3820,8 @@ function renderAdminList(tasaciones) {
     usado_rechazado: '❌ Tasaciones que marcaste como NO APTAS para toma (con el motivo cargado). El vendedor recibió notificación por WhatsApp.',
     usado_tomado: '🟢 Tasaciones donde el usado efectivamente se tomó como parte de pago. Operación cerrada con usado.',
     final: '✅ Tasaciones con precio final cerrado. Acá ves la respuesta del vendedor sobre el cierre de la operación con el cliente.',
-    todas: 'Todas las tasaciones del sistema, en cualquier estado.'
+    todas: 'Todas las tasaciones del sistema, en cualquier estado.',
+    vendidos: '💰 Usados que compramos y ya vendimos (tienen fecha de venta cargada). Con el filtro de fecha de arriba acotás el período.'
   };
   const subtituloAdminHTML = `<div style="margin:0 16px 12px; padding:10px 14px; background:#EFF6FF; border-left:3px solid var(--vw-blue); border-radius:4px; font-size:12px; color:var(--vw-grey-5); line-height:1.5">${subtitulosAdmin[adminFiltroEstado] || ''}</div>`;
 
@@ -9739,6 +9779,7 @@ const INSP_GRUPOS = [
   { key:'mecanica', titulo:'Mecánica', items:[
     { key:'motor', label:'Motor' },
     { key:'caja', label:'Caja' },
+    { key:'embrague', label:'Embrague' },
     { key:'suspension', label:'Suspensión' },
     { key:'frenos', label:'Frenos' },
     { key:'direccion', label:'Dirección' },
