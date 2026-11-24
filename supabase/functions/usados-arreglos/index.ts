@@ -159,6 +159,49 @@ Deno.serve(async (req) => {
     console.error("usados-arreglos firma:", e);
   }
   if (!ok) return json({ ok: false, error: "No autorizado" }, 401);
+
+  // ---- stock-para-tasar ----
+  // Stock físico de usados para el desplegable del tasador ("qué compra el
+  // cliente"). Abierto a CUALQUIER vendedor logueado (no pasa por EDITORES):
+  // es solo-lectura y es lo que igual se publica. Todo lo físico vendible, sin
+  // corte de antigüedad: recibida=true, no vendido, activo y no oculto en el portal.
+  if (String(body?.accion || "").toLowerCase() === "stock-para-tasar") {
+    try {
+      const raw = await rest(
+        OV,
+        OV_KEY,
+        "/usados?select=usadoid,marca,modelo,anio,km,color,patente,preciodeventa,fechadealta" +
+          "&recibida=eq.true&fechadeventa=is.null&estado=eq.Activado" +
+          "&order=fechadealta.desc&limit=800",
+      ) as Record<string, unknown>[];
+      const ids = raw.map((u) => Number(u.usadoid)).filter(Boolean);
+      let ocultas = new Set<number>();
+      if (ids.length) {
+        const portal = await rest(
+          W,
+          SUPA_KEY,
+          `/portal_usados?usadoid=in.(${ids.join(",")})&select=usadoid,oculto`,
+        ) as Record<string, unknown>[];
+        ocultas = new Set(portal.filter((p) => p.oculto === true).map((p) => Number(p.usadoid)));
+      }
+      const unidades = raw
+        .filter((u) => !ocultas.has(Number(u.usadoid)))
+        .map((u) => ({
+          usadoid: Number(u.usadoid),
+          titulo: tituloUsado(u),
+          patente: String(u.patente ?? "").trim().toUpperCase() || null,
+          anio: Number(u.anio) || null,
+          km: Number(u.km) || null,
+          color: String(u.color ?? "").trim() || null,
+          precio: Number(u.preciodeventa) || null,
+        }));
+      return json({ ok: true, unidades });
+    } catch (e) {
+      console.error("usados-arreglos stock-para-tasar:", e);
+      return json({ ok: false, error: "No se pudo traer el stock de usados" }, 502);
+    }
+  }
+
   if (!EDITORES.has(firmante)) return json({ ok: false, error: "Sin permiso para ver arreglos" }, 403);
 
   // Nombre que queda registrado: si hay impersonacion, el que esta navegando.

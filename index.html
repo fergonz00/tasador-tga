@@ -2488,22 +2488,82 @@ function onVwCompradoChange() {
   validateStep();
 }
 
-function renderStep8() { // Modelo 0km que consulta el cliente
+// ===== Stock físico de usados para el paso "qué compra el cliente" =====
+// Se trae de Oversoft por la Edge usados-arreglos (acción solo-lectura
+// stock-para-tasar), abierta a cualquier vendedor logueado.
+let usadosStockCache = [];
+let usadosStockCargado = false;
+let usadosStockCargando = false;
+async function cargarUsadosStock() {
+  if (usadosStockCargando || usadosStockCargado) return;
+  usadosStockCargando = true;
+  try {
+    const sess = _waSession();
+    if (!sess) { mostrarLoginVencido(); return; }
+    const res = await fetch(SUPABASE_URL + '/functions/v1/usados-arreglos', {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: { ...sess, nombre: currentUser && currentUser.nombre }, accion: 'stock-para-tasar' })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) { usadosStockCache = Array.isArray(data.unidades) ? data.unidades : []; usadosStockCargado = true; }
+    else console.error('stock usados:', data.error || res.status);
+  } catch (e) { console.error('stock usados', e); }
+  finally {
+    usadosStockCargando = false;
+    // Si seguimos parados en el paso con "usado" elegido, re-render para mostrar el select.
+    if (currentStep === 11 && wizardData.tipoCompra === 'usado') renderWizard();
+  }
+}
+function setTipoCompra(tipo) {
+  wizardData.tipoCompra = tipo;
+  if (tipo === 'usado' && !usadosStockCargado) cargarUsadosStock();
+  renderWizard();
+}
+
+function renderStep8() { // ¿Qué compra el cliente? 0km o usado de nuestro stock
   const modelos0km = opciones0km();
+  const tipo = wizardData.tipoCompra || '0km';
   // Si el caso vino del CRM y el nombre corto no se pudo resolver a una opción
   // comercial única, se lo mostramos para que elija sin volver al CRM.
   const pista0km = (wizardData.cero_km_crm && !getWizardVal('modelo0km'))
     ? `<div style="margin-top:6px; font-size:12px; color:#9A3412">En el CRM figura <strong>${_escapeHtmlUsr(wizardData.cero_km_crm)}</strong> — elegí la versión que corresponda.</div>`
     : '';
+  const btnBase = 'flex:1; padding:12px; border:1.5px solid var(--vw-grey-2); border-radius:8px; font-family:var(--sans); font-size:15px; font-weight:700; cursor:pointer; background:white; color:var(--vw-grey-4)';
+  const btnOn = 'flex:1; padding:12px; border:1.5px solid var(--vw-blue); border-radius:8px; font-family:var(--sans); font-size:15px; font-weight:700; cursor:pointer; background:var(--vw-blue); color:white';
+  let usadoBody;
+  if (!usadosStockCargado) {
+    usadoBody = '<div style="display:flex; align-items:center; gap:10px; padding:10px 0; color:var(--vw-grey-4); font-size:14px"><div class="spinner"></div> Cargando stock de usados…</div>';
+  } else if (!usadosStockCache.length) {
+    usadoBody = '<div style="padding:10px 12px; background:#FEF3C7; border-radius:8px; font-size:13px; color:#92400E">No hay usados físicos en stock en este momento.</div>';
+  } else {
+    const opts = usadosStockCache.map(u => {
+      const extra = [u.anio, u.patente].filter(Boolean).join(' · ');
+      const label = u.titulo + (extra ? ' — ' + extra : '');
+      return `<option value="${u.usadoid}" ${String(u.usadoid) === String(wizardData.usadoConsultaId) ? 'selected' : ''}>${_escapeHtmlUsr(label)}</option>`;
+    }).join('');
+    usadoBody = `<select id="wUsadoConsulta" onchange="validateStep()"><option value="">— Elegí el usado —</option>${opts}</select>`;
+  }
   return `
     ${stepNum()}
-    <h2>0km que consulta el cliente</h2>
-    <label>¿Qué modelo 0km está averiguando?${selloML("modelo0km")}</label>
-    <select id="wModelo0km" onchange="validateStep()">
-      <option value="">— Elegí el modelo 0km —</option>
-      ${modelos0km.map(m => `<option value="${m.modelo}" ${m.modelo === getWizardVal('modelo0km') ? 'selected' : ''}>${m.modelo}</option>`).join('')}
-    </select>
-    ${pista0km}
+    <h2>¿Qué va a comprar el cliente?</h2>
+    <div style="display:flex; gap:10px; margin-bottom:14px">
+      <button type="button" onclick="setTipoCompra('0km')" style="${tipo === '0km' ? btnOn : btnBase}">0km</button>
+      <button type="button" onclick="setTipoCompra('usado')" style="${tipo === 'usado' ? btnOn : btnBase}">Usado</button>
+    </div>
+    <div id="bloque0km" style="display:${tipo === '0km' ? '' : 'none'}">
+      <label>¿Qué modelo 0km está averiguando?${selloML("modelo0km")}</label>
+      <select id="wModelo0km" onchange="validateStep()">
+        <option value="">— Elegí el modelo 0km —</option>
+        ${modelos0km.map(m => `<option value="${m.modelo}" ${m.modelo === getWizardVal('modelo0km') ? 'selected' : ''}>${m.modelo}</option>`).join('')}
+      </select>
+      ${pista0km}
+    </div>
+    <div id="bloqueUsado" style="display:${tipo === 'usado' ? '' : 'none'}">
+      <label>¿Qué usado de nuestro stock le interesa?</label>
+      ${usadoBody}
+      <div style="margin-top:6px; font-size:12px; color:var(--vw-grey-4)">Stock físico del concesionario (Oversoft). Si elige un usado, no se pide el precio ofrecido.</div>
+    </div>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
       <button class="btn-next" id="btnNext" disabled onclick="nextStep()">Siguiente</button>
@@ -2581,7 +2641,9 @@ function renderStep10() { // Fotos (o solo el resumen, en el flujo portal)
       <strong>Patente:</strong> ${patente} — <strong>Radicado en:</strong> ${provincia}<br>
       ${clienteSoloVende()
         ? '<span style="color:#9A3412; font-weight:700">El cliente solo vende su usado</span> — no consulta 0km'
-        : `<strong>0km:</strong> ${modelo0km}<br>Precio ofrecido con FyF: $ ${formatNum(precioOfrecido)}`}
+        : (wizardData.tipoCompra === 'usado'
+            ? `<strong>Compra un usado:</strong> ${_escapeHtmlUsr(wizardData.usadoConsultaDesc || '—')}`
+            : `<strong>0km:</strong> ${modelo0km}<br>Precio ofrecido con FyF: $ ${formatNum(precioOfrecido)}`)}
     </div>
     <div class="wizard-nav">
       <button class="btn-back" onclick="prevStep()">Atrás</button>
@@ -2736,7 +2798,22 @@ function saveCurrentStep() {
       wizardData.clienteCompraUnidad = sel === 'si' ? true : sel === 'no' ? false : null;
       break;
     }
-    case 11: wizardData.modelo0km = val('wModelo0km'); break;
+    case 11: {
+      const tipo = wizardData.tipoCompra || '0km';
+      if (tipo === 'usado') {
+        const sel = document.getElementById('wUsadoConsulta');
+        const id = sel && sel.value ? Number(sel.value) : null;
+        wizardData.usadoConsultaId = id;
+        const u = (usadosStockCache || []).find(x => x.usadoid === id);
+        wizardData.usadoConsultaDesc = u ? (u.titulo + (u.patente ? ' (' + u.patente + ')' : '')) : '';
+        wizardData.modelo0km = '';
+      } else {
+        wizardData.modelo0km = val('wModelo0km');
+        wizardData.usadoConsultaId = null;
+        wizardData.usadoConsultaDesc = '';
+      }
+      break;
+    }
     case 12: wizardData.precioOfrecido = val('wPrecioOfrecido'); break;
     case 14: {
       // Comentario opcional del vendedor (SI/NO + textarea)
@@ -2830,7 +2907,16 @@ function validateStep() {
       valid = sel === 'si' || sel === 'no';
       break;
     }
-    case 11: valid = !!val('wModelo0km'); break;
+    case 11: {
+      const tipo = wizardData.tipoCompra || '0km';
+      if (tipo === 'usado') {
+        const sel = document.getElementById('wUsadoConsulta');
+        valid = !!(sel && sel.value);
+      } else {
+        valid = !!val('wModelo0km');
+      }
+      break;
+    }
     case 12: valid = !!val('wPrecioOfrecido') && parseInt(val('wPrecioOfrecido')) > 0; break;
     case 13: valid = true; break; // fotos: opcionales, siempre puede pasar de pantalla
     case 14: {
@@ -2871,7 +2957,10 @@ function shouldSkipStep(idx) {
   if (idx === 10) return !preguntaCompraUnidadActiva();
   // Si el cliente SOLO vende su usado, el 0km que consulta (11) y el precio
   // ofrecido (12) no existen: no hay unidad que ofrecerle.
-  if (idx === 11 || idx === 12) return clienteSoloVende();
+  if (idx === 11) return clienteSoloVende();
+  // El precio ofrecido (12) además se saltea si el cliente compra un USADO:
+  // un usado no lleva flete y formularios, no hay "precio con FyF" que cargar.
+  if (idx === 12) return clienteSoloVende() || wizardData.tipoCompra === 'usado';
   return false;
 }
 
@@ -3103,8 +3192,11 @@ async function submitTasacion() {
     // hubiera quedado algo cargado de un paso anterior (puede haber contestado
     // "Sí", llenado el 0km y vuelto con "Atrás" a cambiar la respuesta).
     const soloVende = clienteSoloVende();
-    const modelo0km = soloVende ? null : (wizardData.modelo0km || null);
-    const precioOfrecido = soloVende ? null : (parseFloat(wizardData.precioOfrecido) || null);
+    // Si el cliente compra un USADO de nuestro stock, el 0km y el precio ofrecido
+    // no aplican (el paso de precio se saltea): van en null.
+    const compraUsado = !soloVende && wizardData.tipoCompra === 'usado';
+    const modelo0km = (soloVende || compraUsado) ? null : (wizardData.modelo0km || null);
+    const precioOfrecido = (soloVende || compraUsado) ? null : (parseFloat(wizardData.precioOfrecido) || null);
 
     document.getElementById('loadingText').textContent = 'Guardando tasación...';
 
@@ -3135,6 +3227,10 @@ async function submitTasacion() {
       ajuste_km_porcentaje: ajusteKm,
       modelo_0km_consulta: modelo0km,
       precio_ofrecido_fyf: precioOfrecido,
+      // Qué compra el cliente: '0km' o 'usado' (de nuestro stock). null si solo vende.
+      compra_tipo: soloVende ? null : (compraUsado ? 'usado' : '0km'),
+      usado_consulta_id: compraUsado ? (wizardData.usadoConsultaId || null) : null,
+      usado_consulta_desc: compraUsado ? (wizardData.usadoConsultaDesc || null) : null,
       usado_vw_comprado_tga: (marca.toUpperCase() === 'VOLKSWAGEN') ? (wizardData.vwCompradoTGA ?? null) : null,
       usado_vw_lugar_compra: (marca.toUpperCase() === 'VOLKSWAGEN' && wizardData.vwCompradoTGA === false) ? (wizardData.vwLugarCompra || null) : null,
       vendedor_comentario: (wizardData.comentarioVendedorSiNo === true && (wizardData.comentarioVendedor || '').trim()) ? wizardData.comentarioVendedor.trim() : null,
@@ -3395,6 +3491,7 @@ function renderMisTasacionesList() {
             ${t.vendedor_comentario ? `<div style="margin-top:8px; padding:8px 10px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px; font-size:12px; color:#92400E"><div style="font-weight:700; font-size:10px; letter-spacing:0.5px; margin-bottom:3px">📝 TU COMENTARIO</div><div style="color:var(--vw-grey-5); line-height:1.4; white-space:pre-wrap">${t.vendedor_comentario}</div></div>` : ''}
             <div class="info-row"><span class="label">Fecha</span><span class="value">${fecha}</span></div>
             ${t.modelo_0km_consulta ? `<div class="info-row"><span class="label">0km consultado</span><span class="value">${t.modelo_0km_consulta}</span></div>` : ''}
+            ${(t.compra_tipo === 'usado' && t.usado_consulta_desc) ? `<div class="info-row"><span class="label">Usado consultado</span><span class="value">${_escapeHtmlUsr(t.usado_consulta_desc)}</span></div>` : ''}
             ${t.precio_ofrecido_fyf ? `<div class="info-row"><span class="label">Precio ofrecido FyF</span><span class="value" style="font-family:var(--mono)">$ ${formatNum(t.precio_ofrecido_fyf)}</span></div>` : ''}
             ${t.datos_corregidos_at ? `<div style="margin-top:8px; padding:8px 10px; background:#FEF3C7; border-radius:6px; font-size:11px; color:#92400E">⚠ Datos del vehículo corregidos por ${t.datos_corregidos_por || 'el tasador'} el ${new Date(t.datos_corregidos_at).toLocaleDateString('es-AR')}</div>` : ''}
             ${t.analisis_ia_estado === 'pendiente' ? `<div style="margin-top:10px; padding:10px; background:var(--vw-grey-1); border-radius:6px; font-size:12px; color:var(--vw-grey-4); text-align:center">Analizando fotos con IA...</div>` : ''}
