@@ -419,10 +419,7 @@ async function tasarUno(fl: Flash, subs: any[]) {
   const g = (await sb("tasaciones", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify([fila]) }))[0];
   await evento("nube", "tasado", { numero: fila.numero_interno, modelo: fila.modelo, version: fila.version, cca: fila.precio_cca }, s.id, lot.id);
   if (fila.fotos.length) await analizarFotos(g.id, fila.fotos, { marca: fila.marca, modelo: fila.modelo, version: fila.version, anio: fila.anio, kilometros: fila.kilometros });
-  const baseTotal = lot.base_price * (1 + (parseFloat(s.commission || "5") || 5) / 100);
-  await avisar([`entro un auto nuevo de Flash al tasador`],
-    [`${fila.modelo} ${fila.anio}, ${fila.kilometros.toLocaleString("es-AR")} km, base+comision ${plata(baseTotal)}, subasta ${horaAR(s.startDate)}. Kavak lo completa la PC`],
-    ["si te interesa, pone el tope (total con comision) en tasador.titogonzalez.online, solapa Flash ML"]);
+  // Fer, 24-11-2026: sin WhatsApp por autos nuevos (se ven en la solapa Flash ML).
   return fila.numero_interno;
 }
 
