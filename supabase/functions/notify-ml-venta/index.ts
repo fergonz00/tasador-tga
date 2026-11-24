@@ -69,8 +69,13 @@ const TEMPLATE_RECORDATORIO = "ml_pregunta_sin_responder";
  * Mientras Meta los tenga en PENDING caen a los de siempre: el aviso llega igual
  * (con el remate equivocado) y se corrige solo cuando aprueban.
  */
-const TEMPLATE_DERIVADA = "ml_pregunta_para_fer";
-const TEMPLATE_DERIVADA_RECORDATORIO = "ml_pregunta_para_fer_recordatorio";
+// 24-11-2026: Maxi ya no le pasa la respuesta a Fer, la contesta en el portal
+// (precios.titogonzalez.online/ml-preguntas). Templates nuevos; mientras Meta no los
+// apruebe se cae a los "para_fer" y, si tampoco, al comun.
+const TEMPLATE_DERIVADA = "ml_pregunta_responder_portal";
+const TEMPLATE_DERIVADA_RECORDATORIO = "ml_pregunta_responder_portal_recordatorio";
+const TEMPLATE_DERIVADA_VIEJO = "ml_pregunta_para_fer";
+const TEMPLATE_DERIVADA_RECORDATORIO_VIEJO = "ml_pregunta_para_fer_recordatorio";
 const TEMPLATE_REPARTO = "reparto_unidad_sin_factura";
 const TEMPLATE_CANCELADA = "ml_venta_cancelada";
 const TEMPLATE_DEVOLUCION = "ml_devolucion_seguimiento";
@@ -302,6 +307,8 @@ async function enviarDerivada(
   const args = [nombre, recortar(aviso, 200), recortar(pregunta, 700)];
   const propio = await postMeta(phoneId, token, tel, TEMPLATE_DERIVADA, args);
   if (propio.ok) return { ...propio, template: TEMPLATE_DERIVADA };
+  const viejo = await postMeta(phoneId, token, tel, TEMPLATE_DERIVADA_VIEJO, args);
+  if (viejo.ok) return { ...viejo, template: TEMPLATE_DERIVADA_VIEJO };
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_PREGUNTA, args);
   return { ...fb, template: TEMPLATE_PREGUNTA };
 }
@@ -313,6 +320,8 @@ async function enviarDerivadaRecordatorio(
   const args = [nombre, recortar(aviso, 200), horas, recortar(pregunta, 600)];
   const propio = await postMeta(phoneId, token, tel, TEMPLATE_DERIVADA_RECORDATORIO, args);
   if (propio.ok) return { ...propio, template: TEMPLATE_DERIVADA_RECORDATORIO };
+  const viejo = await postMeta(phoneId, token, tel, TEMPLATE_DERIVADA_RECORDATORIO_VIEJO, args);
+  if (viejo.ok) return { ...viejo, template: TEMPLATE_DERIVADA_RECORDATORIO_VIEJO };
   const fb = await postMeta(phoneId, token, tel, TEMPLATE_RECORDATORIO, args);
   return { ...fb, template: TEMPLATE_RECORDATORIO };
 }
@@ -596,7 +605,7 @@ const TEMPLATE_DERIVADA_COMPONENTS = [
   {
     type: "BODY",
     text:
-      "Hola {{1}}! Entro una pregunta en Mercado Libre sobre: {{2}}.\n\nPregunta: {{3}}\n\nPasale la respuesta a Fer por WhatsApp y el la publica en Mercado Libre.",
+      "Hola {{1}}! Entro una pregunta en Mercado Libre sobre: {{2}}.\n\nPregunta: {{3}}\n\nRespondela desde el portal y se publica en Mercado Libre: https://precios.titogonzalez.online/ml-preguntas",
     example: {
       body_text: [[
         "Maxi",
@@ -612,7 +621,7 @@ const TEMPLATE_DERIVADA_RECORDATORIO_COMPONENTS = [
   {
     type: "BODY",
     text:
-      "Hola {{1}}! La pregunta de Mercado Libre sobre {{2}} sigue sin responder hace {{3}}.\n\nPregunta: {{4}}\n\nPasale la respuesta a Fer por WhatsApp y el la publica. El control se repite cada 6 horas habiles hasta que tenga respuesta.",
+      "Hola {{1}}! La pregunta de Mercado Libre sobre {{2}} sigue sin responder hace {{3}}.\n\nPregunta: {{4}}\n\nRespondela desde el portal: https://precios.titogonzalez.online/ml-preguntas . El control se repite cada 6 horas habiles hasta que tenga respuesta.",
     example: {
       body_text: [[
         "Maxi",
