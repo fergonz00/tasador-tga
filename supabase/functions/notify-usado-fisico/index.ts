@@ -242,8 +242,13 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; desde: 
         continue;
       }
 
+      // Al que saca las fotos (Jorge) se le recuerda como: las de la Amarok AF323VV
+      // llegaron verticales y la camioneta salia cortada (Fer, 26/11/2026).
+      const comoSacarlas = CADA_48.has(dest.usuario)
+        ? ". Sacalas con el celular en HORIZONTAL, con el auto entero en cada foto de afuera"
+        : "";
       const r = await enviarTemplate(env, dest.telefono_wa, [
-        primerNombre(dest.nombre), unidad, detalle, cuando,
+        primerNombre(dest.nombre), unidad, detalle, cuando + comoSacarlas,
       ]);
       if (r.ok) {
         enviados.push({ usadoid: u.usadoid, unidad, para: dest.nombre, dias_fisico: dias });
