@@ -106,8 +106,28 @@ Deno.serve(async (req: Request) => {
     // `usuarios` (28-09-2026): quién recibe ESTE aviso, sin tocar a quién le
     // llegan los de ML. Lo usa notify-github, que avisa a Fer y a Matías.
     const usuarios = String(body?.usuarios || "").trim() || null;
-    return json(await procesar(env, "", "", solo, (tel, nombre) =>
-      enviarResultado(WA_PHONE_ID, WA_TOKEN, tel, nombre, p, String(body?.cantidad ?? "0")), usuarios));
+    const res = await procesar(env, "", "", solo, (tel, nombre) =>
+      enviarResultado(WA_PHONE_ID, WA_TOKEN, tel, nombre, p, String(body?.cantidad ?? "0")), usuarios);
+    // 26/11/2026 — registro de cada aviso generico. Salen ~20 por dia y lo usan
+    // mas de diez controles: sin esto no habia forma de saber cual los pedia.
+    // Si el registro falla, el aviso igual salio: no corta nada.
+    try {
+      // deno-lint-ignore no-explicit-any
+      const r = res as any;
+      await sb(SUPABASE_URL, SERVICE_KEY, "wa_resultado_log", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          control: p[0].slice(0, 200), resumen: p[1].slice(0, 500), detalle: p[2].slice(0, 1000),
+          enviados: Array.isArray(r?.enviados) ? r.enviados.length : Number(r?.enviados ?? 0) || 0,
+          errores: Array.isArray(r?.errores) ? r.errores.length : 0,
+          prueba: !!solo,
+        }),
+      });
+    } catch (e) {
+      console.error("wa_resultado_log:", String(e).slice(0, 200));
+    }
+    return json(res);
   }
 
   const cantidad = String(body?.cantidad ?? "").trim();
