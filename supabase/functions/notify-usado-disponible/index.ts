@@ -26,7 +26,8 @@
 // nada y avisa a Fer y Matias (template control_automatico_resultado). Regla
 // de Fer del 2/10/2026 despues de los ~4.000 avisos repetidos del CRM.
 //
-// Template Meta: `usado_disponible_venta` (es_AR, UTILITY, 4 variables)
+// Template Meta: `usado_disponible_reg` (es_AR, UTILITY, 4 variables). La
+// vieja `usado_disponible_venta` quedo MARKETING y ya no se usa.
 //   {{1}} vendedor - {{2}} unidad + patente - {{3}} color/km/fotos - {{4}} precio
 //
 // Modos (query string o body JSON):
@@ -45,6 +46,14 @@
 const META_API_URL = "https://graph.facebook.com/v25.0";
 const META_LANGUAGE = "es_AR";
 const TEMPLATE_NAME = "usado_disponible_venta";
+// `usado_disponible_venta` quedo como MARKETING en Meta (18 mensajes el
+// 19/11/2026). Esta copia la formula de las que Meta si aprobo como UTILITY
+// (`crm_dormidos_reg`): el hecho registrado primero y sin invitacion al final.
+// Mismas 4 variables. Mientras no este aprobada como UTILITY el aviso NO sale:
+// queda `pendiente` y la corrida siguiente lo reintenta.
+const TEMPLATE_UTILITY = "usado_disponible_reg";
+const TEXTO_UTILITY =
+  "Hola {{1}}, esto quedo registrado hoy en el portal de Tito Gonzalez: el usado {{2}} ya tiene fotos y precio de venta cargados. Detalle: {{3}}. {{4}}. La ficha completa de la unidad esta en el portal de Tito Gonzalez.";
 const WABA_ID_DEFAULT = "1183788370595856"; // WABA "Tito Gonzalez | Tasador"
 
 const ANTIGUEDAD_MAX_MESES = 18;
@@ -354,13 +363,44 @@ async function padronUsuarios(env: Env, quienes: string[]): Promise<Usuario[]> {
 
 // ── WhatsApp ────────────────────────────────────────────────────────────────
 
+// 26/11/2026 — nunca una plantilla que Meta dejo como MARKETING (regla de
+// Matias: cuesta varias veces mas que una de utilidad). El codigo las pide como
+// UTILITY, pero Meta recategoriza sola al aprobar, asi que se le pregunta como
+// quedo. Se cachea 1 hora. Si Meta no contesta devuelve null y se manda igual:
+// que Meta no responda no puede dejar al concesionario sin avisos.
+let _categorias: { hasta: number; por: Map<string, string> } | null = null;
+async function categoriaDe(token: string, waba: string, nombre: string): Promise<string | null> {
+  if (!_categorias || Date.now() > _categorias.hasta) {
+    try {
+      const por = new Map<string, string>();
+      let url: string | null = `${META_API_URL}/${waba}/message_templates?fields=name,status,category&limit=200`;
+      while (url) {
+        const r: Response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) });
+        const d = await r.json();
+        if (!r.ok || !Array.isArray(d?.data)) throw new Error("sin lista");
+        for (const t of d.data) if (t.status === "APPROVED") por.set(t.name, t.category);
+        url = d?.paging?.next ?? null;
+      }
+      _categorias = { hasta: Date.now() + 3600000, por };
+    } catch {
+      return null;
+    }
+  }
+  return _categorias.por.get(nombre) ?? null;
+}
+
 async function enviarTemplate(env: Env, telE164: string, vars: string[]) {
+  let name = TEMPLATE_NAME;
+  if ((await categoriaDe(env.WA_TOKEN, env.WABA_ID, TEMPLATE_UTILITY)) === "UTILITY") name = TEMPLATE_UTILITY;
+  else if ((await categoriaDe(env.WA_TOKEN, env.WABA_ID, name)) === "MARKETING") {
+    return { ok: false, error: `no se manda: ${name} quedo como MARKETING en Meta y ${TEMPLATE_UTILITY} todavia no esta aprobada como UTILITY` };
+  }
   const payload = {
     messaging_product: "whatsapp",
     to: telE164,
     type: "template",
     template: {
-      name: TEMPLATE_NAME,
+      name,
       language: { code: META_LANGUAGE },
       components: [{ type: "body", parameters: vars.map((v) => ({ type: "text", text: limpiar(v) })) }],
     },
@@ -414,18 +454,10 @@ async function crearTemplate(env: Env) {
     method: "POST",
     headers: { Authorization: `Bearer ${env.WA_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      name: TEMPLATE_NAME,
+      name: TEMPLATE_UTILITY,
       language: META_LANGUAGE,
       category: "UTILITY",
-      components: [
-        { type: "HEADER", format: "TEXT", text: "Usado listo para la venta" },
-        {
-          type: "BODY",
-          text: "Hola {{1}}, el usado {{2}} ya está en el concesionario con fotos y precio cargados en el portal: {{3}}. {{4}}. Lo podés ver y presupuestar desde la solapa Usados de precios.titogonzalez.online.",
-          example: { body_text: [EJEMPLO] },
-        },
-        { type: "FOOTER", text: "Aviso automático · Tito Gonzalez" },
-      ],
+      components: [{ type: "BODY", text: TEXTO_UTILITY, example: { body_text: [EJEMPLO] } }],
     }),
   });
   return { status: res.status, respuesta: await res.json() };

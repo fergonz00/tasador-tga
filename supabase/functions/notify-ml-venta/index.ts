@@ -458,7 +458,37 @@ async function enviarSaldo(
   return { ...fb, template: TEMPLATE_FALLBACK };
 }
 
+// 26/11/2026 — nunca una plantilla que Meta dejo como MARKETING (regla de
+// Matias: cuesta varias veces mas que una de utilidad). El codigo las pide como
+// UTILITY, pero Meta recategoriza sola al aprobar, asi que se le pregunta como
+// quedo. Se cachea 1 hora. Si Meta no contesta devuelve null y se manda igual:
+// que Meta no responda no puede dejar al concesionario sin avisos.
+let _categorias: { hasta: number; por: Map<string, string> } | null = null;
+async function categoriaDe(token: string, waba: string, nombre: string): Promise<string | null> {
+  if (!_categorias || Date.now() > _categorias.hasta) {
+    try {
+      const por = new Map<string, string>();
+      let url: string | null = `${META_API_URL}/${waba}/message_templates?fields=name,status,category&limit=200`;
+      while (url) {
+        const r: Response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) });
+        const d = await r.json();
+        if (!r.ok || !Array.isArray(d?.data)) throw new Error("sin lista");
+        for (const t of d.data) if (t.status === "APPROVED") por.set(t.name, t.category);
+        url = d?.paging?.next ?? null;
+      }
+      _categorias = { hasta: Date.now() + 3600000, por };
+    } catch {
+      return null;
+    }
+  }
+  return _categorias.por.get(nombre) ?? null;
+}
+
 async function postMeta(phoneId: string, token: string, tel: string, template: string, params: string[]) {
+  if ((await categoriaDe(token, WABA_ID, template)) === "MARKETING") {
+    // ok:false hace que el que llama pruebe la plantilla siguiente de su cadena.
+    return { ok: false, error: `no se manda: ${template} quedo como MARKETING en Meta` };
+  }
   const payload = {
     messaging_product: "whatsapp",
     to: tel,
