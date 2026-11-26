@@ -37,6 +37,9 @@ const CUENTAS = [
   { id: "1183788370595856", nombre: "Tito Gonzalez | Tasador", tope: 20, moneda: "US$" },
   { id: "1551183599919506", nombre: "ArgenDreams | Notificaciones", tope: 15000, moneda: "$" },
   { id: "851367000657472", nombre: "Tito Gonzalez Chat", tope: 20, moneda: "AED " },
+  // Sumada el 26-nov-2026 (auditoria de gasto): la WABA de planes-tga quedaba sin
+  // vigilar. Normal a esa fecha: centavos por dia (US$0,62 en todo noviembre).
+  { id: "2711436596021234", nombre: "Tito Gonzalez | Planes de Ahorro", tope: 5, moneda: "US$" },
 ];
 
 const PISO = 40;          // una plantilla puede mandar hasta esto por dia sin que se mire
