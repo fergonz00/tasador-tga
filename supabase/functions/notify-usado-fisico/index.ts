@@ -19,6 +19,8 @@
 //   - wjfgl `tasaciones` (por patente): km real y color cuando Oversoft no los
 //     trae, y cuantas fotos de la tasacion se estan mostrando mientras tanto.
 //
+// 26/11/2026: secret = `fngonzalez,jfazzini` (Nadia afuera). Fer todos los dias,
+// Jorge cada 48 hs de sus dias de trabajo (ver CADA_48).
 // A quien le llega: `fngonzalez` (Fer) y `jfazzini` (Jorge Fazzini), via
 // tasador_usuarios (respeta activo / notificaciones_wa). Se puede cambiar sin
 // tocar codigo con el env USADO_FOTOS_DESTINATARIOS (usuarios separados por coma).
@@ -55,6 +57,19 @@ const ANTIGUEDAD_MAX_MESES = 18;
 
 const DESTINATARIOS = (Deno.env.get("USADO_FOTOS_DESTINATARIOS") ?? "fngonzalez,jfazzini")
   .split(",").map((s) => s.trim()).filter(Boolean);
+
+// Los que reciben el aviso CADA 48 HS de SUS dias de trabajo, no todos los dias.
+// Fer, 26/11/2026: a Jorge Fazzini "cada 48 hs en los dias habiles sin contar los
+// miercoles que tiene franco el. el sabado contalo para el tmb porq viene".
+// Dias de Jorge = lun, mar, jue, vie, sab, sin feriados. Se le manda, se saltea
+// un dia suyo y se le vuelve a mandar (lun -> jue, jue -> sab, sab -> mar).
+const CADA_48 = new Set((Deno.env.get("USADO_FOTOS_CADA48") ?? "jfazzini")
+  .split(",").map((s) => s.trim()).filter(Boolean));
+const DIAS_CADA_48 = new Set([1, 2, 4, 5, 6]); // getUTCDay: 0 dom ... 6 sab
+
+// Texto sin "se repite todos los dias" (para Jorge no es cierto). Mientras Meta no
+// lo apruebe, cae al template viejo.
+const TEMPLATE_V2 = "usado_fisico_fotos_v2";
 
 // Arranque: no avisar unidades que entraron antes de esta fecha.
 const DESDE = (Deno.env.get("USADO_FOTOS_DESDE") ?? "2026-08-01").slice(0, 10);
@@ -179,6 +194,20 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; desde: 
   const usuarios = await padronUsuarios(env);
   const yaHoy = opts.forzar ? new Set<string>() : await avisadosHoy(env, ids, hoyAR);
 
+  // Los de cada 48 hs: hoy tiene que ser dia de trabajo suyo, y desde el ultimo
+  // aviso a esa unidad tienen que haber pasado 2 dias suyos.
+  const feriados = await feriadosAR(env);
+  const esDiaCada48 = (iso: string) => DIAS_CADA_48.has(diaSemana(iso)) && !feriados.has(iso);
+  const ultimoCada48 = opts.forzar ? new Map<string, string>() : await ultimosAvisos(env, ids, [...CADA_48]);
+  const tocaCada48 = (usadoid: number, usuario: string) => {
+    if (!esDiaCada48(hoyAR)) return false;
+    const ult = ultimoCada48.get(`${usadoid}|${usuario}`);
+    if (!ult) return true;
+    let n = 0;
+    for (let d = sumarDia(ult); d <= hoyAR; d = sumarDia(d)) if (esDiaCada48(d)) n++;
+    return n >= 2;
+  };
+
   const enviados: unknown[] = [];
   const errores: unknown[] = [];
   const omitidos: unknown[] = [];
@@ -195,6 +224,10 @@ async function procesar(env: Env, opts: { dry: boolean; forzar: boolean; desde: 
       const clave = `${u.usadoid}|${dest.usuario}`;
       if (yaHoy.has(clave)) {
         omitidos.push({ usadoid: u.usadoid, para: dest.usuario, motivo: "ya avisado hoy" });
+        continue;
+      }
+      if (CADA_48.has(dest.usuario) && !tocaCada48(u.usadoid, dest.usuario)) {
+        omitidos.push({ usadoid: u.usadoid, para: dest.usuario, motivo: "cada 48 hs: hoy no le toca" });
         continue;
       }
 
@@ -249,6 +282,29 @@ async function avisadosHoy(env: Env, ids: number[], hoyAR: string) {
     filas.map((f: { usadoid: number; destinatario: string }) => `${f.usadoid}|${f.destinatario}`),
   );
 }
+
+/** Ultima fecha con aviso enviado por usadoid|destinatario. */
+async function ultimosAvisos(env: Env, ids: number[], usuarios: string[]) {
+  const m = new Map<string, string>();
+  if (!usuarios.length) return m;
+  const filas = await sb(
+    env,
+    `usados_avisos_fotos?estado=eq.enviado&usadoid=in.(${ids.join(",")})` +
+      `&destinatario=in.(${usuarios.map((u) => `"${u}"`).join(",")})&select=usadoid,destinatario,fecha&order=fecha.desc&limit=1000`,
+  );
+  for (const f of filas as { usadoid: number; destinatario: string; fecha: string }[]) {
+    const k = `${f.usadoid}|${f.destinatario}`;
+    if (!m.has(k)) m.set(k, String(f.fecha).slice(0, 10));
+  }
+  return m;
+}
+
+async function feriadosAR(env: Env) {
+  const filas = await sb(env, `feriados_ar?select=fecha&limit=2000`);
+  return new Set<string>(filas.map((f: { fecha: string }) => String(f.fecha).slice(0, 10)));
+}
+
+const sumarDia = (iso: string) => new Date(Date.parse(`${iso}T12:00:00Z`) + 86400_000).toISOString().slice(0, 10);
 
 // ── Textos ──────────────────────────────────────────────────────────────────
 
@@ -341,13 +397,23 @@ async function padronUsuarios(env: Env): Promise<Usuario[]> {
 
 // ── WhatsApp ────────────────────────────────────────────────────────────────
 
+// Prueba el v2 y, si Meta no lo tiene aprobado (codigos de template), el viejo.
 async function enviarTemplate(env: Env, telE164: string, vars: string[]) {
+  const r = await enviarCon(env, TEMPLATE_V2, telE164, vars);
+  const code = Number((r.error as { code?: number } | undefined)?.code);
+  if (!r.ok && [132000, 132001, 132005, 132007].includes(code)) {
+    return await enviarCon(env, TEMPLATE_NAME, telE164, vars);
+  }
+  return r;
+}
+
+async function enviarCon(env: Env, template: string, telE164: string, vars: string[]) {
   const payload = {
     messaging_product: "whatsapp",
     to: telE164,
     type: "template",
     template: {
-      name: TEMPLATE_NAME,
+      name: template,
       language: { code: META_LANGUAGE },
       components: [{ type: "body", parameters: vars.map((v) => ({ type: "text", text: limpiar(v) })) }],
     },
@@ -398,14 +464,14 @@ async function crearTemplate(env: Env) {
     method: "POST",
     headers: { Authorization: `Bearer ${env.WA_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      name: TEMPLATE_NAME,
+      name: TEMPLATE_V2,
       language: META_LANGUAGE,
       category: "UTILITY",
       components: [
         { type: "HEADER", format: "TEXT", text: "Faltan las fotos de un usado" },
         {
           type: "BODY",
-          text: "Hola {{1}}, el usado {{2}} ya está físico en el concesionario y todavía no tiene las fotos cargadas. {{3}}. {{4}}. Hay que sacarle las fotos para poder publicarlo. Este aviso se repite todos los días hasta que estén cargadas.",
+          text: "Hola {{1}}, el usado {{2}} ya está físico en el concesionario y todavía no tiene las fotos cargadas. {{3}}. {{4}}. Hay que sacarle las fotos para poder publicarlo. Este aviso se repite hasta que estén cargadas.",
           example: {
             body_text: [[
               "Fer",
