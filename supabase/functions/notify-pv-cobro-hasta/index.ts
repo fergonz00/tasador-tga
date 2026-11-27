@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
 
   try {
     // 1) PVs y forma de pago
-    const pvs = await ov(`preventas?select=numero,fecha,vendedorid,cliente,anulada&tipopv=eq.O&fecha=gte.${desde}`);
+    const pvs = await ov(`preventas?select=numero,fecha,vendedorid,cliente,anulada,precioventa,colorid,unidadid&tipopv=eq.O&fecha=gte.${desde}`);
     const vivas = pvs.filter((p) => !p.anulada);
     const numeros = vivas.map((p) => String(p.numero));
     const renglones: Any[] = [];
@@ -125,7 +125,9 @@ Deno.serve(async (req) => {
     const [feriados, mapa, consultas, previas] = await Promise.all([
       wj(`feriados_ar?select=fecha&fecha=gte.${desde}`),
       wj(`pv_vendedores_map?select=vendedorid,usuario`),
-      wj(`consultas_0km?select=id,preventa,estado,fecha_pago_pedida,vendedor_nombre&preventa=not.is.null&fecha_pago_pedida=not.is.null`),
+      // Consultas con fecha de pago pedida y respuesta favorable: la PV puede venir
+      // cargada o no (el cruce sin PV va abajo).
+      wj(`consultas_0km?select=id,preventa,estado,fecha_pago_pedida,vendedor_usuario,precio_max_admin,created_at,consultas_0km_items(chasis,color_pedido,precio_pedido)&fecha_pago_pedida=not.is.null&estado=in.(aceptada,contraoferta)`),
       wj(`pv_cobro_hasta_alertas?select=*`),
     ]);
     const esFeriado = new Set((feriados ?? []).map((f: Any) => String(f.fecha).slice(0, 10)));
@@ -152,6 +154,59 @@ Deno.serve(async (req) => {
       if (k && (!prev || String(c.fecha_pago_pedida) > String(prev.fecha_pago_pedida))) autorizacion.set(k, c);
     }
     const previa = new Map<string, Any>((previas ?? []).map((a: Any) => [a.pv, a]));
+
+    // Cruce SIN la PV (Fer, 27-11-2026: "cruzar precio autorizado con unidad y color
+    // y con vendedor, con eso ya vas a saber sin la pv"). Mismo vendedor y:
+    //   - el chasis de la PV es el de la consulta, o
+    //   - el color coincide y el precio de la PV (con FyF) esta a ±$150.000 de lo autorizado.
+    // Verificado con la PV 08824/3 = consulta 773: TM016501, $51,2M + FyF = $52,5M.
+    const unidadIds = [...new Set(vivas.map((p) => Number(p.unidadid)).filter((n) => n > 0))];
+    const colorIds = [...new Set(vivas.map((p) => Number(p.colorid)).filter((n) => n > 0))];
+    const serieDeUnidad = new Map<number, string>();
+    for (let i = 0; i < unidadIds.length; i += 80) {
+      for (const u of await ov(`unidades?select=unidadid,serie&unidadid=in.(${unidadIds.slice(i, i + 80).join(",")})`)) {
+        serieDeUnidad.set(Number(u.unidadid), String(u.serie ?? "").trim().toUpperCase());
+      }
+    }
+    const colorDe = new Map<number, string>();
+    if (colorIds.length) {
+      for (const c of await ov(`colores?select=colorid,descripcion&colorid=in.(${colorIds.join(",")})`)) {
+        colorDe.set(Number(c.colorid), String(c.descripcion ?? ""));
+      }
+    }
+    const normColor = (x: string) => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+      .replace(/\b(metalizado|metalico|met|efecto perla|perlado|perla|premium)\b/g, "").replace(/mojawe/g, "mojave")
+      .replace(/\s+/g, " ").trim();
+    const FYF = Number(Deno.env.get("COBRO_FYF") ?? "1300000");
+    const TOL_PRECIO = Number(Deno.env.get("COBRO_TOL_PRECIO") ?? "150000");
+    const autorizacionSinPv = (p: Any): Any | null => {
+      const usuario = usuarioDe.get(Number(p.vendedorid));
+      if (!usuario) return null;
+      const serie = serieDeUnidad.get(Number(p.unidadid)) ?? "";
+      const color = normColor(colorDe.get(Number(p.colorid)) ?? "");
+      const precioPv = Number(p.precioventa) + FYF;
+      let mejor: Any = null;
+      for (const c of consultas ?? []) {
+        if (String(c.vendedor_usuario) !== usuario) continue;
+        if (c.preventa && normPv(c.preventa) !== normPv(p.numero)) continue; // ya es de otra PV
+        for (const it of c.consultas_0km_items ?? []) {
+          const chasis = Array.isArray(it.chasis) ? it.chasis : [];
+          const porChasis = !!serie && chasis.some((ch: Any) => String(ch?.serie ?? "").toUpperCase() === serie);
+          const autorizado = c.estado === "contraoferta" && Number(c.precio_max_admin) > 0
+            ? Number(c.precio_max_admin) : Number(it.precio_pedido) || 0;
+          const colores = [...chasis.map((ch: Any) => ch?.color), it.color_pedido].filter(Boolean).map(normColor);
+          // Precio PARECIDO, no "mayor o igual": con >= cruzaba 55 de 155 PVs con consultas ajenas.
+          // Con ±$150.000: 42 de 47 aciertos y 7 cruces ajenos (medido sobre sep–nov 2026).
+          const porColorPrecio = !!color && colores.includes(color) && autorizado > 0 && Math.abs(precioPv - autorizado) <= TOL_PRECIO;
+          if (porChasis || porColorPrecio) {
+            if (!mejor || String(c.fecha_pago_pedida) > String(mejor.fecha_pago_pedida)) {
+              mejor = { ...c, cruce: porChasis ? "chasis" : "color y precio" };
+            }
+          }
+        }
+      }
+      return mejor;
+    };
 
     // tope por fecha de PV (cobro_hasta), una llamada por dia distinto
     const topeDe = new Map<string, string>();
@@ -193,7 +248,7 @@ Deno.serve(async (req) => {
         continue;
       }
       const vtoMax = fuera.map((r) => String(r.vencimiento).slice(0, 10)).sort().pop()!;
-      const auth = autorizacion.get(normPv(pv));
+      const auth = autorizacion.get(normPv(pv)) ?? autorizacionSinPv(p);
       const autorizada = !!auth && sumarHabiles(String(auth.fecha_pago_pedida).slice(0, 10), TOL_HABILES) >= vtoMax;
       const detalle = fuera.map((r) => `${nombreMotivo(r.motivo)} ${millones(Number(r.importe))} al ${ddmm(String(r.vencimiento).slice(0, 10))}`).join(", ");
       const vendedor = usuarioDe.get(Number(p.vendedorid)) ?? `vendedor ${p.vendedorid}`;
@@ -213,7 +268,7 @@ Deno.serve(async (req) => {
         if (!yaAvisada && maduro) aAvisar.push({ ...fila, vendedor, cliente: p.cliente });
       }
       filas.push(fila);
-      resultado.push({ pv, fechaPv, tope, limite, vtoMax, autorizada, detalle });
+      resultado.push({ pv, fechaPv, tope, limite, vtoMax, autorizada, detalle, consulta: auth ? { id: auth.id, fecha: auth.fecha_pago_pedida, cruce: auth.cruce ?? "pv" } : null });
     }
 
     // 3) Mensaje (uno solo con todo lo nuevo)
@@ -227,7 +282,7 @@ Deno.serve(async (req) => {
         control: "fechas de pago de las preventas",
         resumen: `${aAvisar.length === 1 ? "1 PV tiene" : `${aAvisar.length} PVs tienen`} pago de contado después de la fecha tope de la oferta, sin autorización en el portal`,
         detalle: lista.join(" · "),
-        accion: `Revisalo con el vendedor. Se tolera hasta ${TOL_HABILES} días hábiles después del tope por los e-cheq. Si la autorizaste por el portal, que cargue la PV en la consulta y el aviso se cierra solo.`,
+        accion: `Revisalo con el vendedor. Se tolera hasta ${TOL_HABILES} días hábiles después del tope por los e-cheq. Las autorizadas por el portal no avisan: se reconocen por la PV o por vendedor + chasis, o vendedor + color + precio autorizado.`,
         cantidad: String(aAvisar.length),
         usuarios: DESTINATARIOS,
         ...(solo ? { solo } : {}),
